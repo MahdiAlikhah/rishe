@@ -1,0 +1,126 @@
+name: release
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Cargo.toml and pyproject.toml must agree on the version.
+  version-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify Cargo.toml == pyproject.toml versions
+        shell: bash
+        run: |
+          cargo_ver=$(grep '^version' Cargo.toml | head -1 | cut -d'"' -f2)
+          py_ver=$(grep '^version' pyproject.toml | head -1 | cut -d'"' -f2)
+          echo "Cargo.toml: $cargo_ver / pyproject.toml: $py_ver"
+          [ "$cargo_ver" = "$py_ver" ] || { echo "::error::version mismatch"; exit 1; }
+
+  rust:
+    name: rust (${{ matrix.os }})
+    needs: version-check
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      - run: cargo test --locked
+
+  wheels:
+    name: wheel (${{ matrix.target }})
+    needs: version-check
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-unknown-linux-gnu, os: ubuntu-latest, manylinux: auto }
+          - { target: aarch64-unknown-linux-gnu, os: ubuntu-latest, manylinux: auto }
+          - { target: x86_64-unknown-linux-musl, os: ubuntu-latest, manylinux: musllinux_1_2 }
+          - { target: aarch64-unknown-linux-musl, os: ubuntu-latest, manylinux: musllinux_1_2 }
+          - { target: x86_64-apple-darwin, os: macos-14, manylinux: "" }
+          - { target: aarch64-apple-darwin, os: macos-14, manylinux: "" }
+          - { target: x86_64-pc-windows-msvc, os: windows-latest, manylinux: "" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          manylinux: ${{ matrix.manylinux }}
+          args: --release --out dist
+          rust-toolchain: stable
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.target }}
+          path: dist/*.whl
+          if-no-files-found: error
+
+  sdist:
+    needs: version-check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  # Tag-triggered releases. PyPI uses trusted publishing (OIDC): register this
+  # repo + workflow "release.yml" as a trusted publisher on pypi.org first.
+  publish-pypi:
+    needs: [rust, wheels, sdist]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true
+
+  publish-crate:
+    needs: [rust]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo publish --locked
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}

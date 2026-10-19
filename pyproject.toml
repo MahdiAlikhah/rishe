@@ -1,0 +1,45 @@
+[build-system]
+requires = ["maturin>=1.5,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "rishe"
+version = "0.1.0"
+description = "Rishe (ریشه): Blazingly fast, unified Persian NLP engine written in Rust — tokenization, SBD, lemmatization, ezafe detection, informal→formal normalization"
+readme = "README.md"
+license = { text = "MIT OR Apache-2.0" }
+requires-python = ">=3.9"
+authors = [{ name = "Mahdi Alikhah", email = "96587315+MahdiAlikhah@users.noreply.github.com" }]
+keywords = ["nlp", "persian", "farsi", "tokenization", "lemmatization", "morphology"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "License :: OSI Approved :: MIT License",
+    "Natural Language :: Persian",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Rust",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Text Processing :: Linguistic",
+]
+[project.urls]
+Homepage = "https://github.com/MahdiAlikhah/rishe"
+Repository = "https://github.com/MahdiAlikhah/rishe"
+Documentation = "https://docs.rs/rishe"
+"Bug Tracker" = "https://github.com/MahdiAlikhah/rishe/issues"
+
+[tool.maturin]
+module-name = "rishe._core"
+python-source = "python"
+features = ["python"]
+binding = "pyo3"
+exclude = ["python/rishe/*.pdb", "python/rishe/*.pyd", "**/__pycache__/**"]

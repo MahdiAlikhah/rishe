@@ -1,0 +1,11 @@
+/target
+/.venv
+__pycache__/
+*.pyd
+*.pdb
+*.so
+/dist
+/data/corpora/
+/data/raw_*
+/command-code-session-*.html
+/.commandcode
