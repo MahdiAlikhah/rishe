@@ -14,6 +14,7 @@ Fairness rules:
   - lemmas are scored on gold word tokens in isolation, next to an
     "identity" baseline (predict the token itself).
 """
+import os
 import statistics
 import sys
 import time
@@ -151,10 +152,17 @@ def main():
     print("| task | ms/sentence |\n|---|---|")
     for name, fn in speed.items():
         print(f"| {name} | {timeit(fn, sents):.5f} |")
-    batch = sents * 10
+    batch = [d[0] for d in datasets["UD-PerDT"]] * 20  # full PerDT test set x20
+    pipe.pipe(batch[:500])
     t0 = time.perf_counter()
-    pipe.pipe(batch)
-    print(f"| batch `pipe()`: Rishe | {(time.perf_counter() - t0) / len(batch) * 1000:.5f} |")
+    docs = pipe.pipe(batch)
+    dt = time.perf_counter() - t0
+    print(f"| batch `pipe()`: Rishe | {dt / len(batch) * 1000:.5f} |")
+    tokens = sum(len(d.tokens) for d in docs)
+    threads = os.environ.get("RAYON_NUM_THREADS") or os.cpu_count()
+    print()
+    print(f"Batch throughput: {tokens / dt / 1e6:.2f}M tokens/s, {len(batch) / dt:,.0f} sentences/s "
+          f"on {threads} threads (set RAYON_NUM_THREADS=1 for single-thread).")
 
 
 if __name__ == "__main__":
