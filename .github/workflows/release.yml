@@ -121,6 +121,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo publish --locked
+      - name: Check crates.io for existing version
+        id: crates
+        shell: bash
+        run: |
+          version=$(grep '^version' Cargo.toml | head -1 | cut -d'"' -f2)
+          status=$(curl -s -o /dev/null -w "%{http_code}" -A "rishe-release-check (https://github.com/MahdiAlikhah/rishe)" "https://crates.io/api/v1/crates/rishe/$version")
+          if [ "$status" = "200" ]; then
+            echo "published=true" >> "$GITHUB_OUTPUT"
+            echo "rishe $version is already on crates.io; skipping publish"
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.crates.outputs.published != 'true'
+        run: cargo publish --locked
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
