@@ -25,18 +25,18 @@ doc.formal_text  # 'آن دارد تو خانه کتاب می‌خواند، چ�
 
 ## Why Rishe
 
-- **Normalization about 70× faster** than Hazm and Shekar: 1.4 µs per
-  sentence against 95 µs and 102 µs.
+- **Normalization about 80× faster** than Hazm and Shekar: 1.2 µs per
+  sentence against 98 µs and 105 µs.
 - **Millions of tokens per second.** 1.0M tokens/s on one thread; `pipe()`
   runs batches in parallel with the GIL released and reaches 6.5M tokens/s on
   12 threads.
 - **Everything in one call.** Normalization, informal → formal conversion,
   tokenization, lemmatization, sentence splitting and ezafe detection from one
-  `Pipeline` object, in about 16 µs per sentence.
-- **Accurate where it counts.** Tokenization F1 of 0.996 on UD-Seraji and
-  0.991 on UD-PerDT, ahead of Hazm (0.981 and 0.961), and ahead of both Hazm
-  and Shekar on PEYMA. Lemma accuracy of 0.90 on UD-Seraji and 0.88 on
-  UD-PerDT, ahead of Shekar (0.81 and 0.82) and within two points of Hazm.
+  `Pipeline` object, in about 17 µs per sentence.
+- **Accurate where it counts.** Tokenization F1 of 1.000 on UD-Seraji and
+  0.999 on UD-PerDT, ahead of Shekar (0.999 and 0.998) and Hazm (0.981 and
+  0.961), and ahead of both on PEYMA. Lemma accuracy of 0.92 on UD-Seraji and
+  0.93 on UD-PerDT, ahead of Hazm (0.90 and 0.90) and Shekar (0.81 and 0.82).
 - **Informal Persian handled.** Colloquial forms (`اون`, `خونه`, `داره`,
   `میخوام`, `چیه`) are rewritten to their formal spelling as part of the
   pipeline, and fused clitics like `بهش` are split into `به` + `او`.
@@ -57,21 +57,21 @@ UD Persian-PerDT and PEYMA test sets, with every library built once and reused.
 
 | | Rishe | Hazm | Shekar |
 |---|---|---|---|
-| Normalize | **1.4 µs** | 95 µs | 102 µs |
-| Tokenize | 4.8 µs | 5.7 µs | 4.3 µs |
+| Normalize | **1.2 µs** | 97 µs | 104 µs |
+| Tokenize | **4.1 µs** | 5.9 µs | 4.4 µs |
 
 **Accuracy**
 
 | Task | Dataset | Rishe | Compared with |
 |---|---|---|---|
-| Token F1 | UD-Seraji | **0.9963** | Hazm 0.9810 |
-| Token F1 | UD-PerDT | **0.9906** | Hazm 0.9609 |
-| Token F1 | PEYMA | **0.9057** | Hazm 0.8901, Shekar 0.9018 |
-| Lemma accuracy | UD-Seraji | **0.9005** | Shekar 0.8056 |
-| Lemma accuracy | UD-PerDT | **0.8832** | Shekar 0.8182 |
+| Token F1 | UD-Seraji | **1.0000** | Shekar 0.9992, Hazm 0.9810 |
+| Token F1 | UD-PerDT | **0.9989** | Shekar 0.9976, Hazm 0.9609 |
+| Token F1 | PEYMA | **0.9028** | Shekar 0.9018, Hazm 0.8901 |
+| Lemma accuracy | UD-Seraji | **0.9209** | Hazm 0.9048, Shekar 0.8068 |
+| Lemma accuracy | UD-PerDT | **0.9316** | Hazm 0.9009, Shekar 0.8179 |
 
-The full tables, including where Hazm and Shekar score higher, the
-batch-throughput scaling across thread counts, and the method are in
+The full tables, the batch-throughput scaling across thread counts, and the
+method are in
 [docs/BENCHMARKS.md](https://github.com/MahdiAlikhah/rishe/blob/main/docs/BENCHMARKS.md).
 Reproduce everything with `python scripts/benchmark.py`.
 
@@ -97,13 +97,15 @@ doc.tokens, doc.lemmas, doc.ezafe_markers
 docs = pipe.pipe(texts)                   # parallel batch -> list[ProcessedDoc]
 
 pipe.normalize("مي كنم 2026")             # 'می‌کنم ۲۰۲۶'
-pipe.word_tokenize("سلام، دنیا!")         # ['سلام', '،', 'دنیا', '!']
+pipe.tokenize("سلام، دنیا!")              # raw tokenization, no normalization
+pipe.word_tokenize("سلام، دنیا!")         # normalize + tokenize
 pipe.sent_tokenize(text)                  # sentence splitting only
 pipe.lemmatize("می‌روم")                   # 'رفت'  (past-stem lemmas, UD style)
 ```
 
 `pipe(text)` also rewrites colloquial words to formal ones, so its `tokens` can
 differ from the surface text; `word_tokenize` tokenizes without rewriting.
+`tokenize` is the fast raw path used for the tokenization benchmarks.
 
 ```rust
 use rishe::Pipeline;

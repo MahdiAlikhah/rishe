@@ -88,7 +88,7 @@ def micro_f1(pairs):
 
 def canon_lemma(s):
     s = s.replace("‌", "").split("#")[0]  # UD/Hazm "past#present"
-    return s.split("/")[0] if len(s) > 1 else s  # Shekar "past/present"
+    return s.split("/")[0]  # Shekar "past/present"
 
 
 def timeit(fn, xs, reps=3):
@@ -104,7 +104,7 @@ def timeit(fn, xs, reps=3):
 def main():
     pipe, hazm_wt, shekar_wt = Pipeline(), HazmWT(), ShekarWT()
     tokenizers = {
-        "Rishe": pipe.word_tokenize,
+        "Rishe": pipe.tokenize,
         "Hazm": hazm_wt.tokenize,
         "Shekar": lambda t: list(shekar_wt.tokenize(t)),
     }
@@ -140,7 +140,7 @@ def main():
     sents = [d[0] for d in datasets["UD-PerDT"]][:1000]
     hazm_norm, shekar_norm = HazmNormalizer(), ShekarNormalizer()
     speed = {
-        "tokenize: Rishe": pipe.word_tokenize,
+        "tokenize: Rishe": pipe.tokenize,
         "tokenize: Hazm": hazm_wt.tokenize,
         "tokenize: Shekar": tokenizers["Shekar"],
         "normalize: Rishe": pipe.normalize,

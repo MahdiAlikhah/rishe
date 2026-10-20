@@ -165,6 +165,13 @@ mod py_bindings {
             self.normalizer.normalize(text).into_owned()
         }
 
+        pub fn tokenize(&self, text: &str) -> Vec<String> {
+            Tokenizer::tokenize(text)
+                .into_iter()
+                .map(|t| t.text.to_owned())
+                .collect()
+        }
+
         pub fn word_tokenize(&self, text: &str) -> Vec<String> {
             let norm_cow = self.normalizer.normalize(text);
             Tokenizer::tokenize(&norm_cow)
@@ -174,8 +181,7 @@ mod py_bindings {
         }
 
         pub fn lemmatize(&self, word: &str) -> String {
-            let norm = self.normalizer.normalize(word);
-            self.morphology.lemmatize(&norm).into_owned()
+            self.morphology.lemmatize(word).into_owned()
         }
     }
 
@@ -201,5 +207,28 @@ mod tests {
             "من در سال ۲۰۲۶ به کتاب\u{200C}ها نگاه می\u{200C}کنم چون سرعتش بالا است! نظر د. احمدی چیست؟"
         );
         assert_eq!(doc.sentences.len(), 2);
+    }
+
+    #[test]
+    fn test_tokenizer_and_lemma_fixes() {
+        let nlp = Pipeline::create(true, true, true);
+
+        fn tokens(text: &str) -> Vec<&str> {
+            Tokenizer::tokenize(text)
+                .into_iter()
+                .map(|t| t.text)
+                .collect()
+        }
+        assert_eq!(tokens("در سال 2026."), ["در", "سال", "2026", "."]);
+        assert_eq!(tokens("نظر dsm4 و A1C"), ["نظر", "dsm4", "و", "A1C"]);
+
+        let lemma = |word: &str| nlp.morphology.lemmatize(word).into_owned();
+        assert_eq!(lemma("کرده"), "کرد");
+        assert_eq!(lemma("بودند"), "بود");
+        assert_eq!(lemma("نوشت"), "نوشت");
+        assert_eq!(lemma("ش"), "او");
+        assert_eq!(lemma("همهٔ"), "همه");
+        assert_eq!(lemma("اخیراً"), "اخیراً");
+        assert_eq!(lemma("20"), "20");
     }
 }

@@ -8,8 +8,6 @@ pub enum TokenKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Token<'a> {
     pub text: &'a str,
-    pub start: usize,
-    pub end: usize,
     pub kind: TokenKind,
 }
 
@@ -32,13 +30,13 @@ impl Tokenizer {
                 chars.next();
 
                 while let Some(&(next_idx, next_ch)) = chars.peek() {
-                    if next_ch.is_alphabetic() {
+                    if next_ch.is_alphanumeric() {
                         end_idx = next_idx + next_ch.len_utf8();
                         chars.next();
                     } else if next_ch == '\u{200C}' {
                         chars.next();
                         if let Some(&(_, after_zwnj)) = chars.peek() {
-                            if after_zwnj.is_alphabetic() {
+                            if after_zwnj.is_alphanumeric() {
                                 end_idx = next_idx + next_ch.len_utf8();
                                 continue;
                             }
@@ -51,8 +49,6 @@ impl Tokenizer {
 
                 tokens.push(Token {
                     text: &input[start_idx..end_idx],
-                    start: start_idx,
-                    end: end_idx,
                     kind: TokenKind::Word,
                 });
             } else if ch.is_numeric() {
@@ -60,9 +56,18 @@ impl Tokenizer {
                 chars.next();
 
                 while let Some(&(next_idx, next_ch)) = chars.peek() {
-                    if next_ch.is_numeric() || matches!(next_ch, '.' | ',' | '٫') {
+                    if next_ch.is_numeric() {
                         end_idx = next_idx + next_ch.len_utf8();
                         chars.next();
+                    } else if matches!(next_ch, '.' | ',' | '٫') {
+                        let mut lookahead = chars.clone();
+                        lookahead.next();
+                        if lookahead.peek().is_some_and(|&(_, c)| c.is_numeric()) {
+                            end_idx = next_idx + next_ch.len_utf8();
+                            chars.next();
+                        } else {
+                            break;
+                        }
                     } else {
                         break;
                     }
@@ -70,8 +75,6 @@ impl Tokenizer {
 
                 tokens.push(Token {
                     text: &input[start_idx..end_idx],
-                    start: start_idx,
-                    end: end_idx,
                     kind: TokenKind::Number,
                 });
             } else {
@@ -79,8 +82,6 @@ impl Tokenizer {
                 chars.next();
                 tokens.push(Token {
                     text: &input[start_idx..end_idx],
-                    start: start_idx,
-                    end: end_idx,
                     kind: TokenKind::Punctuation,
                 });
             }

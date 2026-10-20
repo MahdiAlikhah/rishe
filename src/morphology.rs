@@ -5,15 +5,6 @@ static NOUNS_FST_BYTES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/nouns.
 static VERBS_FST_BYTES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/verbs.fst"));
 static LEMMAS_BLOB: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/lemmas_blob.bin"));
 
-// Bitflag constants matching Python extract_lexicons.py
-pub const POS_NOUN: u8 = 1 << 0; // 0x01
-pub const POS_ADJ: u8 = 1 << 1; // 0x02
-pub const POS_PROPN: u8 = 1 << 2; // 0x04
-pub const POS_PRON: u8 = 1 << 3; // 0x08
-pub const POS_ADV: u8 = 1 << 4; // 0x10
-pub const POS_NUM: u8 = 1 << 5; // 0x20
-pub const POS_VERB: u8 = 1 << 7; // 0x80
-
 const FLAG_IDENTITY: u64 = 1 << 55;
 const OFFSET_MASK: u64 = 0x007F_FFFF_FF00_0000;
 const LEN_MASK: u64 = 0x0000_0000_00FF_FFFF;
@@ -55,7 +46,6 @@ const ATTACHED_NOUN_SUFFIXES: &[&str] = &[
     "ات",
     "ین",
     "ام",
-    "ات",
     "اش",
     "م",
     "ت",
@@ -93,11 +83,41 @@ const VERB_PERSON_ENDINGS: &[&str] = &[
     "",
 ];
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NounEntry<'a> {
-    pub lemma: Cow<'a, str>,
-    pub pos_flags: u8,
-}
+// Nouns that end in ه over a verb stem but are lexicalized as nouns, not participles.
+const NON_PARTICIPLE_NOUNS: &[&str] = &[
+    "آماده",
+    "اندازه",
+    "اندیشه",
+    "بسته",
+    "بنده",
+    "پایه",
+    "پیوسته",
+    "تازه",
+    "تپه",
+    "تکه",
+    "خنده",
+    "دره",
+    "دهه",
+    "رایانه",
+    "رشته",
+    "رنده",
+    "رسانه",
+    "روزه",
+    "سپرده",
+    "سوخته",
+    "شکسته",
+    "شکنجه",
+    "گسترده",
+    "گذشته",
+    "گروه",
+    "گفته",
+    "کشته",
+    "مرده",
+    "نامه",
+    "نشانه",
+    "ناله",
+    "وابسته",
+];
 
 pub struct MorphologyEngine {
     noun_lexicon: Map<&'static [u8]>,
@@ -113,11 +133,6 @@ impl MorphologyEngine {
     }
 
     #[inline(always)]
-    pub fn unpack_pos_flags(packed: u64) -> u8 {
-        (packed >> 56) as u8
-    }
-
-    #[inline(always)]
     pub fn unpack_lemma<'a>(packed: u64, key: &'a str) -> Cow<'a, str> {
         if (packed & FLAG_IDENTITY) != 0 {
             Cow::Borrowed(key)
@@ -130,15 +145,6 @@ impl MorphologyEngine {
         }
     }
 
-    /// Returns the canonical lemma AND POS bitflags in a single FST lookup.
-    #[inline]
-    pub fn lookup_noun<'a>(&self, key: &'a str) -> Option<NounEntry<'a>> {
-        self.noun_lexicon.get(key).map(|packed| NounEntry {
-            lemma: Self::unpack_lemma(packed, key),
-            pos_flags: Self::unpack_pos_flags(packed),
-        })
-    }
-
     #[inline(always)]
     pub fn is_known_noun(&self, word: &str) -> bool {
         self.noun_lexicon.contains_key(word)
@@ -147,20 +153,6 @@ impl MorphologyEngine {
     #[inline(always)]
     pub fn is_known_verb_stem(&self, stem: &str) -> bool {
         self.verb_stems.contains_key(stem)
-    }
-
-    #[inline(always)]
-    pub fn is_propn(&self, word: &str) -> bool {
-        self.noun_lexicon
-            .get(word)
-            .is_some_and(|p| (Self::unpack_pos_flags(p) & POS_PROPN) != 0)
-    }
-
-    #[inline(always)]
-    pub fn is_adjective(&self, word: &str) -> bool {
-        self.noun_lexicon
-            .get(word)
-            .is_some_and(|p| (Self::unpack_pos_flags(p) & POS_ADJ) != 0)
     }
 
     #[inline]
@@ -203,19 +195,29 @@ impl MorphologyEngine {
             }
         }
 
-        // 3. Direct Noun / Mokassar Lexicon lookup (protects دولت, ایرانی, دانش, تهران from over-stemming!)
-        if let Some(packed) = self.noun_lexicon.get(token) {
-            return Self::unpack_lemma(packed, token);
+        // 3. Direct Noun / Mokassar Lexicon lookup (protects دولت, ایرانی, دانش, تهران from over-stemming!).
+        // Past participles (کرده, شده, داده) are in the noun lexicon as identity entries, so let the
+        // verb analysis below handle them when the token is a known stem + ه.
+        // ponytail: stem+ه heuristic with a stoplist for lexicalized nouns. A POS-aware
+        // participle check would generalize better, but needs tagged training data.
+        let participle = token.strip_suffix('ه').is_some_and(|stem| {
+            self.is_known_verb_stem(stem) && !NON_PARTICIPLE_NOUNS.contains(&token)
+        });
+        if !participle {
+            if let Some(packed) = self.noun_lexicon.get(token) {
+                return Self::unpack_lemma(packed, token);
+            }
         }
 
-        // 4. Conjugated Verbs (past, subjunctive ب..., negative ن...)
-        let verb_body = token
-            .strip_prefix('ب')
-            .or_else(|| token.strip_prefix('ن'))
-            .unwrap_or(token);
-
-        if let Some(verb_lemma) = self.match_verb_lemma(verb_body) {
+        // 4. Conjugated Verbs (past, subjunctive ب..., negative ن...). Try the full token first:
+        // بودم/بودند/نوشت are verbs, not ب/ن-prefixed forms.
+        if let Some(verb_lemma) = self.match_verb_lemma(token) {
             return Cow::Borrowed(verb_lemma);
+        }
+        if let Some(verb_body) = token.strip_prefix('ب').or_else(|| token.strip_prefix('ن')) {
+            if let Some(verb_lemma) = self.match_verb_lemma(verb_body) {
+                return Cow::Borrowed(verb_lemma);
+            }
         }
 
         // 5. Fallback: Strip attached suffixes ONLY when the surface word wasn't in noun_lexicon
@@ -232,6 +234,27 @@ impl MorphologyEngine {
                         return Self::unpack_lemma(packed, stem);
                     }
                 }
+            }
+        }
+
+        // 6. Pronoun clitics follow the UD lemma convention (ش -> او, م -> من, ...)
+        let clitic = match token {
+            "ش" => Some("او"),
+            "م" => Some("من"),
+            "ت" => Some("تو"),
+            "مان" => Some("ما"),
+            "تان" => Some("شما"),
+            "شان" => Some("آن‌ها"),
+            _ => None,
+        };
+        if let Some(lemma) = clitic {
+            return Cow::Borrowed(lemma);
+        }
+
+        // 7. Ezafe hamza: همهٔ -> همه, حوزهٔ -> حوزه
+        if let Some(stem) = token.strip_suffix('\u{0654}') {
+            if let Some(packed) = self.noun_lexicon.get(stem) {
+                return Self::unpack_lemma(packed, stem);
             }
         }
 
