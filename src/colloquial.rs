@@ -10,7 +10,7 @@ pub enum ExpandedTokens<'a> {
     Pair(Cow<'a, str>, Cow<'a, str>),
 }
 
-const FUSED_PREP_CLITICS: &[(&str, (&str, &str))] = &[
+pub(crate) const FUSED_PREP_CLITICS: &[(&str, (&str, &str))] = &[
     ("بهم", ("به", "من")),
     ("بهت", ("به", "تو")),
     ("بهش", ("به", "او")),

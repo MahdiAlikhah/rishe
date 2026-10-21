@@ -8,6 +8,8 @@ pub enum TokenKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Token<'a> {
     pub text: &'a str,
+    pub start: usize,
+    pub end: usize,
     pub kind: TokenKind,
 }
 
@@ -49,6 +51,8 @@ impl Tokenizer {
 
                 tokens.push(Token {
                     text: &input[start_idx..end_idx],
+                    start: start_idx,
+                    end: end_idx,
                     kind: TokenKind::Word,
                 });
             } else if ch.is_numeric() {
@@ -75,6 +79,8 @@ impl Tokenizer {
 
                 tokens.push(Token {
                     text: &input[start_idx..end_idx],
+                    start: start_idx,
+                    end: end_idx,
                     kind: TokenKind::Number,
                 });
             } else {
@@ -82,6 +88,8 @@ impl Tokenizer {
                 chars.next();
                 tokens.push(Token {
                     text: &input[start_idx..end_idx],
+                    start: start_idx,
+                    end: end_idx,
                     kind: TokenKind::Punctuation,
                 });
             }

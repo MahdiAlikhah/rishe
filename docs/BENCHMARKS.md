@@ -38,8 +38,8 @@ Shekar; on PEYMA all three are close.
 
 | dataset | words | identity | Rishe | Hazm | Shekar |
 |---|---|---|---|---|---|
-| UD-Seraji | 16021 | 0.8354 | **0.9209** | 0.9048 | 0.8068 |
-| UD-PerDT | 24131 | 0.7857 | **0.9316** | 0.9009 | 0.8179 |
+| UD-Seraji | 16021 | 0.8354 | **0.9209** | 0.9048 | 0.8058 |
+| UD-PerDT | 24131 | 0.7857 | **0.9316** | 0.9009 | 0.8170 |
 
 Rishe is the best lemmatizer on both sets, ahead of Hazm by ~1.6 points on
 Seraji and ~3.1 on PerDT. Shekar's lemmas score below the identity baseline
@@ -50,12 +50,12 @@ on Seraji.
 | task | ms/sentence |
 |---|---|
 | tokenize: Rishe | **0.0041** |
-| tokenize: Hazm | 0.0059 |
+| tokenize: Hazm | 0.0057 |
 | tokenize: Shekar | 0.0044 |
 | normalize: Rishe | **0.0012** |
-| normalize: Hazm | 0.0968 |
-| normalize: Shekar | 0.1037 |
-| full pipeline: Rishe (normalize + formalize + tokenize + lemmatize + sentences + ezafe) | 0.0167 |
+| normalize: Hazm | 0.0958 |
+| normalize: Shekar | 0.1041 |
+| full pipeline: Rishe (normalize + formalize + tokenize + lemmatize + sentences + ezafe) | 0.0163 |
 | batch `pipe()`: Rishe (12 threads) | 0.0026 |
 
 - Tokenization is close between Rishe and Shekar; both are faster than Hazm.

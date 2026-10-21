@@ -38,6 +38,7 @@ fn main() {
     println!("cargo:rerun-if-changed=data/verbs.tsv");
     println!("cargo:rerun-if-changed=data/informal_words.tsv");
     println!("cargo:rerun-if-changed=data/informal_verbs.tsv");
+    println!("cargo:rerun-if-changed=data/word_freq.tsv");
 
     let out_dir = env::var_os("OUT_DIR").expect("OUT_DIR not set");
     let out_path = Path::new(&out_dir);
@@ -74,6 +75,44 @@ fn main() {
 
     let blob_path = out_path.join("lemmas_blob.bin");
     fs::write(&blob_path, &string_table.blob).expect("Failed to write lemmas_blob.bin");
+
+    compile_freq_fst(
+        Path::new("data/word_freq.tsv"),
+        &out_path.join("word_freq.fst"),
+    );
+}
+
+fn compile_freq_fst(tsv_path: &Path, fst_out_path: &Path) {
+    let mut entries: BTreeMap<String, u64> = BTreeMap::new();
+    let file = File::open(tsv_path).unwrap_or_else(|e| {
+        panic!(
+            "cannot open {}: {e} (data/ must ship with the crate)",
+            tsv_path.display()
+        )
+    });
+
+    for line in BufReader::new(file).lines() {
+        let line = line.expect("Invalid UTF-8 in word_freq.tsv");
+        let mut parts = line.trim().split('\t');
+        let key = parts.next().unwrap_or("");
+        if key.is_empty() {
+            continue;
+        }
+        let freq = parts
+            .next()
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(0);
+        entries.insert(key.to_owned(), freq);
+    }
+
+    let wtr = BufWriter::new(File::create(fst_out_path).expect("Failed to create word_freq.fst"));
+    let mut builder = MapBuilder::new(wtr).expect("Failed to init MapBuilder");
+    for (key, value) in entries {
+        builder
+            .insert(key.as_bytes(), value)
+            .expect("FST insert failed");
+    }
+    builder.finish().expect("Failed to finish FST");
 }
 
 fn compile_tsv_to_fst(

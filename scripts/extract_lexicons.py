@@ -197,6 +197,29 @@ def build_nouns_tsv(raw_words_path: Path, out_path: Path):
     print(f"Wrote {len(sorted_items):,} nouns/mokassar entries to {out_path}")
 
 
+def build_word_freq_tsv(raw_words_path: Path, out_path: Path):
+    freq: dict[str, int] = {}
+    with open(raw_words_path, encoding="utf-8") as f:
+        for line in f:
+            parts = line.rstrip("\n").split("\t")
+            if len(parts) < 2:
+                continue
+            word = canonical_persian(parts[0])
+            if not word or any(ch.isspace() for ch in word):
+                continue
+            try:
+                count = int(parts[1])
+            except ValueError:
+                continue
+            if count > freq.get(word, -1):
+                freq[word] = count
+
+    with open(out_path, "w", encoding="utf-8") as out:
+        for word in sorted(freq):
+            out.write(f"{word}\t{freq[word]}\n")
+    print(f"Wrote {len(freq):,} word frequencies to {out_path}")
+
+
 def build_verbs_tsv(raw_verbs_path: Path, out_path: Path):
     stem_to_lemma: dict[str, str] = {}
 
@@ -355,5 +378,6 @@ if __name__ == "__main__":
     raw_inf = download_if_missing(HAZM_INFORMAL_URL, DATA_DIR / "raw_hazm_informal.dat")
 
     build_nouns_tsv(raw_words, DATA_DIR / "nouns.tsv")
+    build_word_freq_tsv(raw_words, DATA_DIR / "word_freq.tsv")
     build_verbs_tsv(raw_verbs, DATA_DIR / "verbs.tsv")
     build_informal_tsvs(raw_inf, DATA_DIR / "informal_words.tsv", DATA_DIR / "informal_verbs.tsv", raw_words)
