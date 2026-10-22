@@ -7,6 +7,14 @@ from the data files of [Hazm](https://github.com/roshan-research/hazm)
 word-frequency table (`data/word_freq.tsv`) are also derived from Hazm's
 `stopwords.dat` and `words.dat`. Hazm is distributed under the MIT License:
 
+The normalizer character mappings, ligature table, digit and punctuation tables,
+and spacing rules in `src/normalize_ops.rs` are adapted from
+[Shekar](https://github.com/amirivojdan/shekar), copyright (c) 2024 Ahmad
+Amirivojdan. The offensive-word list (`data/offensive_words.txt`) is derived
+from Shekar's `offensive_words.csv`, and the keyboard/OCR noise maps in
+`src/augment.rs` are adapted from Shekar's noise transforms. Shekar is
+distributed under the MIT License; the MIT terms below apply.
+
 ---
 
 The MIT License (MIT)

@@ -39,6 +39,7 @@ fn main() {
     println!("cargo:rerun-if-changed=data/informal_words.tsv");
     println!("cargo:rerun-if-changed=data/informal_verbs.tsv");
     println!("cargo:rerun-if-changed=data/word_freq.tsv");
+    println!("cargo:rerun-if-changed=data/offensive_words.txt");
 
     let out_dir = env::var_os("OUT_DIR").expect("OUT_DIR not set");
     let out_path = Path::new(&out_dir);

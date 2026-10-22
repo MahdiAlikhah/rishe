@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "rishe"
-version = "0.2.0"
+version = "0.3.0"
 description = "Rishe (ریشه): Blazingly fast, unified Persian NLP engine written in Rust — tokenization, SBD, lemmatization, ezafe detection, informal→formal normalization"
 readme = "README.md"
 license = { text = "MIT OR Apache-2.0" }
@@ -31,6 +31,12 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Text Processing :: Linguistic",
 ]
+[project.scripts]
+rishe = "rishe.cli:main"
+
+[project.optional-dependencies]
+docs = ["mkdocs>=1.6", "mkdocstrings[python]>=0.25"]
+
 [project.urls]
 Homepage = "https://github.com/MahdiAlikhah/rishe"
 Repository = "https://github.com/MahdiAlikhah/rishe"

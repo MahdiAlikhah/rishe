@@ -1,6 +1,6 @@
 [package]
 name = "rishe"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 rust-version = "1.75"
 description = "Rishe (ریشه): High-performance Persian NLP engine in Rust — tokenization, SBD, lemmatization, ezafe detection, informal→formal normalization"

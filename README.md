@@ -93,6 +93,11 @@ UD Persian-PerDT and PEYMA test sets. Every library is built once and reused.
 | Spell correction | top-1 / top-5 on 1-edit typos | **80.8% / 96.2%** | N/A | 60.8% / 77.6% |
 | Stopwords | list size | 389 | 389 | 301 |
 
+The normalizer operators are 1.5–6× faster than Shekar's per operator (the
+exception is `ya`, 0.7×) with exact output agreement of 100% on 8 of 11
+operators and 99.04% on verbal spacing. `normalize_stages` is opt-in; the default
+`normalize` path is unchanged.
+
 The full core tables, batch scaling and method are in
 [docs/BENCHMARKS.md](https://github.com/MahdiAlikhah/rishe/blob/main/docs/BENCHMARKS.md).
 The feature tables, proxy metrics and caveats are in
@@ -101,8 +106,10 @@ The feature tables, proxy metrics and caveats are in
 Reproduce:
 
 ```bash
-python scripts/benchmark.py            # core token/lemma/speed
-python scripts/benchmark_features.py  # stemming, conjugation, splitting, spelling
+python scripts/benchmark.py             # core token/lemma/speed
+python scripts/benchmark_features.py   # stemming, conjugation, splitting, spelling
+python scripts/benchmark_normalizer.py # 11 normalizer operators vs Shekar/Hazm
+python scripts/benchmark_maskers.py    # 12 maskers vs Shekar
 ```
 
 ## Install
@@ -157,8 +164,140 @@ pipe.remove_stopwords(tokens)             # drop Persian stopwords
 pipe.process_stages(text, ["normalize", "sentences"])  # choose pipeline stages
 ```
 
+### Normalizer operators
+
+`normalize_stages` applies the P1 normalizer operators in the order you list them:
+`alphabet`, `arabic_unicode`, `ya`, `ya_joda`, `digits`, `punctuation`,
+`repeated_letters`, `orthographic_spacing`, `punctuation_spacing`, `word_spacing`,
+`verbal_spacing`, and `spacing` (all four spacing operators).
+
+```python
+pipe.normalize_stages("﷽ 1𝟮3٤٥⓺", ["arabic_unicode", "digits"])
+# 'بسم الله الرحمن الرحیم ۱۲۳۴۵۶'
+
+pipe.normalize_stages("سلام(دنیا) ! می روم", ["punctuation_spacing", "verbal_spacing"])
+# 'سلام (دنیا)! می‌روم'
+```
+
+`word_spacing` and `verbal_spacing` validate against the compiled lexicons, so they
+only join forms the engine knows (`کتاب ها` → `کتاب‌ها`, `رفته ام` → `رفته‌ام`).
+Unknown stage names raise `ValueError`.
+
+### Masking
+
+`mask_stages` removes or masks URLs, emails, mentions, hashtags, emoji, HTML
+tags, non-Persian letters, stopwords, offensive words, digits, diacritics and
+punctuation. Stage names are `url`, `email`, `mention`, `hashtag`, `emoji`,
+`html`, `non_persian`, `stopwords`, `offensive`, `digits`, `diacritics` and
+`punctuation`.
+
+```python
+pipe.mask_stages("سلام @user، به https://rishe.dev یا info@rishe.dev بنویس.",
+                 ["url", "email", "mention"])
+# 'سلام   به <URL> یا <EMAIL> بنویس.'
+
+pipe.mask_stages("این کتاب است", ["stopwords"], mask_token="[MASK]")
+# '[MASK] کتاب [MASK]'
+```
+
+Defaults are `<URL>` for URLs, `<EMAIL>` for emails, a space for mentions,
+hashtags and HTML tags, and removal for everything else. Pass `mask_token` to
+override all stages. Masking keeps the spaces left behind; run
+`normalize_stages(..., ["spacing"])` afterwards to collapse them. Unknown stage
+names raise `ValueError`.
+
 Spell correction uses a 190k-word frequency lexicon and edit-distance 1; typos
 with two or more edits are left unchanged.
+
+### Utilities
+
+```python
+pipe.number_to_words(1404)                    # 'یک هزار و چهارصد و چهار'
+pipe.number_to_words("3.14")                  # 'سه ممیز چهارده'
+pipe.ngrams("این یک متن", 1, 2)                # ['این', 'یک', 'متن', 'این یک', 'یک متن']
+pipe.persianize("فایل را با کامپیوتر باز کن")   # 'پرونده را با رایانه باز کن'
+pipe.persianize_suggest("فایل")               # [('فایل', ['پرونده'], 0, 4)]
+flatten(["الف", ["ب", "پ"]])                  # 'الف', 'ب', 'پ'
+```
+
+`persianize` uses a built-in curated loanword map; `persianize_suggest` returns
+the alternatives and character spans.
+
+### Augmentation
+
+`keyboard_noise`, `ocr_noise` and `whitespace_noise` simulate typing, OCR and
+spacing errors. Pass `seed=` for reproducible output.
+
+```python
+pipe.keyboard_noise(text, seed=42)
+pipe.ocr_noise(text, seed=42)
+pipe.whitespace_noise(text, seed=42)
+```
+
+### Keywords and transliteration
+
+```python
+pipe.rake(text, top_n=5)
+pipe.textrank(text, top_n=5)
+pipe.to_tajik("خانه")      # 'хона'
+pipe.to_persian("хона")    # 'خانه'
+```
+
+Transliteration is a rule-based script mapping; it preserves the consonant
+skeleton and is not a phonetic translation.
+
+### Tokenizer options
+
+```python
+pipe.word_tokenize_with("رفته است", join_verb_parts=True)   # ['رفته_است']
+pipe.word_tokenize_with("info@a.co", replace_emails=True)   # ['EMAIL']
+```
+
+Options: `join_verb_parts`, `join_abbreviations`, `separate_emoji`,
+`replace_links`, `replace_ids`, `replace_emails`, `replace_numbers`,
+`replace_hashtags`. All are off by default, so plain `word_tokenize` is
+unchanged.
+
+### Corpora
+
+```python
+from rishe import ConlluReader, PeymaReader, PlainTextReader
+
+for sentence in ConlluReader("data/corpora/fa_perdt-ud-test.conllu"):
+    print(sentence.text, sentence.tokens[0].lemma)
+```
+
+`ConlluReader` parses UD/CoNLL-U, `PeymaReader` parses the PEYMA test format,
+and `PlainTextReader` reads one sentence per line. Other corpus-specific formats
+can be added as needed.
+
+### CLI
+
+```bash
+rishe normalize "مي كنم"
+rishe tokenize "سلام دنیا" --json
+rishe mask "info@a.co" --stages email
+printf '%s\n' '{"command":"tokenize","text":"سلام دنیا"}' | rishe serve
+```
+
+### Migrating from Hazm
+
+```python
+from rishe import Lemmatizer, Normalizer, WordTokenizer, Stemmer
+
+normalizer = Normalizer()
+normalizer.normalize("مي كنم")       # 'می‌کنم'
+
+lemmatizer = Lemmatizer()
+lemmatizer.lemmatize("می‌روم")        # 'رفت#رو'
+
+WordTokenizer().tokenize("رفته است")  # ['رفته_است']
+```
+
+The wrappers cover `Normalizer`, `WordTokenizer`, `SentenceTokenizer`,
+`Lemmatizer`, `Stemmer` and `TokenSplitter`, plus module-level `word_tokenize`
+and `sent_tokenize`. Hazm constructor arguments that point at custom lexicon
+files are rejected because Rishe compiles its lexicons in.
 
 ```rust
 use rishe::Pipeline;

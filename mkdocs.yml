@@ -1,0 +1,18 @@
+site_name: Rishe
+site_description: Fast Persian NLP and morphology, built in Rust
+site_url: https://github.com/MahdiAlikhah/rishe
+theme:
+  name: mkdocs
+nav:
+  - Home: index.md
+  - CLI: cli.md
+  - API: api.md
+  - Migrating from Hazm: hazm.md
+  - Benchmarks: BENCHMARKS.md
+  - Feature benchmarks: FEATURE_BENCHMARKS.md
+plugins:
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            show_source: false

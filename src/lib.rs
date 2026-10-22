@@ -1,9 +1,13 @@
+pub mod augment;
 pub mod colloquial;
 pub mod conjugation;
 pub mod detokenizer;
 pub mod ezafe;
 pub mod inflector;
+pub mod keywords;
+pub mod maskers;
 pub mod morphology;
+pub mod normalize_ops;
 pub mod normalizer;
 pub mod sbd;
 pub mod spell;
@@ -11,6 +15,9 @@ pub mod stemmer;
 pub mod stopwords;
 pub mod token_splitter;
 pub mod tokenizer;
+pub mod transliterate;
+pub mod utilities;
+pub mod word_tokenizer;
 
 use colloquial::{ColloquialConverter, ExpandedTokens};
 use conjugation::Conjugation;
@@ -192,6 +199,44 @@ impl Pipeline {
         texts.par_iter().map(|t| self.process(t)).collect()
     }
 
+    pub fn normalize_stages(&self, text: &str, stages: &[String]) -> Result<String, String> {
+        let mut ops = Vec::with_capacity(stages.len());
+        for stage in stages {
+            match normalize_ops::NormalizeOp::from_name(stage) {
+                Some(op) => ops.push(op),
+                None => return Err(format!("unknown normalize stage: {stage}")),
+            }
+        }
+        if ops.is_empty() {
+            return Ok(self.normalizer.normalize(text).into_owned());
+        }
+        let mut current = text.to_owned();
+        for op in ops {
+            current = normalize_ops::apply(&current, op, &self.morphology).into_owned();
+        }
+        Ok(current)
+    }
+
+    pub fn mask_stages(
+        &self,
+        text: &str,
+        stages: &[String],
+        mask_token: Option<&str>,
+    ) -> Result<String, String> {
+        let mut ops = Vec::with_capacity(stages.len());
+        for stage in stages {
+            match maskers::MaskOp::from_name(stage) {
+                Some(op) => ops.push(op),
+                None => return Err(format!("unknown mask stage: {stage}")),
+            }
+        }
+        let mut current = Cow::Borrowed(text);
+        for op in ops {
+            current = Cow::Owned(op.apply(&current, mask_token));
+        }
+        Ok(current.into_owned())
+    }
+
     pub fn stem(&self, word: &str) -> String {
         Stemmer::stem(word, &self.morphology).into_owned()
     }
@@ -253,10 +298,70 @@ impl Pipeline {
             })
             .collect()
     }
+
+    pub fn word_tokenize(&self, text: &str) -> Vec<String> {
+        let normalized = self.normalizer.normalize(text);
+        Tokenizer::tokenize(&normalized)
+            .into_iter()
+            .map(|token| token.text.to_owned())
+            .collect()
+    }
+
+    pub fn rake(&self, text: &str, top_n: usize, max_length: usize) -> Vec<String> {
+        let normalized = self.normalizer.normalize(text);
+        keywords::rake(&normalized, top_n, max_length)
+    }
+
+    pub fn textrank(
+        &self,
+        text: &str,
+        top_n: usize,
+        max_length: usize,
+        window: usize,
+    ) -> Vec<String> {
+        let normalized = self.normalizer.normalize(text);
+        keywords::textrank(&normalized, top_n, max_length, window)
+    }
+
+    pub fn word_tokenize_with(
+        &self,
+        text: &str,
+        options: &word_tokenizer::WordTokenizerOptions,
+    ) -> Vec<String> {
+        let pre = word_tokenizer::apply_pre(text, options);
+        let normalized = self.normalizer.normalize(&pre);
+        let normalized = if options.replace_numbers {
+            word_tokenizer::replace_numbers(normalized.as_ref())
+        } else {
+            normalized.into_owned()
+        };
+        let tokens: Vec<String> = Tokenizer::tokenize(&normalized)
+            .into_iter()
+            .map(|token| token.text.to_owned())
+            .collect();
+        word_tokenizer::postprocess(tokens, options, &self.morphology)
+    }
+
+    pub fn ngrams(&self, text: &str, min_n: usize, max_n: usize) -> Result<Vec<String>, String> {
+        if min_n == 0 || max_n < min_n {
+            return Err("ngram range must be (min, max) with 1 <= min <= max".to_string());
+        }
+        let tokens = self.word_tokenize(text);
+        let mut out = Vec::new();
+        for n in min_n..=max_n {
+            if n > tokens.len() {
+                break;
+            }
+            out.extend(tokens.windows(n).map(|window| window.join(" ")));
+        }
+        Ok(out)
+    }
 }
 
 #[cfg(feature = "python")]
 mod py_bindings {
+    #![allow(clippy::useless_conversion)]
+
     use super::*;
     use pyo3::prelude::*;
 
@@ -314,6 +419,23 @@ mod py_bindings {
             py.allow_threads(|| self.process_with(text, &opts))
         }
 
+        #[pyo3(name = "normalize_stages")]
+        pub fn py_normalize_stages(&self, text: &str, stages: Vec<String>) -> PyResult<String> {
+            self.normalize_stages(text, &stages)
+                .map_err(pyo3::exceptions::PyValueError::new_err)
+        }
+
+        #[pyo3(name = "mask_stages", signature = (text, stages, mask_token=None))]
+        pub fn py_mask_stages(
+            &self,
+            text: &str,
+            stages: Vec<String>,
+            mask_token: Option<String>,
+        ) -> PyResult<String> {
+            self.mask_stages(text, &stages, mask_token.as_deref())
+                .map_err(pyo3::exceptions::PyValueError::new_err)
+        }
+
         pub fn sent_tokenize(&self, text: &str) -> Vec<String> {
             SentenceSplitter::split(text)
                 .into_iter()
@@ -336,11 +458,146 @@ mod py_bindings {
             self.tokenize_char_spans(text)
         }
 
-        pub fn word_tokenize(&self, text: &str) -> Vec<String> {
-            let norm_cow = self.normalizer.normalize(text);
-            Tokenizer::tokenize(&norm_cow)
+        #[pyo3(name = "word_tokenize")]
+        pub fn py_word_tokenize(&self, text: &str) -> Vec<String> {
+            self.word_tokenize(text)
+        }
+
+        #[pyo3(
+            name = "word_tokenize_with",
+            signature = (
+                text,
+                join_verb_parts=false,
+                join_abbreviations=false,
+                separate_emoji=false,
+                replace_links=false,
+                replace_ids=false,
+                replace_emails=false,
+                replace_numbers=false,
+                replace_hashtags=false
+            )
+        )]
+        #[allow(clippy::too_many_arguments)]
+        pub fn py_word_tokenize_with(
+            &self,
+            text: &str,
+            join_verb_parts: bool,
+            join_abbreviations: bool,
+            separate_emoji: bool,
+            replace_links: bool,
+            replace_ids: bool,
+            replace_emails: bool,
+            replace_numbers: bool,
+            replace_hashtags: bool,
+        ) -> Vec<String> {
+            let options = word_tokenizer::WordTokenizerOptions {
+                join_verb_parts,
+                join_abbreviations,
+                separate_emoji,
+                replace_links,
+                replace_ids,
+                replace_emails,
+                replace_numbers,
+                replace_hashtags,
+            };
+            self.word_tokenize_with(text, &options)
+        }
+
+        #[pyo3(name = "number_to_words")]
+        pub fn py_number_to_words(
+            &self,
+            value: &pyo3::Bound<'_, pyo3::types::PyAny>,
+        ) -> PyResult<String> {
+            if let Ok(number) = value.extract::<i64>() {
+                return Ok(utilities::number_to_words(number));
+            }
+            if let Ok(text) = value.extract::<String>() {
+                return utilities::number_to_words_text(&text)
+                    .map_err(pyo3::exceptions::PyValueError::new_err);
+            }
+            Err(pyo3::exceptions::PyTypeError::new_err(
+                "expected int or str",
+            ))
+        }
+
+        #[pyo3(name = "ngrams", signature = (text, min_n=1, max_n=1))]
+        pub fn py_ngrams(&self, text: &str, min_n: usize, max_n: usize) -> PyResult<Vec<String>> {
+            self.ngrams(text, min_n, max_n)
+                .map_err(pyo3::exceptions::PyValueError::new_err)
+        }
+
+        #[pyo3(name = "rake", signature = (text, top_n=5, max_length=3))]
+        pub fn py_rake(&self, text: &str, top_n: usize, max_length: usize) -> Vec<String> {
+            self.rake(text, top_n, max_length)
+        }
+
+        #[pyo3(name = "textrank", signature = (text, top_n=5, max_length=3, window=2))]
+        pub fn py_textrank(
+            &self,
+            text: &str,
+            top_n: usize,
+            max_length: usize,
+            window: usize,
+        ) -> Vec<String> {
+            self.textrank(text, top_n, max_length, window)
+        }
+
+        #[pyo3(name = "keyboard_noise", signature = (text, seed=None))]
+        pub fn py_keyboard_noise(&self, text: &str, seed: Option<u64>) -> String {
+            augment::keyboard_noise(
+                text,
+                augment::KeyboardNoiseOptions {
+                    seed,
+                    ..Default::default()
+                },
+            )
+        }
+
+        #[pyo3(name = "ocr_noise", signature = (text, seed=None))]
+        pub fn py_ocr_noise(&self, text: &str, seed: Option<u64>) -> String {
+            augment::ocr_noise(
+                text,
+                augment::OcrNoiseOptions {
+                    seed,
+                    ..Default::default()
+                },
+            )
+        }
+
+        #[pyo3(name = "whitespace_noise", signature = (text, seed=None))]
+        pub fn py_whitespace_noise(&self, text: &str, seed: Option<u64>) -> String {
+            augment::whitespace_noise(
+                text,
+                augment::WhitespaceNoiseOptions {
+                    seed,
+                    ..Default::default()
+                },
+            )
+        }
+
+        #[pyo3(name = "to_tajik")]
+        pub fn py_to_tajik(&self, text: &str) -> String {
+            transliterate::to_tajik(text)
+        }
+
+        #[pyo3(name = "to_persian")]
+        pub fn py_to_persian(&self, text: &str) -> String {
+            transliterate::to_persian(text)
+        }
+
+        #[pyo3(name = "persianize")]
+        pub fn py_persianize(&self, text: &str) -> String {
+            utilities::persianize(text)
+        }
+
+        #[pyo3(name = "persianize_suggest")]
+        pub fn py_persianize_suggest(
+            &self,
+            text: &str,
+        ) -> Vec<(String, Vec<String>, usize, usize)> {
+            utilities::persianize_suggest(text)
                 .into_iter()
-                .map(|t| t.text.to_owned())
+                .map(|item| (item.word, item.alternatives, item.start, item.end))
                 .collect()
         }
 
@@ -540,6 +797,61 @@ mod tests {
             ("رفت".to_string(), Some("رو".to_string()))
         );
         assert_eq!(nlp.lemma_full("کتاب"), ("کتاب".to_string(), None));
+    }
+
+    #[test]
+    fn test_ngrams() {
+        let nlp = Pipeline::create(true, true, true);
+        assert_eq!(
+            nlp.ngrams("این یک متن", 1, 2).unwrap(),
+            vec!["این", "یک", "متن", "این یک", "یک متن"]
+        );
+        assert!(nlp.ngrams("x", 0, 1).is_err());
+        assert!(nlp.ngrams("x", 2, 1).is_err());
+    }
+
+    #[test]
+    fn test_mask_stages() {
+        let nlp = Pipeline::create(true, true, true);
+        assert_eq!(
+            nlp.mask_stages(
+                "به https://a.b و info@a.co ایمیل بزن",
+                &["url".to_string(), "email".to_string()],
+                None,
+            )
+            .unwrap(),
+            "به <URL> و <EMAIL> ایمیل بزن"
+        );
+        assert_eq!(
+            nlp.mask_stages("این کتاب است", &["stopwords".to_string()], Some("[MASK]"),)
+                .unwrap(),
+            "[MASK] کتاب [MASK]"
+        );
+        assert!(nlp.mask_stages("x", &["bogus".to_string()], None).is_err());
+        assert_eq!(nlp.mask_stages("x", &[], None).unwrap(), "x");
+    }
+
+    #[test]
+    fn test_normalize_stages() {
+        let nlp = Pipeline::create(true, true, true);
+        assert_eq!(
+            nlp.normalize_stages("1𝟮3٤٥⓺", &["digits".to_string()])
+                .unwrap(),
+            "۱۲۳۴۵۶"
+        );
+        assert_eq!(
+            nlp.normalize_stages(
+                "سلام(دنیا) ! می روم",
+                &[
+                    "punctuation".to_string(),
+                    "punctuation_spacing".to_string(),
+                    "verbal_spacing".to_string(),
+                ],
+            )
+            .unwrap(),
+            "سلام (دنیا)! می‌روم"
+        );
+        assert!(nlp.normalize_stages("x", &["bogus".to_string()]).is_err());
     }
 
     #[test]

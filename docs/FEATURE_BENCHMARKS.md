@@ -1,7 +1,9 @@
 # Feature benchmarks: Rishe vs Hazm vs Shekar
 
 Measured on Windows 11, Python 3.13, hazm 0.12.1, shekar 1.7.0. Reproduce with
-`python scripts/benchmark_features.py`.
+`python scripts/benchmark_features.py`,
+`python scripts/benchmark_normalizer.py` and
+`python scripts/benchmark_maskers.py`.
 
 ## Method and caveats
 
@@ -144,6 +146,76 @@ Rishe only. Python character offsets; checked by slicing the original text.
 | sentences | tokens | correct slices |
 |---|---|---|
 | 1000 | 15869 | 100.00% |
+
+## Normalizer operators
+
+1455 UD-PerDT sentences, single thread, libraries constructed once. Agreement is
+**exact output equality with Shekar** on the same sentence; Shekar exposes one
+class per operator, Hazm exposes one composite `Normalizer`.
+
+| operator | Rishe µs/sentence | Shekar µs/sentence | speedup | exact agreement |
+|---|---|---|---|---|
+| alphabet | 1.92 | 5.86 | 3.1× | 100.00% |
+| arabic_unicode | 1.79 | 5.58 | 3.1× | 100.00% |
+| ya | 1.16 | 0.86 | 0.7× | 100.00% |
+| digits | 1.88 | 5.76 | 3.1× | 100.00% |
+| punctuation | 2.32 | 6.63 | 2.9× | 100.00% |
+| repeated_letters | 1.37 | 3.63 | 2.7× | 100.00% |
+| orthographic_spacing | 3.04 | 18.31 | 6.0× | 100.00% |
+| punctuation_spacing | 6.90 | 10.67 | 1.5× | 100.00% |
+| word_spacing | 9.43 | 33.25 | 3.5× | 80.00% |
+| verbal_spacing | 3.54 | 11.31 | 3.2× | 99.04% |
+| spacing | 20.02 | 77.25 | 3.9× | 79.24% |
+
+Composite pipelines:
+
+| pipeline | µs/sentence | exact agreement with Rishe `normalize` |
+|---|---|---|
+| Rishe `normalize` | 1.23 | 100.00% |
+| Rishe `spacing` | 19.84 | 84.54% |
+| Shekar `Normalizer` | 107.52 | 80.96% |
+| Hazm `Normalizer` | 100.55 | 73.88% |
+
+- `ya` is the one operator where Shekar's compiled regex beats Rishe (0.86 vs
+  1.16 µs). Everything else is 1.5–6× faster.
+- Word-spacing disagreement is almost entirely Shekar's `compound_words.csv`
+  (`ابن سینا` → `ابن‌سینا`, `به طور` → `به‌طور`). Rishe validates prefix and
+  suffix joins against its compiled lexicons and does not bundle that list.
+- The remaining verbal-spacing disagreements are mostly Shekar over-joins
+  (`میزان` → `می‌زانی`, `در بیان` → `دربیان`); Rishe stays conservative.
+- Sub-2 µs operators vary about 10% run to run.
+
+## Maskers and removers
+
+1455 UD-PerDT sentences, single thread, libraries constructed once. Exact
+agreement is exact stripped output equality with Shekar.
+
+| masker | Rishe µs/sentence | Shekar µs/sentence | speedup | exact agreement |
+|---|---|---|---|---|
+| url | 0.96 | 0.53 | 0.5× | 100.00% |
+| email | 0.96 | 1.31 | 1.4× | 100.00% |
+| mention | 0.95 | 0.49 | 0.5× | 100.00% |
+| hashtag | 0.96 | 0.49 | 0.5× | 100.00% |
+| emoji | 1.21 | 2.61 | 2.2× | 100.00% |
+| html | 0.96 | 0.62 | 0.6× | 100.00% |
+| non_persian | 2.18 | 1.25 | 0.6× | 100.00% |
+| stopwords | 2.41 | 304.75 | 126.5× | 17.53% |
+| offensive | 1.72 | 115.65 | 67.3× | 100.00% |
+| digits | 1.97 | 5.85 | 3.0× | 100.00% |
+| diacritics | 3.17 | 5.82 | 1.8× | 100.00% |
+| punctuation | 1.66 | 6.06 | 3.6× | 100.00% |
+
+- 11 of 12 maskers match Shekar exactly. The stopword row measures list overlap:
+  Rishe uses its 389-word Hazm-derived list, Shekar its 301-word list.
+- Stopwords and offensive words are 67–126× faster: Rishe runs one Aho-Corasick
+  pass with word-boundary checks; Shekar applies one compiled regex per word.
+- The sub-1 µs no-op rows (`url`, `mention`, `hashtag`, `html`) are dominated by
+  the pyo3 call floor (0.78 µs for `mask_stages` with no stages), not masker
+  work. Shekar returns the original Python string when nothing matches.
+- Maskers strip their output like Shekar and do not collapse the spaces left
+  behind. Run `normalize_stages(..., ["spacing"])` afterwards if needed.
+
+Reproduce: `python scripts/benchmark_maskers.py`.
 
 ## Core accuracy unchanged
 

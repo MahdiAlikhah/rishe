@@ -224,6 +224,18 @@ impl MorphologyEngine {
             .map(|roots| roots.present.as_str())
     }
 
+    pub fn is_past_stem(&self, stem: &str) -> bool {
+        self.verb_roots.contains_key(stem)
+    }
+
+    #[inline(always)]
+    pub fn is_adjective(&self, word: &str) -> bool {
+        const POS_ADJ: u8 = 1 << 1;
+        self.noun_lexicon
+            .get(word)
+            .is_some_and(|packed| ((packed >> 56) as u8 & POS_ADJ) != 0)
+    }
+
     pub fn conjugate(&self, verb: &str) -> Option<crate::conjugation::Conjugation> {
         self.verb_roots(verb)
             .map(crate::conjugation::Conjugation::from_roots)
