@@ -2,8 +2,9 @@
 
 Measured on Windows 11, Python 3.13, hazm 0.12.1, shekar 1.7.0. Reproduce with
 `python scripts/benchmark_features.py`,
-`python scripts/benchmark_normalizer.py` and
-`python scripts/benchmark_maskers.py`.
+`python scripts/benchmark_normalizer.py`,
+`python scripts/benchmark_maskers.py` and
+`python scripts/benchmark_embeddings.py`.
 
 ## Method and caveats
 
@@ -222,3 +223,45 @@ Reproduce: `python scripts/benchmark_maskers.py`.
 The P0 additions do not regress the core benchmark: token F1 1.0000 / 0.9989 /
 0.9028 (Seraji / PerDT / PEYMA) and lemma accuracy 0.9209 / 0.9316, with
 tokenize at ~4.1 µs and the full pipeline at ~16.3 µs per sentence.
+
+## Static embeddings
+
+Both libraries load the same file:
+`fasttext_skipgram_300.vec` from
+[roshan-research/hazm-word-embedding](https://huggingface.co/roshan-research/hazm-word-embedding),
+2.33 GB, 884,790 vectors × 300 dimensions. Hazm loads it through
+`WordEmbedding.load(..., model_type="keyedvector")`, gensim 4.4.0. Rishe 0.4.0,
+Windows 11, Python 3.13, single thread.
+
+| metric | Rishe | Hazm/gensim |
+|---|---|---|
+| Load time | **5.89 s** | 175.95 s |
+| Vocabulary | 884,790 | 884,790 |
+| Mean cosine between word vectors | **1.000000** | — |
+| Max absolute component difference | **0.00e+00** | — |
+| Sentence vector, mean pooling (500 UD-Seraji sentences) | **0.0152 ms** | 0.0373 ms |
+| Sentence throughput | **65,968/s** | 26,793/s |
+| Word → Python list | 5.95 µs | **5.15 µs** |
+| Top-10 nearest neighbours, 20 query words | **100% overlap** | — |
+
+Caveats:
+
+- Hazm has no sentence-vector helper. The baseline is the mean of gensim word
+  vectors over the same tokens, which is the standard average-pooling baseline,
+  not a trained sentence encoder.
+- Word vectors are bit-identical, so they are not the source of any difference.
+  Sentence-vector agreement is 0.9981 mean and 0.8815 minimum over the 500
+  sentences; the gap is tokenizer boundaries (Rishe's tokenizer vs Hazm's
+  `WordTokenizer`), not pooling arithmetic.
+- The lookup row compares equal work: Rishe returns a Python list, gensim's
+  `KeyedVectors[word]` returns a numpy view (≈0.4 µs) that still has to be
+  converted before use, so the table measures `vector(word)` against
+  `KeyedVectors[word].tolist()`.
+- `most_similar` is a linear scan over the vocabulary. It is fine for
+  interactive use (20 queries complete as part of this benchmark); an ANN index
+  is the upgrade path if it ever lands on a request hot path.
+- Interrupted downloads restart from zero. Resume support is the next Hub
+  improvement if model files keep growing.
+
+Reproduce: `python -m rishe.cli hub pull hazm-fasttext-300` then
+`python scripts/benchmark_embeddings.py`.

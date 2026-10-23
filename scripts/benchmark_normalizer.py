@@ -128,7 +128,7 @@ def main():
         print(f"| {name} | {us:.2f} | {pct(agree, len(sentences)):.2f}% |")
 
     print(
-        "\n`Rishe normalize` is the 0.3.0 default and does not run punctuation, "
+        "\n`Rishe normalize` is the 0.4.0 default and does not run punctuation, "
         "repeated-letter or full spacing normalization; `Rishe spacing` opts into "
         "the four spacing operators."
     )

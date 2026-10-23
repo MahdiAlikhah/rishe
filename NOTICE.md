@@ -15,6 +15,12 @@ from Shekar's `offensive_words.csv`, and the keyboard/OCR noise maps in
 `src/augment.rs` are adapted from Shekar's noise transforms. Shekar is
 distributed under the MIT License; the MIT terms below apply.
 
+The model downloaded by `rishe.hub.pull("hazm-fasttext-300")` is
+`fasttext_skipgram_300.vec` from the
+[roshan-research/hazm-word-embedding](https://huggingface.co/roshan-research/hazm-word-embedding)
+repository. It is not bundled with Rishe and is not covered by Rishe's license;
+check that repository for the model's own terms before redistributing it.
+
 ---
 
 The MIT License (MIT)

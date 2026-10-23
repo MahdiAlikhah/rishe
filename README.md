@@ -40,6 +40,10 @@ doc.formal_text  # 'آن دارد تو خانه کتاب می‌خواند، چ�
 - **Spell correction that is fast enough to stay in the loop.** 80.8% top-1 and
   96.2% top-5 on synthetic 1-edit typos, at 0.16 ms per word; Shekar's
   statistical checker is 60.8% / 77.6% at 94 ms per word on the same set.
+- **Embeddings without a Python runtime.** A 2.3 GB fastText `.vec` loads in
+  5.9 s (Hazm/gensim: 176 s) with bit-identical vectors; sentence pooling is
+  2.5× faster, nearest neighbours match Hazm's top-10, and batch calls release
+  the GIL.
 - **Millions of tokens per second.** 1.0M tokens/s on one thread; `pipe()`
   runs batches in parallel with the GIL released and reaches 6.5M tokens/s on
   12 threads.
@@ -93,6 +97,21 @@ UD Persian-PerDT and PEYMA test sets. Every library is built once and reused.
 | Spell correction | top-1 / top-5 on 1-edit typos | **80.8% / 96.2%** | N/A | 60.8% / 77.6% |
 | Stopwords | list size | 389 | 389 | 301 |
 
+**Static embeddings** (same 2.3 GB fastText `.vec`: 884,790 words × 300 dims;
+Hazm loads it through gensim 4.4.0)
+
+| | Rishe | Hazm/gensim |
+|---|---|---|
+| Load | **5.9 s** | 176 s |
+| Word vectors | identical (max component Δ 0.0) | — |
+| Sentence embedding, mean pooling (UD-Seraji) | **0.015 ms** | 0.037 ms |
+| Word → Python list | 5.9 µs | 5.1 µs |
+| Top-10 nearest neighbours | **100% overlap** | — |
+
+Rishe loads the same model 30× faster and pools sentences 2.5× faster, with
+bit-identical word vectors. Word lookup is at parity: both paths build a Python
+list, which dominates the cost.
+
 The normalizer operators are 1.5–6× faster than Shekar's per operator (the
 exception is `ya`, 0.7×) with exact output agreement of 100% on 8 of 11
 operators and 99.04% on verbal spacing. `normalize_stages` is opt-in; the default
@@ -110,6 +129,7 @@ python scripts/benchmark.py             # core token/lemma/speed
 python scripts/benchmark_features.py   # stemming, conjugation, splitting, spelling
 python scripts/benchmark_normalizer.py # 11 normalizer operators vs Shekar/Hazm
 python scripts/benchmark_maskers.py    # 12 maskers vs Shekar
+python scripts/benchmark_embeddings.py # static embeddings vs Hazm/gensim
 ```
 
 ## Install
@@ -118,9 +138,10 @@ python scripts/benchmark_maskers.py    # 12 maskers vs Shekar
 pip install rishe        # Python >= 3.9
 ```
 
-or, from Rust (`Cargo.toml`): `rishe = "0.2"`.
+or, from Rust (`Cargo.toml`): `rishe = "0.4"`.
 
-No Python dependencies. No model downloads. No network access at runtime.
+The base install has no Python dependencies and no model downloads. Optional
+models are pulled explicitly and nothing touches the network at runtime.
 
 ## Usage
 
@@ -258,6 +279,34 @@ Options: `join_verb_parts`, `join_abbreviations`, `separate_emoji`,
 `replace_hashtags`. All are off by default, so plain `word_tokenize` is
 unchanged.
 
+### Embeddings
+
+Static fastText/word2vec vectors load from a `.vec` file into the Rust core and
+stay there: lookups and sentence pooling run without Python objects, numpy or
+gensim, and the model is shared read-only across threads. Downloads are
+explicit and checksum-verified:
+
+```bash
+rishe hub pull hazm-fasttext-300      # 2.3 GB, cached in ~/.cache/rishe/models
+```
+
+```python
+from rishe import Embeddings, hub
+
+emb = Embeddings(hub.path("hazm-fasttext-300"))
+emb.dim, len(emb)                     # vector size, vocabulary size
+emb.vector("کتاب")                    # list[float] or None
+emb.similarity("کتاب", "دفتر")         # cosine or None
+emb.sentence_vector("این کتاب خوب است") # mean of in-vocab token vectors
+emb.sentence_vectors(["یک متن", "متن دیگر"])  # parallel, GIL released
+emb.most_similar("کتاب", 5)           # [(word, cosine), ...]
+```
+
+Out-of-vocabulary tokens are skipped in sentence vectors; `vector()` and
+`similarity()` return `None`. `RISHE_HOME` overrides the cache root, and
+`rishe.hub.pull(url, sha256=...)` pulls a custom model. Only `.vec` text files
+are supported: fastText `.bin` and GloVe files are not.
+
 ### Corpora
 
 ```python
@@ -280,24 +329,29 @@ rishe mask "info@a.co" --stages email
 printf '%s\n' '{"command":"tokenize","text":"سلام دنیا"}' | rishe serve
 ```
 
-### Migrating from Hazm
+### Convenience classes
+
+Module-level helpers have object-style counterparts when you want a long-lived
+instance instead of building one per call:
 
 ```python
 from rishe import Lemmatizer, Normalizer, WordTokenizer, Stemmer
 
 normalizer = Normalizer()
-normalizer.normalize("مي كنم")       # 'می‌کنم'
+normalizer.normalize("مي كنم")        # 'می‌کنم'
 
 lemmatizer = Lemmatizer()
-lemmatizer.lemmatize("می‌روم")        # 'رفت#رو'
+lemmatizer.lemmatize("می‌روم")         # 'رفت#رو'  (past#present)
 
-WordTokenizer().tokenize("رفته است")  # ['رفته_است']
+WordTokenizer().tokenize("رفته است")   # ['رفته_است']
 ```
 
-The wrappers cover `Normalizer`, `WordTokenizer`, `SentenceTokenizer`,
-`Lemmatizer`, `Stemmer` and `TokenSplitter`, plus module-level `word_tokenize`
-and `sent_tokenize`. Hazm constructor arguments that point at custom lexicon
-files are rejected because Rishe compiles its lexicons in.
+`Normalizer`, `WordTokenizer`, `SentenceTokenizer`, `Lemmatizer`, `Stemmer` and
+`TokenSplitter` are all available this way, plus the module-level
+`word_tokenize` and `sent_tokenize`. They take no lexicon paths: Rishe compiles
+its lexicons in.
+
+### Rust
 
 ```rust
 use rishe::Pipeline;
@@ -313,12 +367,12 @@ println!("{}", pipe.stem("کتاب‌ها"));
 Rishe is a text-preprocessing and morphology engine: normalization,
 tokenization, sentence splitting, lemmatization, stemming, verb conjugation,
 inflection, token splitting, spell correction, stopword removal, ezafe
-detection and informal → formal conversion.
+detection, informal → formal conversion and static word/sentence embeddings.
 
 It does **not** yet do POS tagging, chunking, NER, dependency parsing,
-embeddings or text classification. Those are the next optional model packs;
-the base stays zero-dependency and fast. Today, use Rishe as the preprocessing
-step in front of a tagger or parser.
+contextual embeddings or text classification. Static word/sentence embeddings
+are available as an opt-in model file; the base stays zero-dependency and fast.
+Today, use Rishe as the preprocessing step in front of a tagger or parser.
 
 ## Building from source
 

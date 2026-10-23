@@ -15,6 +15,20 @@ echo "به https://a.b برو" | rishe mask --stages url
 `mask` defaults to all maskers; pass `--stages` to choose, and `--mask-token` to
 override the per-stage default.
 
+## Models
+
+Downloads are explicit; the base install never touches the network.
+
+```bash
+rishe hub list                             # registered models and cache status
+rishe hub pull hazm-fasttext-300           # 2.3 GB, checksum-verified
+rishe hub pull https://example.com/fa.vec --sha256 <64-hex-digest>
+```
+
+Models land in `$RISHE_HOME/models` or `~/.cache/rishe/models`, and
+`rishe.hub.path(name)` returns the local path for
+`rishe.Embeddings(...)`.
+
 ## JSON-lines server
 
 `rishe serve` reads one JSON object per line from stdin and writes one JSON

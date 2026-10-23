@@ -7,7 +7,7 @@ import json
 import sys
 from typing import List, Optional
 
-from . import Pipeline
+from . import Pipeline, hub
 
 DEFAULT_MASK_STAGES = [
     "url",
@@ -23,7 +23,16 @@ DEFAULT_MASK_STAGES = [
 ]
 
 
+def _configure_stdio() -> None:
+    """Emit and read UTF-8 regardless of the console code page."""
+    for stream in (sys.stdin, sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(encoding="utf-8")
+
+
 def main(argv: Optional[List[str]] = None) -> int:
+    _configure_stdio()
     parser = argparse.ArgumentParser(
         prog="rishe",
         description="Fast Persian NLP and morphology.",
@@ -54,7 +63,17 @@ def main(argv: Optional[List[str]] = None) -> int:
     serve.add_argument("--stages", nargs="+", default=DEFAULT_MASK_STAGES)
     serve.add_argument("--mask-token", default=None)
 
+    hub_parser = subparsers.add_parser("hub", help="Download and cache models.")
+    hub_commands = hub_parser.add_subparsers(dest="hub_command", required=True)
+    hub_pull = hub_commands.add_parser("pull", help="Download a model into the cache.")
+    hub_pull.add_argument("name", help="model name or a URL with --sha256")
+    hub_pull.add_argument("--sha256", default=None, help="required for custom URLs")
+    hub_pull.add_argument("--force", action="store_true", help="re-download")
+    hub_commands.add_parser("list", help="List known models and cache status.")
+
     args = parser.parse_args(argv)
+    if args.command == "hub":
+        return _hub(args)
     pipe = Pipeline()
 
     if args.command == "serve":
@@ -79,6 +98,16 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(result)
     else:
         print(" ".join(result))
+    return 0
+
+
+def _hub(args) -> int:
+    if args.hub_command == "pull":
+        print(hub.pull(args.name, sha256=args.sha256, force=args.force))
+    else:
+        for name, model in hub.MODELS.items():
+            status = "cached" if hub.cached(name) else "missing"
+            print(f"{name}\t{status}\t{model.filename}")
     return 0
 
 

@@ -7,3 +7,11 @@
 ## Corpus readers
 
 ::: rishe.corpora
+
+## Embeddings
+
+::: rishe.Embeddings
+
+## Model hub
+
+::: rishe.hub

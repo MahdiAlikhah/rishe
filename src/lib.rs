@@ -2,6 +2,7 @@ pub mod augment;
 pub mod colloquial;
 pub mod conjugation;
 pub mod detokenizer;
+pub mod embeddings;
 pub mod ezafe;
 pub mod inflector;
 pub mod keywords;
@@ -671,10 +672,63 @@ mod py_bindings {
         }
     }
 
+    #[pymethods]
+    impl embeddings::Embeddings {
+        #[new]
+        pub fn py_new(path: &str) -> PyResult<Self> {
+            Self::load(path).map_err(pyo3::exceptions::PyIOError::new_err)
+        }
+
+        fn __len__(&self) -> usize {
+            self.len()
+        }
+
+        #[getter(dim)]
+        fn py_dim(&self) -> usize {
+            self.dim()
+        }
+
+        #[pyo3(name = "contains")]
+        pub fn py_contains(&self, word: &str) -> bool {
+            self.contains(word)
+        }
+
+        #[pyo3(name = "vector")]
+        pub fn py_vector(&self, word: &str) -> Option<Vec<f32>> {
+            self.vector(word).map(<[f32]>::to_vec)
+        }
+
+        #[pyo3(name = "similarity")]
+        pub fn py_similarity(&self, first: &str, second: &str) -> Option<f32> {
+            self.similarity(first, second)
+        }
+
+        #[pyo3(name = "sentence_vector")]
+        pub fn py_sentence_vector(&self, text: &str) -> Vec<f32> {
+            self.sentence_vector(text)
+        }
+
+        #[pyo3(name = "sentence_vectors")]
+        pub fn py_sentence_vectors(&self, py: Python<'_>, texts: Vec<String>) -> Vec<Vec<f32>> {
+            py.allow_threads(|| self.sentence_vectors(&texts))
+        }
+
+        #[pyo3(name = "sentence_similarity")]
+        pub fn py_sentence_similarity(&self, first: &str, second: &str) -> f32 {
+            self.sentence_similarity(first, second)
+        }
+
+        #[pyo3(name = "most_similar", signature = (word, n=5))]
+        pub fn py_most_similar(&self, word: &str, n: usize) -> Vec<(String, f32)> {
+            self.most_similar(word, n)
+        }
+    }
+
     #[pymodule]
     pub fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
         m.add_class::<Pipeline>()?;
         m.add_class::<ProcessedDoc>()?;
+        m.add_class::<embeddings::Embeddings>()?;
         Ok(())
     }
 }
