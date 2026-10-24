@@ -371,8 +371,8 @@ detection, informal → formal conversion and static word/sentence embeddings.
 
 Optional model packs add POS tagging, NER and ezafe detection. They are
 separate downloads from the Hugging Face Hub, so the base install stays
-zero-dependency and fast. The 0.5.0 engine loads the packs; until then they run
-directly with ONNX Runtime.
+zero-dependency and fast. The 0.5.0 engine will load the packs; until then they
+run directly with ONNX Runtime.
 
 Dependency parsing, chunking, contextual embeddings and text classification are
 not in the base yet.
