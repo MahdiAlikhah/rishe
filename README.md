@@ -369,10 +369,13 @@ tokenization, sentence splitting, lemmatization, stemming, verb conjugation,
 inflection, token splitting, spell correction, stopword removal, ezafe
 detection, informal → formal conversion and static word/sentence embeddings.
 
-It does **not** yet do POS tagging, chunking, NER, dependency parsing,
-contextual embeddings or text classification. Static word/sentence embeddings
-are available as an opt-in model file; the base stays zero-dependency and fast.
-Today, use Rishe as the preprocessing step in front of a tagger or parser.
+Optional model packs add POS tagging, NER and ezafe detection. They are
+separate downloads from the Hugging Face Hub, so the base install stays
+zero-dependency and fast. The 0.5.0 engine loads the packs; until then they run
+directly with ONNX Runtime.
+
+Dependency parsing, chunking, contextual embeddings and text classification are
+not in the base yet.
 
 ## Building from source
 

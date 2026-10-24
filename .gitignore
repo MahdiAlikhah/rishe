@@ -6,6 +6,3 @@ __pycache__/
 *.so
 /dist
 /data/corpora/
-/data/raw_*
-/command-code-session-*.html
-/.commandcode
