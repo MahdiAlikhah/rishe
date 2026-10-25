@@ -43,6 +43,6 @@ Documentation = "https://docs.rs/rishe"
 [tool.maturin]
 module-name = "rishe._core"
 python-source = "python"
-features = ["python"]
+features = ["python", "models"]
 binding = "pyo3"
 exclude = ["python/rishe/*.pdb", "python/rishe/*.pyd", "**/__pycache__/**"]

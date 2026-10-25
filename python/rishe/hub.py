@@ -12,6 +12,7 @@ The cache lives in ``$RISHE_HOME/models`` or ``~/.cache/rishe/models``.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import sys
 import tempfile
@@ -21,7 +22,17 @@ from pathlib import Path
 from typing import Dict, NamedTuple, Optional
 from urllib.parse import urlparse
 
-__all__ = ["MODELS", "cache_dir", "cached", "path", "pull"]
+__all__ = [
+    "MODELS",
+    "PACKS",
+    "cache_dir",
+    "cached",
+    "cached_pack",
+    "path",
+    "path_pack",
+    "pull",
+    "pull_pack",
+]
 
 
 class Model(NamedTuple):
@@ -37,6 +48,15 @@ MODELS: Dict[str, Model] = {
         filename="hazm-fasttext-300.vec",
     ),
 }
+
+PACKS: Dict[str, str] = {
+    "pos-compact": "pos",
+    "ner-compact": "ner",
+    "ezafe-compact": "ezafe",
+}
+PACK_BASE = "https://huggingface.co/MahdiAlikhah/rishe-models/resolve/main"
+PACK_MANIFEST_SHA256 = "a8ad4ae2c354c2d278344e5433fce0dd3fb5116415d4e5d2c788b0b407010661"
+PACK_REQUIRED = ("model.onnx", "tokenizer.json", "labels.json")
 
 
 def cache_dir() -> Path:
@@ -96,12 +116,18 @@ def pull(
         raise ValueError("sha256 must be a 64-character hex digest")
 
     target = cache_dir() / Path(model.filename).name
+    return _download(model.url, target, model.sha256, force=force)
+
+
+def _download(url: str, target: Path, sha256: str, *, force: bool = False) -> Path:
+    """Download one file atomically and verify its checksum."""
+    target = Path(target)
     if target.exists() and not force:
         return target
-    cache_dir().mkdir(parents=True, exist_ok=True)
+    target.parent.mkdir(parents=True, exist_ok=True)
 
     handle, temporary = tempfile.mkstemp(
-        dir=cache_dir(), prefix=f".{model.filename}.", suffix=".part"
+        dir=target.parent, prefix=f".{target.name}.", suffix=".part"
     )
     # ponytail: an interrupted download restarts from zero; add Range resume
     # when model sizes keep growing or the CDN proves unreliable.
@@ -109,7 +135,7 @@ def pull(
     total = 0
     try:
         with os.fdopen(handle, "wb") as output:
-            request = urllib.request.Request(model.url, headers={"User-Agent": "rishe"})
+            request = urllib.request.Request(url, headers={"User-Agent": "rishe"})
             try:
                 response = urllib.request.urlopen(request, timeout=60)
             except urllib.error.URLError as error:
@@ -136,9 +162,9 @@ def pull(
                         next_report += 64 << 20
 
         actual = digest.hexdigest()
-        if actual != model.sha256:
+        if actual != sha256.lower():
             raise ValueError(
-                f"checksum mismatch for {model.url}: expected {model.sha256}, got {actual}"
+                f"checksum mismatch for {url}: expected {sha256}, got {actual}"
             )
         os.replace(temporary, target)
     finally:
@@ -147,4 +173,63 @@ def pull(
 
     if total and sys.stderr.isatty():
         print(file=sys.stderr)
+    return target
+
+
+def _pack_base() -> str:
+    return os.environ.get("RISHE_MODEL_BASE", PACK_BASE).rstrip("/")
+
+
+def cached_pack(name: str) -> Optional[Path]:
+    """Return the local directory of a cached task pack, or ``None``."""
+    if name not in PACKS:
+        raise ValueError(f"unknown pack {name!r}; known packs: {', '.join(PACKS)}")
+    target = cache_dir() / name
+    return target if all((target / file).is_file() for file in PACK_REQUIRED) else None
+
+
+def path_pack(name: str) -> Path:
+    """Return the local directory of a cached task pack, raising when it was not pulled."""
+    target = cached_pack(name)
+    if target is None:
+        raise FileNotFoundError(
+            f"{name!r} is not cached; run: rishe hub pull {name} "
+            f"(or rishe.hub.pull_pack({name!r}))"
+        )
+    return target
+
+
+def pull_pack(name: str, *, force: bool = False) -> Path:
+    """Download a task pack (model, tokenizer and labels) and return its directory."""
+    task = PACKS.get(name)
+    if task is None:
+        raise ValueError(f"unknown pack {name!r}; known packs: {', '.join(PACKS)}")
+    target = cache_dir() / name
+    if not force and all((target / file).is_file() for file in PACK_REQUIRED):
+        return target
+    target.mkdir(parents=True, exist_ok=True)
+
+    manifest_path = cache_dir() / "rishe-models-manifest.json"
+    _download(
+        f"{_pack_base()}/manifest.json",
+        manifest_path,
+        PACK_MANIFEST_SHA256,
+        force=True,
+    )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    files = manifest.get("tasks", {}).get(task, {}).get("files", {})
+    if not files:
+        raise ValueError(f"manifest has no files for task {task!r}")
+
+    for filename, metadata in files.items():
+        _download(
+            f"{_pack_base()}/{task}/{Path(filename).name}",
+            target / Path(filename).name,
+            metadata["sha256"],
+            force=force,
+        )
+
+    missing = [file for file in PACK_REQUIRED if not (target / file).is_file()]
+    if missing:
+        raise RuntimeError(f"pack {name!r} is incomplete; missing: {', '.join(missing)}")
     return target

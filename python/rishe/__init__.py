@@ -5,7 +5,7 @@ Rishe (ریشه): High-performance Persian NLP engine.
 from collections.abc import Iterable
 
 from . import hub
-from ._core import Embeddings, Pipeline, ProcessedDoc
+from ._core import Embeddings, ModelPack, Pipeline, ProcessedDoc
 from .compat import (
     Lemmatizer,
     Normalizer,
@@ -31,6 +31,7 @@ __all__ = [
     "Pipeline",
     "ProcessedDoc",
     "Embeddings",
+    "ModelPack",
     "hub",
     "flatten",
     "Token",

@@ -103,11 +103,17 @@ def main(argv: Optional[List[str]] = None) -> int:
 
 def _hub(args) -> int:
     if args.hub_command == "pull":
-        print(hub.pull(args.name, sha256=args.sha256, force=args.force))
+        if args.name in hub.PACKS:
+            print(hub.pull_pack(args.name, force=args.force))
+        else:
+            print(hub.pull(args.name, sha256=args.sha256, force=args.force))
     else:
         for name, model in hub.MODELS.items():
             status = "cached" if hub.cached(name) else "missing"
             print(f"{name}\t{status}\t{model.filename}")
+        for name in hub.PACKS:
+            status = "cached" if hub.cached_pack(name) else "missing"
+            print(f"{name}\t{status}\tpack")
     return 0
 
 

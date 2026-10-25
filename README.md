@@ -12,8 +12,9 @@ formal rewrite of colloquial writing. It also ships the morphology utilities
 that usually live in a separate library: stemming, verb conjugation,
 inflection, token splitting, spell correction, and stopword removal.
 
-The core is Rust. You get it as a `pip install` with prebuilt wheels, no model
-downloads, no runtime dependencies, and the same engine as a Rust crate.
+The core is Rust. You get it as a `pip install` with prebuilt wheels, no
+runtime dependencies, and the same engine as a Rust crate. The base pipeline
+needs no model downloads; optional POS/NER/ezafe packs are separate.
 
 ```python
 from rishe import Pipeline
@@ -44,6 +45,9 @@ doc.formal_text  # 'آن دارد تو خانه کتاب می‌خواند، چ�
   5.9 s (Hazm/gensim: 176 s) with bit-identical vectors; sentence pooling is
   2.5× faster, nearest neighbours match Hazm's top-10, and batch calls release
   the GIL.
+- **POS, NER and ezafe without a Python ML stack.** Three compact task packs
+  load through `ModelPack` into the pure-Rust ONNX runtime; no ONNX Runtime,
+  transformers or torch install, and inference releases the GIL.
 - **Millions of tokens per second.** 1.0M tokens/s on one thread; `pipe()`
   runs batches in parallel with the GIL released and reaches 6.5M tokens/s on
   12 threads.
@@ -54,8 +58,8 @@ doc.formal_text  # 'آن دارد تو خانه کتاب می‌خواند، چ�
   `میخوام`, `چیه`) are rewritten to their formal spelling, and fused clitics
   such as `بهش` and `ازش` are split into `به` + `او` and `از` + `او`.
 - **Nothing to set up.** Compiled-in lexicons (190k nouns, 1.2k verb stems, word
-  frequencies, stopwords), no model downloads, no Python dependencies, no
-  network access.
+  frequencies, stopwords), no Python dependencies, and no network access for
+  the base pipeline. Optional task packs are separate downloads.
 - **Wheels for every major platform.** Linux (glibc and musl, x86_64 and
   aarch64), macOS (Intel and Apple Silicon) and Windows, for Python 3.9+
   (abi3). The same core is available as a Rust crate.
@@ -307,6 +311,44 @@ Out-of-vocabulary tokens are skipped in sentence vectors; `vector()` and
 `rishe.hub.pull(url, sha256=...)` pulls a custom model. Only `.vec` text files
 are supported: fastText `.bin` and GloVe files are not.
 
+### Model packs
+
+POS tagging, NER and ezafe detection ship as three compact task packs. Each
+pack is a separate, checksum-verified download (under 50 MB; the model is 45 MB
+and the tokenizer adds 2.4 MB); the base install stays free of Python ML
+dependencies. The packs run on the pure-Rust runtime inside Rishe, so there is
+no ONNX Runtime install and no Python tokenizer stack.
+
+```bash
+rishe hub pull pos-compact       # also: ner-compact, ezafe-compact
+```
+
+```python
+from rishe import ModelPack, hub
+
+pos = ModelPack(hub.path_pack("pos-compact"))
+pos.tag("کتاب‌های خوب را به دوستانم می‌دهم.")
+# [('کتاب‌های', 'NOUN'), ('خوب', 'ADJ'), ('را', 'ADP'), ('به', 'ADP'),
+#  ('دوستانم', 'NOUN'), ('می‌دهم', 'VERB'), ('.', 'PUNCT')]
+
+pos.tag_words(["کتاب‌های", "خوب"])   # pre-tokenized input
+
+ner = ModelPack(hub.pull_pack("ner-compact"))
+ner.tag("سرلشگر فیروزآبادی به پادشاه عربستان گفت.")
+# [..., ('فیروزآبادی', 'B_PER'), ..., ('عربستان', 'B_LOC'), ...]
+
+ezafe = ModelPack(hub.pull_pack("ezafe-compact"))
+ezafe.tag_words(["کتابخانه", "مرکزی", "دانشگاه", "شریف"])
+# [('کتابخانه', 'EZAFE'), ('مرکزی', 'EZAFE'), ('دانشگاه', 'EZAFE'),
+#  ('شریف', 'NO_EZAFE')]
+```
+
+`ModelPack` releases the GIL during inference. `hub.pull_pack(name)` downloads
+and returns the directory; `hub.path_pack(name)` returns an existing cache entry
+and raises if it is not there. From Rust, enable the `models` feature (this
+optional feature needs Rust 1.91; the default crate still builds on 1.75) and
+call `rishe::models::ModelPack::load(path)?.tag_text(text)?`.
+
 ### Corpora
 
 ```python
@@ -369,10 +411,10 @@ tokenization, sentence splitting, lemmatization, stemming, verb conjugation,
 inflection, token splitting, spell correction, stopword removal, ezafe
 detection, informal → formal conversion and static word/sentence embeddings.
 
-Optional model packs add POS tagging, NER and ezafe detection. They are
+Optional model packs add POS tagging, NER and a learned ezafe tagger. They are
 separate downloads from the Hugging Face Hub, so the base install stays
-zero-dependency and fast. The 0.5.0 engine will load the packs; until then they
-run directly with ONNX Runtime.
+zero-dependency and fast. The 0.5.0 engine loads the packs directly with
+`ModelPack`; no ONNX Runtime install is needed.
 
 Dependency parsing, chunking, contextual embeddings and text classification are
 not in the base yet.

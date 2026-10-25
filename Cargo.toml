@@ -30,12 +30,17 @@ crate-type = ["cdylib", "rlib"]
 [features]
 default = []
 python = ["dep:pyo3"]
+models = ["dep:tract", "dep:tokenizers", "dep:ndarray", "dep:serde_json"]
 
 [dependencies]
 aho-corasick = "1.1"
 fst = "0.4"
 rayon = "1.10"
 pyo3 = { version = "0.22", optional = true, features = ["extension-module", "abi3-py39"] }
+tract = { version = "0.23.9", optional = true, default-features = false, features = ["onnx"] }
+tokenizers = { version = "0.23", optional = true, default-features = false, features = ["unstable_wasm"] }
+ndarray = { version = "0.16", optional = true }
+serde_json = { version = "1", optional = true }
 
 [build-dependencies]
 fst = "0.4"

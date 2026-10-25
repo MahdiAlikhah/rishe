@@ -7,6 +7,8 @@ pub mod ezafe;
 pub mod inflector;
 pub mod keywords;
 pub mod maskers;
+#[cfg(feature = "models")]
+pub mod models;
 pub mod morphology;
 pub mod normalize_ops;
 pub mod normalizer;
@@ -724,11 +726,54 @@ mod py_bindings {
         }
     }
 
+    #[cfg(feature = "models")]
+    #[pymethods]
+    impl models::ModelPack {
+        #[new]
+        pub fn py_new(path: &str) -> PyResult<Self> {
+            Self::load(path).map_err(pyo3::exceptions::PyValueError::new_err)
+        }
+
+        #[pyo3(name = "tag")]
+        pub fn py_tag(&self, py: Python<'_>, text: &str) -> PyResult<Vec<(String, String)>> {
+            py.allow_threads(|| self.tag_text(text))
+                .map_err(pyo3::exceptions::PyValueError::new_err)
+        }
+
+        #[pyo3(name = "tag_words")]
+        pub fn py_tag_words(
+            &self,
+            py: Python<'_>,
+            words: Vec<String>,
+        ) -> PyResult<Vec<(String, String)>> {
+            let words: Vec<&str> = words.iter().map(String::as_str).collect();
+            py.allow_threads(|| self.tag_words(&words))
+                .map_err(pyo3::exceptions::PyValueError::new_err)
+        }
+
+        #[pyo3(name = "labels")]
+        pub fn py_labels(&self) -> Vec<String> {
+            self.labels().to_vec()
+        }
+
+        #[getter(task)]
+        pub fn py_task(&self) -> &str {
+            self.task()
+        }
+
+        #[getter(max_len)]
+        pub fn py_max_len(&self) -> usize {
+            self.max_len()
+        }
+    }
+
     #[pymodule]
     pub fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
         m.add_class::<Pipeline>()?;
         m.add_class::<ProcessedDoc>()?;
         m.add_class::<embeddings::Embeddings>()?;
+        #[cfg(feature = "models")]
+        m.add_class::<models::ModelPack>()?;
         Ok(())
     }
 }

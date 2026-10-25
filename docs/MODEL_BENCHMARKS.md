@@ -1,7 +1,7 @@
 # Model benchmarks
 
-Phase 0 baselines for the compact model pack. Nothing here is a Rishe model
-result yet; these are the numbers the pack must beat.
+Phase 0 baselines and the 0.5.0 compact pack results. The baseline numbers are
+what the packs had to beat; the Rishe rows are measured with the published packs.
 
 ## Method
 
@@ -89,13 +89,32 @@ The numbers below come from the first training run.
   at a fraction of its latency.
 - Ezafe reaches 94.86 F1 / 98.55% accuracy on a held-out HomoRich split.
 
-Full-model runtime, CPU, single thread, after tract prepare (~0.24 s):
+Full-model runtime, CPU, single thread, after tract prepare (~0.24 s), raw
+tensor input:
 
 | task | tokens | tract | onnxruntime | parity |
 |---|---|---|---|---|
 | POS | 11 | 22.1 ms | 14.9 ms | argmax 100%, max Δ 7.2e-6 |
 | NER | 25 | 49.1 ms | 35.0 ms | argmax 100%, max Δ 1.1e-5 |
 | Ezafe | 13 | 27.6 ms | 19.1 ms | argmax 100%, max Δ 5.7e-6 |
+
+### End-to-end `ModelPack` latency (0.5.0)
+
+Python API, pre-tokenized words, single thread, pack loaded once, first three
+calls warmed up. This includes pack tokenization, ONNX inference and argmax,
+but not Rishe's word tokenizer (use `tag(text)` for that path). Medians are
+over 200 sentences:
+
+| task | dataset | sentences | words | load s | median ms | p95 ms | words/s |
+|---|---|---|---|---|---|---|---|
+| POS | UD-PerDT | 200 | 3097 | 0.26 | 41.88 | 83.53 | 336 |
+| NER | PEYMA test | 200 | 5884 | 0.29 | 78.88 | 155.03 | 368 |
+| Ezafe | UD-PerDT (latency only) | 200 | 3097 | 0.30 | 41.71 | 81.04 | 340 |
+
+The larger NER numbers track sentence length: the PEYMA sample averages 29.4
+words per sentence against 15.5 for the PerDT sample. Reproduce with
+`python scripts/benchmark_modelpack.py`; set `RISHE_PACK_ROOT` to a local
+`compact` directory or use the packs already in the Rishe Hub cache.
 
 All three ONNX files load in tract unchanged (opset 14, batch 1, dynamic
 sequence). Manifest checksums match, and the Rust tokenizer produces the same
