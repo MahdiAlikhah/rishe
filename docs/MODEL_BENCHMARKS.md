@@ -56,9 +56,9 @@ Decisions:
 - **Do not ship tract int8.** If we need an 11 MB pack, the fallback is `ort`
   (or a distilled fp32 student), not dynamic int8 under tract.
 - **The size lever is distillation, not quantization.** A 6-layer student
-  (~6.4M params, ~23 MB fp32) is the 0.5.1 target; it halves the parameter
-  count and should land near 11 ms/sentence while keeping the compact tier's
-  accuracy.
+  (~6.4M params, ~23 MB fp32) is the next compact-pack target; it halves the
+  parameter count and should land near 11 ms/sentence while keeping the compact
+  tier's accuracy.
 
 ## Targets for the compact pack
 
