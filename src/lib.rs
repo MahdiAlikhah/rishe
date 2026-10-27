@@ -91,6 +91,12 @@ pub struct Pipeline {
     morphology: MorphologyEngine,
     colloquial: ColloquialConverter,
     spell: SpellChecker,
+    #[cfg(feature = "models")]
+    pos: Option<models::ModelPack>,
+    #[cfg(feature = "models")]
+    ner: Option<models::ModelPack>,
+    #[cfg(feature = "models")]
+    ezafe: Option<models::ModelPack>,
 }
 
 impl Pipeline {
@@ -106,7 +112,53 @@ impl Pipeline {
             morphology: MorphologyEngine::new(),
             colloquial: ColloquialConverter::new(),
             spell: SpellChecker::new(),
+            #[cfg(feature = "models")]
+            pos: None,
+            #[cfg(feature = "models")]
+            ner: None,
+            #[cfg(feature = "models")]
+            ezafe: None,
         }
+    }
+
+    #[cfg(feature = "models")]
+    pub fn load_pack(&mut self, task: &str, path: &str) -> Result<(), String> {
+        let pack = models::ModelPack::load(path)?;
+        match task {
+            "pos" => self.pos = Some(pack),
+            "ner" => self.ner = Some(pack),
+            "ezafe" => self.ezafe = Some(pack),
+            other => return Err(format!("unknown pack task: {other}")),
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "models")]
+    fn pack(&self, task: &str) -> Result<&models::ModelPack, String> {
+        match task {
+            "pos" => self.pos.as_ref(),
+            "ner" => self.ner.as_ref(),
+            "ezafe" => self.ezafe.as_ref(),
+            other => return Err(format!("unknown pack task: {other}")),
+        }
+        .ok_or_else(|| format!("{task} pack is not loaded"))
+    }
+
+    #[cfg(feature = "models")]
+    pub fn pos(&self, text: &str) -> Result<Vec<models::TaggedToken>, String> {
+        self.pack("pos")?.tag_text_items(text)
+    }
+
+    #[cfg(feature = "models")]
+    pub fn ner(&self, text: &str) -> Result<Vec<models::Entity>, String> {
+        Ok(models::merge_entities(
+            &self.pack("ner")?.tag_text_items(text)?,
+        ))
+    }
+
+    #[cfg(feature = "models")]
+    pub fn ezafe(&self, text: &str) -> Result<Vec<models::TaggedToken>, String> {
+        self.pack("ezafe")?.tag_text_items(text)
     }
 
     #[inline]
@@ -399,9 +451,59 @@ mod py_bindings {
     #[pymethods]
     impl Pipeline {
         #[new]
-        #[pyo3(signature = (unify_digits=true, strip_diacritics=true, fix_zwnj=true))]
-        pub fn py_new(unify_digits: bool, strip_diacritics: bool, fix_zwnj: bool) -> Self {
-            Self::create(unify_digits, strip_diacritics, fix_zwnj)
+        #[pyo3(signature = (unify_digits=true, strip_diacritics=true, fix_zwnj=true, pos_pack=None, ner_pack=None, ezafe_pack=None))]
+        pub fn py_new(
+            unify_digits: bool,
+            strip_diacritics: bool,
+            fix_zwnj: bool,
+            pos_pack: Option<String>,
+            ner_pack: Option<String>,
+            ezafe_pack: Option<String>,
+        ) -> PyResult<Self> {
+            #[cfg(feature = "models")]
+            let mut pipe = Self::create(unify_digits, strip_diacritics, fix_zwnj);
+            #[cfg(not(feature = "models"))]
+            let pipe = Self::create(unify_digits, strip_diacritics, fix_zwnj);
+
+            #[cfg(feature = "models")]
+            {
+                for (task, path) in [("pos", pos_pack), ("ner", ner_pack), ("ezafe", ezafe_pack)] {
+                    if let Some(path) = path {
+                        pipe.load_pack(task, &path)
+                            .map_err(pyo3::exceptions::PyValueError::new_err)?;
+                    }
+                }
+            }
+            #[cfg(not(feature = "models"))]
+            {
+                if pos_pack.is_some() || ner_pack.is_some() || ezafe_pack.is_some() {
+                    return Err(pyo3::exceptions::PyValueError::new_err(
+                        "model packs require the `models` feature",
+                    ));
+                }
+            }
+            Ok(pipe)
+        }
+
+        #[cfg(feature = "models")]
+        #[pyo3(name = "pos")]
+        pub fn py_pos(&self, py: Python<'_>, text: &str) -> PyResult<Vec<models::TaggedToken>> {
+            py.allow_threads(|| self.pos(text))
+                .map_err(pyo3::exceptions::PyValueError::new_err)
+        }
+
+        #[cfg(feature = "models")]
+        #[pyo3(name = "ner")]
+        pub fn py_ner(&self, py: Python<'_>, text: &str) -> PyResult<Vec<models::Entity>> {
+            py.allow_threads(|| self.ner(text))
+                .map_err(pyo3::exceptions::PyValueError::new_err)
+        }
+
+        #[cfg(feature = "models")]
+        #[pyo3(name = "ezafe")]
+        pub fn py_ezafe(&self, py: Python<'_>, text: &str) -> PyResult<Vec<models::TaggedToken>> {
+            py.allow_threads(|| self.ezafe(text))
+                .map_err(pyo3::exceptions::PyValueError::new_err)
         }
 
         pub fn __call__(&self, py: Python<'_>, text: &str) -> ProcessedDoc {
@@ -751,6 +853,22 @@ mod py_bindings {
                 .map_err(pyo3::exceptions::PyValueError::new_err)
         }
 
+        #[pyo3(name = "tag_tokens")]
+        pub fn py_tag_tokens(
+            &self,
+            py: Python<'_>,
+            text: &str,
+        ) -> PyResult<Vec<models::TaggedToken>> {
+            py.allow_threads(|| self.tag_text_items(text))
+                .map_err(pyo3::exceptions::PyValueError::new_err)
+        }
+
+        #[pyo3(name = "entities")]
+        pub fn py_entities(&self, py: Python<'_>, text: &str) -> PyResult<Vec<models::Entity>> {
+            py.allow_threads(|| self.entities(text))
+                .map_err(pyo3::exceptions::PyValueError::new_err)
+        }
+
         #[pyo3(name = "labels")]
         pub fn py_labels(&self) -> Vec<String> {
             self.labels().to_vec()
@@ -767,6 +885,48 @@ mod py_bindings {
         }
     }
 
+    #[cfg(feature = "models")]
+    #[pymethods]
+    impl models::TaggedToken {
+        #[getter(text)]
+        pub fn py_text(&self) -> &str {
+            &self.text
+        }
+        #[getter(tag)]
+        pub fn py_tag(&self) -> &str {
+            &self.tag
+        }
+        #[getter(start)]
+        pub fn py_start(&self) -> usize {
+            self.start
+        }
+        #[getter(end)]
+        pub fn py_end(&self) -> usize {
+            self.end
+        }
+    }
+
+    #[cfg(feature = "models")]
+    #[pymethods]
+    impl models::Entity {
+        #[getter(text)]
+        pub fn py_text(&self) -> &str {
+            &self.text
+        }
+        #[getter(label)]
+        pub fn py_label(&self) -> &str {
+            &self.label
+        }
+        #[getter(start)]
+        pub fn py_start(&self) -> usize {
+            self.start
+        }
+        #[getter(end)]
+        pub fn py_end(&self) -> usize {
+            self.end
+        }
+    }
+
     #[pymodule]
     pub fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
         m.add_class::<Pipeline>()?;
@@ -774,6 +934,10 @@ mod py_bindings {
         m.add_class::<embeddings::Embeddings>()?;
         #[cfg(feature = "models")]
         m.add_class::<models::ModelPack>()?;
+        #[cfg(feature = "models")]
+        m.add_class::<models::TaggedToken>()?;
+        #[cfg(feature = "models")]
+        m.add_class::<models::Entity>()?;
         Ok(())
     }
 }

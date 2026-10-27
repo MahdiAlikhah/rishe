@@ -10,7 +10,7 @@ Fast Persian NLP and morphology for Rust.
 
 ```toml
 [dependencies]
-rishe = "0.5"
+rishe = "0.6"
 ```
 
 The default crate has no model downloads and builds on Rust 1.75. The optional
@@ -89,19 +89,30 @@ let sentences = SentenceSplitter::split(text);
 
 ```toml
 [dependencies]
-rishe = { version = "0.5", features = ["models"] }
+rishe = { version = "0.6", features = ["models"] }
 ```
 
 Download a pack from
 [MahdiAlikhah/rishe-models](https://huggingface.co/MahdiAlikhah/rishe-models),
-then point `ModelPack` at its directory:
+then load it into a `Pipeline`:
 
 ```rust
-let pack = rishe::models::ModelPack::load("path/to/pos").expect("load pack");
-for (word, tag) in pack.tag_text("کتاب‌های خوب را به دوستانم می‌دهم.").expect("tag") {
-    println!("{word}\t{tag}");
+let mut pipe = rishe::Pipeline::create(true, true, true);
+pipe.load_pack("pos", "path/to/pos").expect("load pos");
+
+for token in pipe.pos("کتاب‌های خوب را به دوستانم می‌دهم.").expect("pos") {
+    println!("{}\t{}\t{}..{}", token.text, token.tag, token.start, token.end);
+}
+
+pipe.load_pack("ner", "path/to/ner").expect("load ner");
+for entity in pipe.ner("سرلشگر فیروزآبادی به پادشاه عربستان گفت.").expect("ner") {
+    println!("{}\t{}\t{}..{}", entity.text, entity.label, entity.start, entity.end);
 }
 ```
+
+`TaggedToken` exposes `text`, `tag`, `start` and `end`; `Entity` exposes
+`text`, `label`, `start` and `end`. Offsets are character offsets. The
+lower-level `rishe::models::ModelPack` is still available for one task.
 
 The packs are word-level ONNX files run through tract. No ONNX Runtime install
 is required.

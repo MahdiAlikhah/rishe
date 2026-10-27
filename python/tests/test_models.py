@@ -1,10 +1,13 @@
 import os
 import tempfile
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
-from rishe import ModelPack, hub
+from rishe import Entity, ModelPack, Pipeline, TaggedToken, hub
+from rishe.cli import main
 
 PACK_ROOT = Path(os.environ["RISHE_TEST_PACK"]) if os.environ.get("RISHE_TEST_PACK") else None
 
@@ -57,6 +60,49 @@ class ModelPackTest(unittest.TestCase):
         result = pack.tag_words(["کتابخانه", "مرکزی", "دانشگاه", "شریف"])
         self.assertEqual(len(result), 4)
         self.assertTrue(all(label in {"NO_EZAFE", "EZAFE"} for _, label in result))
+
+    def test_typed_tokens_and_entities(self):
+        pos = ModelPack(str(PACK_ROOT / "pos"))
+        tokens = pos.tag_tokens("کتاب‌های خوب")
+        self.assertIsInstance(tokens[0], TaggedToken)
+        self.assertEqual(tokens[0].text, "کتاب‌های")
+        self.assertEqual(tokens[0].tag, "NOUN")
+        self.assertEqual((tokens[0].start, tokens[0].end), (0, 8))
+
+        ner = ModelPack(str(PACK_ROOT / "ner"))
+        entities = ner.entities("سرلشگر فیروزآبادی به پادشاه عربستان گفت.")
+        self.assertTrue(any(entity.label == "PER" for entity in entities))
+        self.assertTrue(any(entity.label == "LOC" for entity in entities))
+        self.assertTrue(all(isinstance(entity, Entity) for entity in entities))
+
+    def test_pipeline_packs(self):
+        all_packs = Pipeline(
+            pos_pack=str(PACK_ROOT / "pos"),
+            ner_pack=str(PACK_ROOT / "ner"),
+            ezafe_pack=str(PACK_ROOT / "ezafe"),
+        )
+        self.assertEqual(all_packs.pos("کتاب‌های خوب")[0].tag, "NOUN")
+        self.assertTrue(all_packs.ner("فیروزآبادی گفت."))
+        self.assertTrue(all_packs.ezafe("کتابخانه مرکزی"))
+
+        pos = Pipeline(pos_pack=str(PACK_ROOT / "pos"))
+        self.assertEqual(pos.pos("کتاب‌های خوب")[0].tag, "NOUN")
+
+        ner = Pipeline(ner_pack=str(PACK_ROOT / "ner"))
+        self.assertTrue(any(entity.label == "PER" for entity in ner.ner("فیروزآبادی گفت.")))
+
+        ezafe = Pipeline(ezafe_pack=str(PACK_ROOT / "ezafe"))
+        self.assertTrue(ezafe.ezafe("کتابخانه مرکزی"))
+
+        with self.assertRaises(ValueError):
+            Pipeline().pos("متن")
+
+    def test_cli_pack(self):
+        output = StringIO()
+        with redirect_stdout(output):
+            code = main(["pos", "--pack", str(PACK_ROOT / "pos"), "کتاب‌های خوب"])
+        self.assertEqual(code, 0)
+        self.assertIn("NOUN", output.getvalue())
 
 
 if __name__ == "__main__":

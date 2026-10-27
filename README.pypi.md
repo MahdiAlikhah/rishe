@@ -147,25 +147,41 @@ POS, NER and ezafe are separate, checksum-verified downloads. They run inside
 the package without ONNX Runtime or a Python ML stack.
 
 ```bash
-rishe hub pull pos-compact       # also: ner-compact, ezafe-compact
+rishe hub pull pos-compact
+rishe hub pull ner-compact
+rishe hub pull ezafe-compact
 ```
 
 ```python
-from rishe import ModelPack, hub
+from rishe import Pipeline, hub
 
-pos = ModelPack(hub.path_pack("pos-compact"))
-pos.tag("کتاب‌های خوب را به دوستانم می‌دهم.")
-# [('کتاب‌های', 'NOUN'), ('خوب', 'ADJ'), ('را', 'ADP'), ('به', 'ADP'),
-#  ('دوستانم', 'NOUN'), ('می‌دهم', 'VERB'), ('.', 'PUNCT')]
+pipe = Pipeline(
+    pos_pack=str(hub.path_pack("pos-compact")),
+    ner_pack=str(hub.path_pack("ner-compact")),
+    ezafe_pack=str(hub.path_pack("ezafe-compact")),
+)
 
-pos.tag_words(["کتاب‌های", "خوب"])   # pre-tokenized input
+for token in pipe.pos("کتاب‌های خوب را به دوستانم می‌دهم."):
+    print(token.text, token.tag, token.start, token.end)
 
-ner = ModelPack(hub.pull_pack("ner-compact"))
-ezafe = ModelPack(hub.pull_pack("ezafe-compact"))
+for entity in pipe.ner("سرلشگر فیروزآبادی به پادشاه عربستان گفت."):
+    print(entity.text, entity.label, entity.start, entity.end)
+
+for token in pipe.ezafe("کتابخانه مرکزی دانشگاه شریف"):
+    print(token.text, token.tag, token.start, token.end)
 ```
 
-Use `hub.pull_pack(name)` to download and return the directory, or
-`hub.path_pack(name)` for an existing cache entry.
+`TaggedToken` has `text`, `tag`, `start` and `end`; `Entity` has `text`,
+`label`, `start` and `end`. Start/end are character offsets. The lower-level
+`ModelPack` class is still available when you want one task:
+
+```python
+from rishe import ModelPack
+
+pack = ModelPack(str(hub.path_pack("pos-compact")))
+pack.tag_tokens("کتاب‌های خوب")   # typed TaggedToken list
+pack.tag_words(["کتاب‌های", "خوب"])  # tuple output
+```
 
 ## Embeddings
 
@@ -176,7 +192,7 @@ rishe hub pull hazm-fasttext-300   # optional 2.3 GB static embedding file
 ```python
 from rishe import Embeddings, hub
 
-emb = Embeddings(hub.path("hazm-fasttext-300"))
+emb = Embeddings(str(hub.path("hazm-fasttext-300")))
 emb.dim, len(emb)                      # vector size, vocabulary size
 emb.vector("کتاب")                     # list[float] or None
 emb.sentence_vector("این کتاب خوب است") # mean of in-vocab token vectors
@@ -188,7 +204,9 @@ emb.most_similar("کتاب", 5)            # [(word, cosine), ...]
 ```bash
 rishe normalize "مي كنم"
 rishe tokenize "سلام دنیا" --json
-rishe mask "info@a.co" --stages email
+rishe pos "کتاب‌های خوب را به دوستانم می‌دهم."
+rishe ner --json "سرلشگر فیروزآبادی به پادشاه عربستان گفت."
+rishe ezafe "کتابخانه مرکزی دانشگاه شریف"
 ```
 
 ## Docs

@@ -59,6 +59,16 @@ def main(argv: Optional[List[str]] = None) -> int:
     mask.add_argument("--mask-token", default=None, help="override every mask default")
     mask.add_argument("--json", action="store_true", help="emit JSON")
 
+    for name, description in (
+        ("pos", "Part-of-speech tagging with a model pack."),
+        ("ner", "Named-entity recognition with a model pack."),
+        ("ezafe", "Ezafe tagging with a model pack."),
+    ):
+        command = subparsers.add_parser(name, help=description)
+        command.add_argument("text", nargs="?", help="text; reads stdin when omitted")
+        command.add_argument("--pack", default=None, help="pack directory; defaults to the Hub cache")
+        command.add_argument("--json", action="store_true", help="emit JSON")
+
     serve = subparsers.add_parser("serve", help="JSON-lines server on stdin/stdout.")
     serve.add_argument("--stages", nargs="+", default=DEFAULT_MASK_STAGES)
     serve.add_argument("--mask-token", default=None)
@@ -74,6 +84,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = parser.parse_args(argv)
     if args.command == "hub":
         return _hub(args)
+    if args.command in ("pos", "ner", "ezafe"):
+        return _pack(args)
     pipe = Pipeline()
 
     if args.command == "serve":
@@ -98,6 +110,37 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(result)
     else:
         print(" ".join(result))
+    return 0
+
+
+def _pack(args) -> int:
+    task = args.command
+    try:
+        path = args.pack or hub.path_pack(f"{task}-compact")
+    except FileNotFoundError as error:
+        print(error, file=sys.stderr)
+        return 2
+    try:
+        pipe = Pipeline(**{f"{task}_pack": str(path)})
+        items = getattr(pipe, task)(_read_text(args.text))
+    except (OSError, ValueError) as error:
+        print(error, file=sys.stderr)
+        return 2
+
+    if args.json:
+        rows = []
+        for item in items:
+            row = {"text": item.text, "start": item.start, "end": item.end}
+            if task == "ner":
+                row["label"] = item.label
+            else:
+                row["tag"] = item.tag
+            rows.append(row)
+        print(json.dumps(rows, ensure_ascii=False))
+    else:
+        for item in items:
+            label = item.label if task == "ner" else item.tag
+            print(f"{item.text}\t{label}")
     return 0
 
 

@@ -11,6 +11,69 @@ use crate::tokenizer::Tokenizer as WordTokenizer;
 
 tract::impl_ndarray_interop!();
 
+#[cfg_attr(feature = "python", pyo3::pyclass(frozen, module = "rishe._core"))]
+#[derive(Debug, Clone)]
+pub struct TaggedToken {
+    pub text: String,
+    pub tag: String,
+    pub start: usize,
+    pub end: usize,
+}
+
+#[cfg_attr(feature = "python", pyo3::pyclass(frozen, module = "rishe._core"))]
+#[derive(Debug, Clone)]
+pub struct Entity {
+    pub text: String,
+    pub label: String,
+    pub start: usize,
+    pub end: usize,
+}
+
+pub fn merge_entities(tokens: &[TaggedToken]) -> Vec<Entity> {
+    let mut entities = Vec::new();
+    let mut current: Option<(String, usize, usize, String)> = None;
+
+    for token in tokens {
+        let (kind, label) = token
+            .tag
+            .split_once('_')
+            .or_else(|| token.tag.split_once('-'))
+            .unwrap_or(("", token.tag.as_str()));
+        if kind != "B" && kind != "I" {
+            flush_entity(&mut current, &mut entities);
+            continue;
+        }
+
+        let same = current
+            .as_ref()
+            .map(|(_, _, _, current_label)| current_label == label)
+            .unwrap_or(false);
+        if kind == "B" || !same {
+            flush_entity(&mut current, &mut entities);
+            current = Some((token.text.clone(), token.start, token.end, label.to_owned()));
+        } else if let Some((text, _, end, _)) = current.as_mut() {
+            if !text.is_empty() {
+                text.push(' ');
+            }
+            text.push_str(&token.text);
+            *end = token.end;
+        }
+    }
+    flush_entity(&mut current, &mut entities);
+    entities
+}
+
+fn flush_entity(current: &mut Option<(String, usize, usize, String)>, entities: &mut Vec<Entity>) {
+    if let Some((text, start, end, label)) = current.take() {
+        entities.push(Entity {
+            text,
+            label,
+            start,
+            end,
+        });
+    }
+}
+
 /// A single task pack: tokenizer, labels and ONNX model.
 #[cfg_attr(feature = "python", pyo3::pyclass(frozen))]
 pub struct ModelPack {
@@ -109,9 +172,41 @@ impl ModelPack {
     }
 
     pub fn tag_text(&self, text: &str) -> Result<Vec<(String, String)>, String> {
+        Ok(self
+            .tag_text_items(text)?
+            .into_iter()
+            .map(|token| (token.text, token.tag))
+            .collect())
+    }
+
+    pub fn tag_text_items(&self, text: &str) -> Result<Vec<TaggedToken>, String> {
         let tokens = WordTokenizer::tokenize(text);
-        let words: Vec<&str> = tokens.into_iter().map(|token| token.text).collect();
-        self.tag_words(&words)
+        let words: Vec<&str> = tokens.iter().map(|token| token.text).collect();
+        let tagged = self.tag_words(&words)?;
+        let mut cursor = 0;
+        let mut result = Vec::with_capacity(tagged.len());
+
+        for (word, tag) in tagged {
+            let Some(offset) = tokens[cursor..]
+                .iter()
+                .position(|token| token.text == word.as_str())
+            else {
+                continue;
+            };
+            let token = &tokens[cursor + offset];
+            result.push(TaggedToken {
+                text: word,
+                tag,
+                start: text[..token.start].chars().count(),
+                end: text[..token.end].chars().count(),
+            });
+            cursor += offset + 1;
+        }
+        Ok(result)
+    }
+
+    pub fn entities(&self, text: &str) -> Result<Vec<Entity>, String> {
+        Ok(merge_entities(&self.tag_text_items(text)?))
     }
 
     /// One sentence per call. Batch when latency matters.
@@ -195,5 +290,56 @@ impl ModelPack {
             result.push((word, self.labels[best].clone()));
         }
         Ok(result)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn token(text: &str, tag: &str, start: usize, end: usize) -> TaggedToken {
+        TaggedToken {
+            text: text.to_owned(),
+            tag: tag.to_owned(),
+            start,
+            end,
+        }
+    }
+
+    #[test]
+    fn merges_bio_entities() {
+        let tokens = [
+            token("امیر", "B_PER", 0, 4),
+            token("کبیر", "I_PER", 5, 9),
+            token("به", "O", 10, 12),
+            token("تهران", "B_LOC", 13, 18),
+        ];
+        let entities = merge_entities(&tokens);
+        assert_eq!(entities.len(), 2);
+        assert_eq!(entities[0].text, "امیر کبیر");
+        assert_eq!(entities[0].label, "PER");
+        assert_eq!((entities[0].start, entities[0].end), (0, 9));
+        assert_eq!(entities[1].text, "تهران");
+        assert_eq!(entities[1].label, "LOC");
+    }
+
+    #[test]
+    fn handles_dash_and_broken_i_tags() {
+        let tokens = [
+            token("الف", "B-PER", 0, 3),
+            token("ب", "I-LOC", 4, 5),
+            token("پ", "I_LOC", 6, 7),
+            token("ت", "O", 8, 9),
+        ];
+        let entities = merge_entities(&tokens);
+        assert_eq!(entities.len(), 2);
+        assert_eq!(
+            (entities[0].text.as_str(), entities[0].label.as_str()),
+            ("الف", "PER")
+        );
+        assert_eq!(
+            (entities[1].text.as_str(), entities[1].label.as_str()),
+            ("ب پ", "LOC")
+        );
     }
 }

@@ -17,6 +17,22 @@ and optional POS/NER tags. One engine, prebuilt Python wheels and a Rust crate.
 - **Rust** — `cargo add rishe` (Rust 1.75+; model packs need 1.91).
   Read [README.crates.md](README.crates.md) or the [crates.io page](https://crates.io/crates/rishe).
 
+## Quick start
+
+```python
+from rishe import Pipeline
+
+pipe = Pipeline()
+doc = pipe("اون داره تو خونه کتاب میخونه، چیه؟")
+
+print(doc.tokens)
+print(doc.lemmas)
+print(doc.formal_text)
+```
+
+More Python usage is in [README.pypi.md](README.pypi.md); the Rust API is in
+[README.crates.md](README.crates.md).
+
 ## What it does
 
 - Normalization, word/sentence tokenization, lemmatization, stemming, verb
@@ -27,10 +43,24 @@ and optional POS/NER tags. One engine, prebuilt Python wheels and a Rust crate.
 - Optional POS, NER and learned ezafe packs, downloaded separately and run
   without ONNX Runtime or a Python ML stack.
 
+## Architecture
+
+- **Rust core** — normalization, tokenization, morphology, embedding math and
+  the optional pack runtime.
+- **Python interface** — abi3 wheels over the same core; no Python runtime
+  dependencies.
+- **Optional model packs** — POS, NER and ezafe are separate downloads; the base
+  install stays model-free.
+
+## Performance & benchmarks
+
+The core, feature and model-pack benchmarks live in the docs:
+
+[Core engine](docs/BENCHMARKS.md) · [Feature comparisons](docs/FEATURE_BENCHMARKS.md) · [Model packs](docs/MODEL_BENCHMARKS.md)
+
 ## Docs
 
 - [API](docs/api.md) · [CLI](docs/cli.md)
-- [Core benchmarks](docs/BENCHMARKS.md) · [Feature benchmarks](docs/FEATURE_BENCHMARKS.md) · [Model-pack benchmarks](docs/MODEL_BENCHMARKS.md)
 
 ## License
 

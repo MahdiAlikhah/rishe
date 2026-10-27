@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "rishe"
-version = "0.5.1"
+version = "0.6.0"
 description = "Rishe (ریشه): Blazingly fast, unified Persian NLP engine written in Rust — tokenization, SBD, lemmatization, ezafe detection, informal→formal normalization, stemming, spell checking, embeddings"
 readme = "README.pypi.md"
 license = { text = "MIT OR Apache-2.0" }
