@@ -124,6 +124,12 @@ impl Pipeline {
     #[cfg(feature = "models")]
     pub fn load_pack(&mut self, task: &str, path: &str) -> Result<(), String> {
         let pack = models::ModelPack::load(path)?;
+        if pack.task() != task {
+            return Err(format!(
+                "pack at {path} is {}, expected {task}",
+                pack.task()
+            ));
+        }
         match task {
             "pos" => self.pos = Some(pack),
             "ner" => self.ner = Some(pack),
@@ -159,6 +165,21 @@ impl Pipeline {
     #[cfg(feature = "models")]
     pub fn ezafe(&self, text: &str) -> Result<Vec<models::TaggedToken>, String> {
         self.pack("ezafe")?.tag_text_items(text)
+    }
+
+    #[cfg(feature = "models")]
+    pub fn pos_batch(&self, texts: &[String]) -> Result<Vec<Vec<models::TaggedToken>>, String> {
+        self.pack("pos")?.tag_text_batch(texts)
+    }
+
+    #[cfg(feature = "models")]
+    pub fn ner_batch(&self, texts: &[String]) -> Result<Vec<Vec<models::Entity>>, String> {
+        self.pack("ner")?.entities_batch(texts)
+    }
+
+    #[cfg(feature = "models")]
+    pub fn ezafe_batch(&self, texts: &[String]) -> Result<Vec<Vec<models::TaggedToken>>, String> {
+        self.pack("ezafe")?.tag_text_batch(texts)
     }
 
     #[inline]
@@ -503,6 +524,39 @@ mod py_bindings {
         #[pyo3(name = "ezafe")]
         pub fn py_ezafe(&self, py: Python<'_>, text: &str) -> PyResult<Vec<models::TaggedToken>> {
             py.allow_threads(|| self.ezafe(text))
+                .map_err(pyo3::exceptions::PyValueError::new_err)
+        }
+
+        #[cfg(feature = "models")]
+        #[pyo3(name = "pos_batch")]
+        pub fn py_pos_batch(
+            &self,
+            py: Python<'_>,
+            texts: Vec<String>,
+        ) -> PyResult<Vec<Vec<models::TaggedToken>>> {
+            py.allow_threads(|| self.pos_batch(&texts))
+                .map_err(pyo3::exceptions::PyValueError::new_err)
+        }
+
+        #[cfg(feature = "models")]
+        #[pyo3(name = "ner_batch")]
+        pub fn py_ner_batch(
+            &self,
+            py: Python<'_>,
+            texts: Vec<String>,
+        ) -> PyResult<Vec<Vec<models::Entity>>> {
+            py.allow_threads(|| self.ner_batch(&texts))
+                .map_err(pyo3::exceptions::PyValueError::new_err)
+        }
+
+        #[cfg(feature = "models")]
+        #[pyo3(name = "ezafe_batch")]
+        pub fn py_ezafe_batch(
+            &self,
+            py: Python<'_>,
+            texts: Vec<String>,
+        ) -> PyResult<Vec<Vec<models::TaggedToken>>> {
+            py.allow_threads(|| self.ezafe_batch(&texts))
                 .map_err(pyo3::exceptions::PyValueError::new_err)
         }
 
@@ -866,6 +920,26 @@ mod py_bindings {
         #[pyo3(name = "entities")]
         pub fn py_entities(&self, py: Python<'_>, text: &str) -> PyResult<Vec<models::Entity>> {
             py.allow_threads(|| self.entities(text))
+                .map_err(pyo3::exceptions::PyValueError::new_err)
+        }
+
+        #[pyo3(name = "tag_batch")]
+        pub fn py_tag_batch(
+            &self,
+            py: Python<'_>,
+            texts: Vec<String>,
+        ) -> PyResult<Vec<Vec<models::TaggedToken>>> {
+            py.allow_threads(|| self.tag_text_batch(&texts))
+                .map_err(pyo3::exceptions::PyValueError::new_err)
+        }
+
+        #[pyo3(name = "entities_batch")]
+        pub fn py_entities_batch(
+            &self,
+            py: Python<'_>,
+            texts: Vec<String>,
+        ) -> PyResult<Vec<Vec<models::Entity>>> {
+            py.allow_threads(|| self.entities_batch(&texts))
                 .map_err(pyo3::exceptions::PyValueError::new_err)
         }
 

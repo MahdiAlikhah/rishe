@@ -169,6 +169,10 @@ for entity in pipe.ner("سرلشگر فیروزآبادی به پادشاه عر
 
 for token in pipe.ezafe("کتابخانه مرکزی دانشگاه شریف"):
     print(token.text, token.tag, token.start, token.end)
+
+pipe.pos_batch(["کتاب‌های خوب", "خوب است"])
+pipe.ner_batch(["فیروزآبادی گفت.", "عربستان جای خوبی است."])
+pipe.ezafe_batch(["کتابخانه مرکزی", "دانشگاه شریف"])
 ```
 
 `TaggedToken` has `text`, `tag`, `start` and `end`; `Entity` has `text`,

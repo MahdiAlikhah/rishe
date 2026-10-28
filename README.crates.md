@@ -108,6 +108,10 @@ pipe.load_pack("ner", "path/to/ner").expect("load ner");
 for entity in pipe.ner("سرلشگر فیروزآبادی به پادشاه عربستان گفت.").expect("ner") {
     println!("{}\t{}\t{}..{}", entity.text, entity.label, entity.start, entity.end);
 }
+
+let batch = pipe
+    .pos_batch(&["کتاب‌های خوب".to_string(), "خوب است".to_string()])
+    .expect("batch");
 ```
 
 `TaggedToken` exposes `text`, `tag`, `start` and `end`; `Entity` exposes

@@ -97,6 +97,29 @@ class ModelPackTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             Pipeline().pos("متن")
 
+    def test_batch_and_task_validation(self):
+        pipe = Pipeline(
+            pos_pack=str(PACK_ROOT / "pos"),
+            ner_pack=str(PACK_ROOT / "ner"),
+            ezafe_pack=str(PACK_ROOT / "ezafe"),
+        )
+        pos = pipe.pos_batch(["کتاب‌های خوب", "خوب است"])
+        self.assertEqual(len(pos), 2)
+        self.assertEqual(pos[0][0].tag, "NOUN")
+
+        ner = pipe.ner_batch(["فیروزآبادی گفت.", "عربستان جای خوبی است."])
+        self.assertEqual(len(ner), 2)
+        self.assertTrue(any(entity.label == "PER" for entity in ner[0]))
+
+        ezafe = pipe.ezafe_batch(["کتابخانه مرکزی", "دانشگاه شریف"])
+        self.assertEqual(len(ezafe), 2)
+
+        pack = ModelPack(str(PACK_ROOT / "pos"))
+        self.assertEqual(len(pack.tag_batch(["کتاب‌های خوب", "خوب است"])), 2)
+
+        with self.assertRaises(ValueError):
+            Pipeline(pos_pack=str(PACK_ROOT / "ner"))
+
     def test_cli_pack(self):
         output = StringIO()
         with redirect_stdout(output):

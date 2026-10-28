@@ -4,6 +4,7 @@ use std::fs;
 use std::path::Path;
 
 use ndarray::Array2;
+use rayon::prelude::*;
 use tokenizers::Tokenizer as ModelTokenizer;
 use tract::prelude::*;
 
@@ -209,7 +210,23 @@ impl ModelPack {
         Ok(merge_entities(&self.tag_text_items(text)?))
     }
 
-    /// One sentence per call. Batch when latency matters.
+    // ponytail: parallel per-sentence; re-export with batch>1 if ONNX batching matters.
+    pub fn tag_text_batch(&self, texts: &[String]) -> Result<Vec<Vec<TaggedToken>>, String> {
+        texts
+            .par_iter()
+            .map(|text| self.tag_text_items(text))
+            .collect()
+    }
+
+    pub fn entities_batch(&self, texts: &[String]) -> Result<Vec<Vec<Entity>>, String> {
+        Ok(self
+            .tag_text_batch(texts)?
+            .iter()
+            .map(|tokens| merge_entities(tokens))
+            .collect())
+    }
+
+    /// Word-level single call.
     pub fn tag_words(&self, words: &[&str]) -> Result<Vec<(String, String)>, String> {
         if words.is_empty() {
             return Ok(Vec::new());
