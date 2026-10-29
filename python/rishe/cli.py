@@ -72,6 +72,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     serve = subparsers.add_parser("serve", help="JSON-lines server on stdin/stdout.")
     serve.add_argument("--stages", nargs="+", default=DEFAULT_MASK_STAGES)
     serve.add_argument("--mask-token", default=None)
+    serve.add_argument("--pos-pack", default=None)
+    serve.add_argument("--ner-pack", default=None)
+    serve.add_argument("--ezafe-pack", default=None)
 
     hub_parser = subparsers.add_parser("hub", help="Download and cache models.")
     hub_commands = hub_parser.add_subparsers(dest="hub_command", required=True)
@@ -80,16 +83,31 @@ def main(argv: Optional[List[str]] = None) -> int:
     hub_pull.add_argument("--sha256", default=None, help="required for custom URLs")
     hub_pull.add_argument("--force", action="store_true", help="re-download")
     hub_commands.add_parser("list", help="List known models and cache status.")
+    hub_info = hub_commands.add_parser("info", help="Show cache information.")
+    hub_info.add_argument("name")
+    hub_remove = hub_commands.add_parser("remove", help="Remove a cached model or pack.")
+    hub_remove.add_argument("name")
 
     args = parser.parse_args(argv)
     if args.command == "hub":
         return _hub(args)
     if args.command in ("pos", "ner", "ezafe"):
         return _pack(args)
-    pipe = Pipeline()
 
     if args.command == "serve":
+        packs = {
+            f"{task}_pack": getattr(args, f"{task}_pack")
+            for task in ("pos", "ner", "ezafe")
+            if getattr(args, f"{task}_pack")
+        }
+        try:
+            pipe = Pipeline(**packs)
+        except (OSError, ValueError) as error:
+            print(error, file=sys.stderr)
+            return 2
         return _serve(pipe, args.stages, args.mask_token)
+
+    pipe = Pipeline()
 
     text = _read_text(args.text)
     if args.command == "normalize":
@@ -121,7 +139,7 @@ def _pack(args) -> int:
         print(error, file=sys.stderr)
         return 2
     try:
-        pipe = Pipeline(**{f"{task}_pack": str(path)})
+        pipe = Pipeline(**{f"{task}_pack": path})
         items = getattr(pipe, task)(_read_text(args.text))
     except (OSError, ValueError) as error:
         print(error, file=sys.stderr)
@@ -150,6 +168,23 @@ def _hub(args) -> int:
             print(hub.pull_pack(args.name, force=args.force))
         else:
             print(hub.pull(args.name, sha256=args.sha256, force=args.force))
+    elif args.hub_command == "info":
+        try:
+            info = hub.info(args.name)
+        except ValueError as error:
+            print(error, file=sys.stderr)
+            return 2
+        if info is None:
+            print(f"{args.name}\tmissing")
+        else:
+            print(f"{info['name']}\t{info['path']}\t{info['bytes']} bytes")
+    elif args.hub_command == "remove":
+        try:
+            removed = hub.remove(args.name)
+        except ValueError as error:
+            print(error, file=sys.stderr)
+            return 2
+        print("removed" if removed else "not cached")
     else:
         for name, model in hub.MODELS.items():
             status = "cached" if hub.cached(name) else "missing"
@@ -181,6 +216,28 @@ def _serve(pipe: Pipeline, stages: List[str], mask_token: Optional[str]) -> int:
                     request.get("stages", stages),
                     request.get("mask_token", mask_token),
                 )
+            elif command in ("pos", "ner", "ezafe"):
+                items = getattr(pipe, command)(text)
+                if command == "ner":
+                    result = [
+                        {
+                            "text": item.text,
+                            "label": item.label,
+                            "start": item.start,
+                            "end": item.end,
+                        }
+                        for item in items
+                    ]
+                else:
+                    result = [
+                        {
+                            "text": item.text,
+                            "tag": item.tag,
+                            "start": item.start,
+                            "end": item.end,
+                        }
+                        for item in items
+                    ]
             else:
                 raise ValueError(f"unknown command: {command!r}")
             response = {"ok": True, "result": result}

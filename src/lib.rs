@@ -441,6 +441,13 @@ mod py_bindings {
     use super::*;
     use pyo3::prelude::*;
 
+    fn py_path(py: Python<'_>, value: &Bound<'_, pyo3::types::PyAny>) -> PyResult<String> {
+        let os = py.import_bound("os")?;
+        let path = os.getattr("fspath")?.call1((value,))?;
+        path.extract::<String>()
+            .map_err(|_| pyo3::exceptions::PyTypeError::new_err("path must be str or os.PathLike"))
+    }
+
     #[pymethods]
     impl ProcessedDoc {
         #[getter]
@@ -473,13 +480,15 @@ mod py_bindings {
     impl Pipeline {
         #[new]
         #[pyo3(signature = (unify_digits=true, strip_diacritics=true, fix_zwnj=true, pos_pack=None, ner_pack=None, ezafe_pack=None))]
+        #[allow(unused_variables)]
         pub fn py_new(
+            py: Python<'_>,
             unify_digits: bool,
             strip_diacritics: bool,
             fix_zwnj: bool,
-            pos_pack: Option<String>,
-            ner_pack: Option<String>,
-            ezafe_pack: Option<String>,
+            pos_pack: Option<Bound<'_, pyo3::types::PyAny>>,
+            ner_pack: Option<Bound<'_, pyo3::types::PyAny>>,
+            ezafe_pack: Option<Bound<'_, pyo3::types::PyAny>>,
         ) -> PyResult<Self> {
             #[cfg(feature = "models")]
             let mut pipe = Self::create(unify_digits, strip_diacritics, fix_zwnj);
@@ -490,6 +499,7 @@ mod py_bindings {
             {
                 for (task, path) in [("pos", pos_pack), ("ner", ner_pack), ("ezafe", ezafe_pack)] {
                     if let Some(path) = path {
+                        let path = py_path(py, &path)?;
                         pipe.load_pack(task, &path)
                             .map_err(pyo3::exceptions::PyValueError::new_err)?;
                     }
@@ -833,8 +843,9 @@ mod py_bindings {
     #[pymethods]
     impl embeddings::Embeddings {
         #[new]
-        pub fn py_new(path: &str) -> PyResult<Self> {
-            Self::load(path).map_err(pyo3::exceptions::PyIOError::new_err)
+        pub fn py_new(py: Python<'_>, path: &Bound<'_, pyo3::types::PyAny>) -> PyResult<Self> {
+            let path = py_path(py, path)?;
+            Self::load(&path).map_err(pyo3::exceptions::PyIOError::new_err)
         }
 
         fn __len__(&self) -> usize {
@@ -886,8 +897,9 @@ mod py_bindings {
     #[pymethods]
     impl models::ModelPack {
         #[new]
-        pub fn py_new(path: &str) -> PyResult<Self> {
-            Self::load(path).map_err(pyo3::exceptions::PyValueError::new_err)
+        pub fn py_new(py: Python<'_>, path: &Bound<'_, pyo3::types::PyAny>) -> PyResult<Self> {
+            let path = py_path(py, path)?;
+            Self::load(&path).map_err(pyo3::exceptions::PyValueError::new_err)
         }
 
         #[pyo3(name = "tag")]

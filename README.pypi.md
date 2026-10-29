@@ -156,9 +156,9 @@ rishe hub pull ezafe-compact
 from rishe import Pipeline, hub
 
 pipe = Pipeline(
-    pos_pack=str(hub.path_pack("pos-compact")),
-    ner_pack=str(hub.path_pack("ner-compact")),
-    ezafe_pack=str(hub.path_pack("ezafe-compact")),
+    pos_pack=hub.path_pack("pos-compact"),
+    ner_pack=hub.path_pack("ner-compact"),
+    ezafe_pack=hub.path_pack("ezafe-compact"),
 )
 
 for token in pipe.pos("کتاب‌های خوب را به دوستانم می‌دهم."):
@@ -180,9 +180,9 @@ pipe.ezafe_batch(["کتابخانه مرکزی", "دانشگاه شریف"])
 `ModelPack` class is still available when you want one task:
 
 ```python
-from rishe import ModelPack
+from rishe import ModelPack, hub
 
-pack = ModelPack(str(hub.path_pack("pos-compact")))
+pack = ModelPack(hub.path_pack("pos-compact"))
 pack.tag_tokens("کتاب‌های خوب")   # typed TaggedToken list
 pack.tag_words(["کتاب‌های", "خوب"])  # tuple output
 ```
@@ -196,7 +196,7 @@ rishe hub pull hazm-fasttext-300   # optional 2.3 GB static embedding file
 ```python
 from rishe import Embeddings, hub
 
-emb = Embeddings(str(hub.path("hazm-fasttext-300")))
+emb = Embeddings(hub.path("hazm-fasttext-300"))
 emb.dim, len(emb)                      # vector size, vocabulary size
 emb.vector("کتاب")                     # list[float] or None
 emb.sentence_vector("این کتاب خوب است") # mean of in-vocab token vectors
@@ -211,6 +211,8 @@ rishe tokenize "سلام دنیا" --json
 rishe pos "کتاب‌های خوب را به دوستانم می‌دهم."
 rishe ner --json "سرلشگر فیروزآبادی به پادشاه عربستان گفت."
 rishe ezafe "کتابخانه مرکزی دانشگاه شریف"
+rishe hub info pos-compact
+rishe hub remove pos-compact
 ```
 
 ## Docs

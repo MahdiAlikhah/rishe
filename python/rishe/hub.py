@@ -14,8 +14,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import sys
-import tempfile
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -28,10 +28,12 @@ __all__ = [
     "cache_dir",
     "cached",
     "cached_pack",
+    "info",
     "path",
     "path_pack",
     "pull",
     "pull_pack",
+    "remove",
 ]
 
 
@@ -120,60 +122,83 @@ def pull(
 
 
 def _download(url: str, target: Path, sha256: str, *, force: bool = False) -> Path:
-    """Download one file atomically and verify its checksum."""
+    """Download one file atomically, resuming a partial download."""
     target = Path(target)
     if target.exists() and not force:
         return target
     target.parent.mkdir(parents=True, exist_ok=True)
+    part = target.with_name(target.name + ".part")
+    last_error: Optional[Exception] = None
 
-    handle, temporary = tempfile.mkstemp(
-        dir=target.parent, prefix=f".{target.name}.", suffix=".part"
-    )
-    # ponytail: an interrupted download restarts from zero; add Range resume
-    # when model sizes keep growing or the CDN proves unreliable.
-    digest = hashlib.sha256()
-    total = 0
-    try:
-        with os.fdopen(handle, "wb") as output:
-            request = urllib.request.Request(url, headers={"User-Agent": "rishe"})
+    for attempt in range(3):
+        offset = part.stat().st_size if part.exists() else 0
+        headers = {"User-Agent": "rishe"}
+        if offset:
+            headers["Range"] = f"bytes={offset}-"
+        total = 0
+        try:
+            request = urllib.request.Request(url, headers=headers)
             try:
                 response = urllib.request.urlopen(request, timeout=60)
-            except urllib.error.URLError as error:
-                raise RuntimeError(f"download failed: {error}") from error
+            except urllib.error.HTTPError as error:
+                if error.code == 416 and part.exists():
+                    part.unlink()
+                    last_error = error
+                    continue
+                raise
             with response:
-                total = int(response.headers.get("Content-Length") or 0)
-                done = 0
+                status = getattr(response, "status", 200)
+                if offset and status == 206:
+                    mode = "ab"
+                else:
+                    mode = "wb"
+                    offset = 0
+                length = int(response.headers.get("Content-Length") or 0)
+                total = offset + length if length else 0
+                done = offset
                 next_report = 64 << 20
-                while True:
-                    chunk = response.read(1 << 20)
-                    if not chunk:
-                        break
-                    output.write(chunk)
-                    digest.update(chunk)
-                    done += len(chunk)
-                    if total and sys.stderr.isatty() and done >= next_report:
-                        print(
-                            f"\r  {done / 1e6:.0f}/{total / 1e6:.0f} MB "
-                            f"({100 * done / total:.0f}%)",
-                            end="",
-                            file=sys.stderr,
-                            flush=True,
-                        )
-                        next_report += 64 << 20
+                with open(part, mode) as output:
+                    while True:
+                        chunk = response.read(1 << 20)
+                        if not chunk:
+                            break
+                        output.write(chunk)
+                        done += len(chunk)
+                        if total and sys.stderr.isatty() and done >= next_report:
+                            print(
+                                f"\r  {done / 1e6:.0f}/{total / 1e6:.0f} MB "
+                                f"({100 * done / total:.0f}%)",
+                                end="",
+                                file=sys.stderr,
+                                flush=True,
+                            )
+                            next_report += 64 << 20
 
-        actual = digest.hexdigest()
-        if actual != sha256.lower():
-            raise ValueError(
-                f"checksum mismatch for {url}: expected {sha256}, got {actual}"
-            )
-        os.replace(temporary, target)
-    finally:
-        if os.path.exists(temporary):
-            os.unlink(temporary)
+            actual = _sha256(part)
+            if actual != sha256.lower():
+                part.unlink()
+                raise ValueError(
+                    f"checksum mismatch for {url}: expected {sha256}, got {actual}"
+                )
+            os.replace(part, target)
+            if total and sys.stderr.isatty():
+                print(file=sys.stderr)
+            return target
+        except (urllib.error.URLError, TimeoutError, OSError, ValueError) as error:
+            last_error = error
+            if attempt < 2:
+                continue
+            break
 
-    if total and sys.stderr.isatty():
-        print(file=sys.stderr)
-    return target
+    raise RuntimeError(f"download failed after 3 attempts: {last_error}") from last_error
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as file:
+        for chunk in iter(lambda: file.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _pack_base() -> str:
@@ -197,6 +222,40 @@ def path_pack(name: str) -> Path:
             f"(or rishe.hub.pull_pack({name!r}))"
         )
     return target
+
+
+def info(name: str) -> Optional[dict]:
+    """Return cache information for a model or pack, or ``None`` when missing."""
+    if name in PACKS:
+        target = cached_pack(name)
+    elif name in MODELS:
+        target = cached(name)
+    else:
+        raise ValueError(f"unknown model or pack {name!r}")
+    if target is None:
+        return None
+    if target.is_dir():
+        size = sum(file.stat().st_size for file in target.rglob("*") if file.is_file())
+    else:
+        size = target.stat().st_size
+    return {"name": name, "path": str(target), "bytes": size}
+
+
+def remove(name: str) -> bool:
+    """Remove a cached model or pack. Returns whether anything was removed."""
+    if name in PACKS:
+        target = cache_dir() / name
+    elif name in MODELS:
+        target = cache_dir() / Path(MODELS[name].filename).name
+    else:
+        raise ValueError(f"unknown model or pack {name!r}")
+    if not target.exists():
+        return False
+    if target.is_dir():
+        shutil.rmtree(target)
+    else:
+        target.unlink()
+    return True
 
 
 def pull_pack(name: str, *, force: bool = False) -> Path:

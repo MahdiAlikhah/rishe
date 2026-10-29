@@ -1,3 +1,4 @@
+import json
 import os
 import tempfile
 import unittest
@@ -23,6 +24,10 @@ class PackCacheTest(unittest.TestCase):
                     (target / name).write_bytes(b"x")
                 self.assertEqual(hub.cached_pack("pos-compact"), target)
                 self.assertEqual(hub.path_pack("pos-compact"), target)
+                self.assertEqual(hub.info("pos-compact")["path"], str(target))
+                self.assertTrue(hub.remove("pos-compact"))
+                self.assertFalse(hub.remove("pos-compact"))
+                self.assertIsNone(hub.cached_pack("pos-compact"))
                 with self.assertRaises(ValueError):
                     hub.cached_pack("unknown")
                 with self.assertRaises(FileNotFoundError):
@@ -119,6 +124,23 @@ class ModelPackTest(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             Pipeline(pos_pack=str(PACK_ROOT / "ner"))
+
+    def test_path_inputs(self):
+        pack = ModelPack(PACK_ROOT / "pos")
+        self.assertEqual(pack.task, "pos")
+
+        pipe = Pipeline(pos_pack=PACK_ROOT / "pos")
+        self.assertEqual(pipe.pos("کتاب‌های خوب")[0].tag, "NOUN")
+
+    def test_cli_serve_pack(self):
+        output = StringIO()
+        request = json.dumps({"command": "pos", "text": "کتاب‌های خوب"}) + "\n"
+        with patch("sys.stdin", StringIO(request)), redirect_stdout(output):
+            code = main(["serve", "--pos-pack", str(PACK_ROOT / "pos")])
+        self.assertEqual(code, 0)
+        response = json.loads(output.getvalue().strip())
+        self.assertTrue(response["ok"])
+        self.assertEqual(response["result"][0]["tag"], "NOUN")
 
     def test_cli_pack(self):
         output = StringIO()
