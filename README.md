@@ -6,6 +6,12 @@
 
 **Fast Persian NLP and morphology, built in Rust.**
 
+<p align="center">
+  <a href="https://pepy.tech/projects/rishe">
+    <img src="https://static.pepy.tech/personalized-badge/rishe?period=total&units=INTERNATIONAL_SYSTEM&left_color=BLACK&right_color=GREEN&left_text=downloads" alt="PyPI Downloads">
+  </a>
+</p>
+
 Rishe turns raw Persian text into clean, structured data: normalized text,
 tokens, sentences, lemmas, ezafe markers, stems, verb forms, spell suggestions
 and optional POS/NER tags. One engine, prebuilt Python wheels and a Rust crate.

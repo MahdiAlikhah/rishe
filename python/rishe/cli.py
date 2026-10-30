@@ -87,6 +87,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     hub_info.add_argument("name")
     hub_remove = hub_commands.add_parser("remove", help="Remove a cached model or pack.")
     hub_remove.add_argument("name")
+    hub_verify = hub_commands.add_parser("verify", help="Verify cached checksums.")
+    hub_verify.add_argument("name")
 
     args = parser.parse_args(argv)
     if args.command == "hub":
@@ -185,6 +187,14 @@ def _hub(args) -> int:
             print(error, file=sys.stderr)
             return 2
         print("removed" if removed else "not cached")
+    elif args.hub_command == "verify":
+        try:
+            valid = hub.verify(args.name)
+        except ValueError as error:
+            print(error, file=sys.stderr)
+            return 2
+        print("verified" if valid else "missing or corrupt")
+        return 0 if valid else 1
     else:
         for name, model in hub.MODELS.items():
             status = "cached" if hub.cached(name) else "missing"

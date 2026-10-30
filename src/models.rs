@@ -359,4 +359,18 @@ mod tests {
             ("ب پ", "LOC")
         );
     }
+
+    #[test]
+    fn loads_tiny_pack() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/tiny-pack");
+        let pack = ModelPack::load(&path).expect("load tiny pack");
+        assert_eq!(pack.task(), "pos");
+        assert_eq!(
+            pack.tag_text("good bad").unwrap(),
+            vec![
+                ("good".to_string(), "A".to_string()),
+                ("bad".to_string(), "B".to_string()),
+            ]
+        );
+    }
 }

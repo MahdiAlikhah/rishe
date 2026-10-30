@@ -53,6 +53,23 @@ jobs:
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked
 
+  rust-models:
+    name: rust models
+    needs: version-check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-models-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-models-${{ runner.os }}-
+      - run: cargo test --locked --features models
+
   wheels:
     name: wheel (${{ matrix.target }})
     needs: version-check
@@ -115,7 +132,7 @@ jobs:
           skip-existing: true
 
   publish-crate:
-    needs: [rust, wheels, sdist]
+    needs: [rust, rust-models, wheels, sdist]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:

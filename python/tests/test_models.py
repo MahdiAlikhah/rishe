@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import tempfile
@@ -11,6 +12,18 @@ from rishe import Entity, ModelPack, Pipeline, TaggedToken, hub
 from rishe.cli import main
 
 PACK_ROOT = Path(os.environ["RISHE_TEST_PACK"]) if os.environ.get("RISHE_TEST_PACK") else None
+TINY_PACK = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "tiny-pack"
+
+
+class TinyPackTest(unittest.TestCase):
+    def test_tiny_pack(self):
+        pack = ModelPack(TINY_PACK)
+        self.assertEqual(pack.task, "pos")
+        self.assertEqual(pack.tag("good bad"), [("good", "A"), ("bad", "B")])
+        self.assertEqual(pack.tag_tokens("good bad")[0].start, 0)
+
+        pipe = Pipeline(pos_pack=TINY_PACK)
+        self.assertEqual(pipe.pos("good bad")[1].tag, "B")
 
 
 class PackCacheTest(unittest.TestCase):
@@ -32,6 +45,35 @@ class PackCacheTest(unittest.TestCase):
                     hub.cached_pack("unknown")
                 with self.assertRaises(FileNotFoundError):
                     hub.path_pack("ner-compact")
+
+    def test_verify_pack(self):
+        with tempfile.TemporaryDirectory() as root:
+            with patch.dict(os.environ, {"RISHE_HOME": root}):
+                target = Path(root) / "models" / "pos-compact"
+                target.mkdir(parents=True)
+                files = {
+                    name: (b"data-" + name.encode())
+                    for name in hub.PACK_REQUIRED
+                }
+                for name, data in files.items():
+                    (target / name).write_bytes(data)
+                manifest = {
+                    "tasks": {
+                        "pos": {
+                            "files": {
+                                name: {"sha256": hashlib.sha256(data).hexdigest()}
+                                for name, data in files.items()
+                            }
+                        }
+                    }
+                }
+                manifest_path = Path(root) / "models" / "rishe-models-manifest.json"
+                manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+                digest = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+                with patch.object(hub, "PACK_MANIFEST_SHA256", digest):
+                    self.assertTrue(hub.verify("pos-compact"))
+                    (target / "model.onnx").write_bytes(b"corrupt")
+                    self.assertFalse(hub.verify("pos-compact"))
 
 
 @unittest.skipUnless(PACK_ROOT is not None and PACK_ROOT.is_dir(), "RISHE_TEST_PACK is not set")

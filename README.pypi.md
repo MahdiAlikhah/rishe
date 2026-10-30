@@ -7,6 +7,12 @@
 Fast Persian NLP and morphology for Python. Prebuilt wheels, no Python
 dependencies, and the base pipeline needs no model downloads.
 
+<p align="center">
+  <a href="https://pepy.tech/projects/rishe">
+    <img src="https://static.pepy.tech/personalized-badge/rishe?period=total&units=INTERNATIONAL_SYSTEM&left_color=BLACK&right_color=GREEN&left_text=downloads" alt="PyPI Downloads">
+  </a>
+</p>
+
 ## Install
 
 ```bash
@@ -212,6 +218,7 @@ rishe pos "کتاب‌های خوب را به دوستانم می‌دهم."
 rishe ner --json "سرلشگر فیروزآبادی به پادشاه عربستان گفت."
 rishe ezafe "کتابخانه مرکزی دانشگاه شریف"
 rishe hub info pos-compact
+rishe hub verify pos-compact
 rishe hub remove pos-compact
 ```
 

@@ -34,6 +34,7 @@ __all__ = [
     "pull",
     "pull_pack",
     "remove",
+    "verify",
 ]
 
 
@@ -256,6 +257,28 @@ def remove(name: str) -> bool:
     else:
         target.unlink()
     return True
+
+
+def verify(name: str) -> bool:
+    """Verify cached files against their known checksums."""
+    if name in MODELS:
+        target = cached(name)
+        return target is not None and _sha256(target) == MODELS[name].sha256
+    if name in PACKS:
+        target = cache_dir() / name
+        manifest_path = cache_dir() / "rishe-models-manifest.json"
+        if not target.is_dir() or not manifest_path.is_file():
+            return False
+        if _sha256(manifest_path) != PACK_MANIFEST_SHA256:
+            return False
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        files = manifest.get("tasks", {}).get(PACKS[name], {}).get("files", {})
+        for filename, metadata in files.items():
+            path = target / Path(filename).name
+            if not path.is_file() or _sha256(path) != metadata["sha256"].lower():
+                return False
+        return True
+    raise ValueError(f"unknown model or pack {name!r}")
 
 
 def pull_pack(name: str, *, force: bool = False) -> Path:
