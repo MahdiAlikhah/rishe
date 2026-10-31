@@ -1,4 +1,5 @@
 use crate::normalize_ops::PERSIAN_LETTERS;
+use crate::transliterate::persian_digit;
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder, MatchKind};
 use std::sync::OnceLock;
 
@@ -69,11 +70,7 @@ pub fn number_to_words_text(text: &str) -> Result<String, String> {
     let normalized: String = text
         .trim()
         .chars()
-        .map(|ch| match ch {
-            '\u{06F0}'..='\u{06F9}' => char::from_u32(ch as u32 - 0x06F0 + 0x30).unwrap(),
-            '\u{0660}'..='\u{0669}' => char::from_u32(ch as u32 - 0x0660 + 0x30).unwrap(),
-            _ => ch,
-        })
+        .map(|ch| persian_digit(ch).unwrap_or(ch))
         .collect();
 
     let (negative, body) = match normalized.strip_prefix('-') {
@@ -252,18 +249,6 @@ pub fn persianize(text: &str) -> String {
 }
 
 pub fn persianize_suggest(text: &str) -> Vec<LoanwordMatch> {
-    persianize_matches(text)
-        .into_iter()
-        .map(|(word, alternatives, start, end)| LoanwordMatch {
-            word: word.to_string(),
-            alternatives: alternatives.iter().map(|alt| (*alt).to_string()).collect(),
-            start,
-            end,
-        })
-        .collect()
-}
-
-fn persianize_matches(text: &str) -> Vec<(&'static str, &'static [&'static str], usize, usize)> {
     let mut matches = Vec::new();
     for found in loanword_matcher().find_iter(text) {
         if !word_boundary(text, found.start(), found.end()) {
@@ -272,7 +257,12 @@ fn persianize_matches(text: &str) -> Vec<(&'static str, &'static [&'static str],
         let (word, alternatives) = LOANWORDS[found.pattern().as_usize()];
         let start = text[..found.start()].chars().count();
         let end = text[..found.end()].chars().count();
-        matches.push((word, alternatives, start, end));
+        matches.push(LoanwordMatch {
+            word: word.to_string(),
+            alternatives: alternatives.iter().map(|alt| (*alt).to_string()).collect(),
+            start,
+            end,
+        });
     }
     matches
 }

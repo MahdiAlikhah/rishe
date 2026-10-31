@@ -9,13 +9,7 @@ Exact agreement compares full stripped outputs on the same sentence. Rishe
 removes stopwords from its own (Hazm-derived) list, so that row measures list
 overlap as much as behavior; the other rows use the same data.
 """
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-sys.stdout.reconfigure(encoding="utf-8")
-
-from benchmark import load_ud, timeit
+from benchmark import load_ud, pct, timeit
 
 from rishe import Pipeline
 from shekar.preprocessing.maskers import (
@@ -32,10 +26,6 @@ from shekar.preprocessing.maskers import (
     StopWordMasker,
     URLMasker,
 )
-
-
-def pct(hit, total):
-    return 100.0 * hit / total if total else 0.0
 
 
 def main():

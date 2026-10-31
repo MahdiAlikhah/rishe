@@ -12,7 +12,10 @@ use crate::tokenizer::Tokenizer as WordTokenizer;
 
 tract::impl_ndarray_interop!();
 
-#[cfg_attr(feature = "python", pyo3::pyclass(frozen, module = "rishe._core"))]
+#[cfg_attr(
+    feature = "python",
+    pyo3::pyclass(frozen, module = "rishe._core", get_all)
+)]
 #[derive(Debug, Clone)]
 pub struct TaggedToken {
     pub text: String,
@@ -21,7 +24,10 @@ pub struct TaggedToken {
     pub end: usize,
 }
 
-#[cfg_attr(feature = "python", pyo3::pyclass(frozen, module = "rishe._core"))]
+#[cfg_attr(
+    feature = "python",
+    pyo3::pyclass(frozen, module = "rishe._core", get_all)
+)]
 #[derive(Debug, Clone)]
 pub struct Entity {
     pub text: String,

@@ -15,6 +15,7 @@ silently ignored.
 from __future__ import annotations
 
 import unicodedata
+from functools import cache
 from typing import List, Optional, Tuple
 
 from ._core import Pipeline
@@ -30,14 +31,10 @@ __all__ = [
     "sent_tokenize",
 ]
 
-_pipeline: Optional[Pipeline] = None
 
-
+@cache
 def _pipe() -> Pipeline:
-    global _pipeline
-    if _pipeline is None:
-        _pipeline = Pipeline()
-    return _pipeline
+    return Pipeline()
 
 
 class Normalizer:
@@ -55,7 +52,6 @@ class Normalizer:
         seperate_mi: bool = True,
     ) -> None:
         self._correct_spacing = correct_spacing
-        self._remove_diacritics = remove_diacritics
         self._remove_specials_chars = remove_specials_chars
         self._decrease_repeated_chars = decrease_repeated_chars
         self._persian_style = persian_style

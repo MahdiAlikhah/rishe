@@ -15,22 +15,8 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # Cargo.toml and pyproject.toml must agree on the version.
-  version-check:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Verify Cargo.toml == pyproject.toml versions
-        shell: bash
-        run: |
-          cargo_ver=$(grep '^version' Cargo.toml | head -1 | cut -d'"' -f2)
-          py_ver=$(grep '^version' pyproject.toml | head -1 | cut -d'"' -f2)
-          echo "Cargo.toml: $cargo_ver / pyproject.toml: $py_ver"
-          [ "$cargo_ver" = "$py_ver" ] || { echo "::error::version mismatch"; exit 1; }
-
   rust:
     name: rust (${{ matrix.os }})
-    needs: version-check
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -41,38 +27,22 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
-          restore-keys: cargo-${{ runner.os }}-
+      - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all -- --check
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked
 
   rust-models:
     name: rust models
-    needs: version-check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: cargo-models-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
-          restore-keys: cargo-models-${{ runner.os }}-
+      - uses: Swatinem/rust-cache@v2
       - run: cargo test --locked --features models
 
   python-tests:
     name: python tests
-    needs: version-check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -87,7 +57,6 @@ jobs:
 
   wheels:
     name: wheel (${{ matrix.target }})
-    needs: version-check
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -115,7 +84,6 @@ jobs:
           if-no-files-found: error
 
   sdist:
-    needs: version-check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

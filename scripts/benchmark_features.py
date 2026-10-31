@@ -8,13 +8,9 @@ Only features with a comparable public API are scored. Hazm has no spell
 checker or inflector; Shekar has no token splitter. Those rows say N/A.
 """
 import random
-import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-sys.stdout.reconfigure(encoding="utf-8")
-
-from benchmark import canon_lemma, load_ud, timeit
+from benchmark import canon_lemma, load_ud, pct, timeit
 
 from hazm import Conjugation as HazmConjugation
 from hazm import Lemmatizer as HazmLemmatizer
@@ -31,10 +27,6 @@ from shekar import data as shekar_data
 
 ZWNJ = "\u200c"
 ALPHABET = "آابپتثجچحخدذرزژسشصضطظعغفقکگلمنوهی"
-
-
-def pct(hit, total):
-    return 100.0 * hit / total if total else 0.0
 
 
 def flatten(value):

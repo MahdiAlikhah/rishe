@@ -250,23 +250,15 @@ pub fn punctuation(input: &str) -> Cow<'_, str> {
 }
 
 pub fn ya(input: &str, style: YaStyle) -> Cow<'_, str> {
-    match style {
-        YaStyle::Standard => {
-            if input.contains("ه\u{200C}ی") {
-                let replaced = input.replace("ه\u{200C}ی", "ۀ");
-                Cow::Owned(ya_ha_yeh_space(&replaced, "ۀ").into_owned())
-            } else {
-                ya_ha_yeh_space(input, "ۀ")
-            }
-        }
-        YaStyle::Joda => {
-            if input.contains('ۀ') {
-                let replaced = input.replace('ۀ', "ه\u{200C}ی");
-                Cow::Owned(ya_ha_yeh_space(&replaced, "ه\u{200C}ی").into_owned())
-            } else {
-                ya_ha_yeh_space(input, "ه\u{200C}ی")
-            }
-        }
+    let (needle, replacement) = match style {
+        YaStyle::Standard => ("ه\u{200C}ی", "ۀ"),
+        YaStyle::Joda => ("ۀ", "ه\u{200C}ی"),
+    };
+    if input.contains(needle) {
+        let replaced = input.replace(needle, replacement);
+        Cow::Owned(ya_ha_yeh_space(&replaced, replacement).into_owned())
+    } else {
+        ya_ha_yeh_space(input, replacement)
     }
 }
 
@@ -334,7 +326,7 @@ pub fn orthographic_spacing(input: &str) -> Cow<'_, str> {
 
     let with_ha = laid_out.replace("هها", "ه\u{200C}ها");
     let cleaned_zwnj = clean_zwnj(&with_ha);
-    let collapsed = collapse_horizontal(&cleaned_zwnj);
+    let collapsed = collapse_horizontal(cleaned_zwnj.chars());
     Cow::Owned(collapsed.trim().to_string())
 }
 
@@ -510,10 +502,11 @@ fn is_script_or_digit(ch: char) -> bool {
     )
 }
 
-fn collapse_horizontal(input: &str) -> String {
-    let mut out = String::with_capacity(input.len());
+fn collapse_horizontal(input: impl IntoIterator<Item = char>) -> String {
+    let input = input.into_iter();
+    let mut out = String::with_capacity(input.size_hint().0);
     let mut in_space = false;
-    for ch in input.chars() {
+    for ch in input {
         if is_horizontal(ch) {
             if !in_space {
                 out.push(' ');
@@ -588,20 +581,9 @@ fn insert_space_after_singles(chars: Vec<char>) -> Vec<char> {
 }
 
 fn finalize_spacing(chars: Vec<char>) -> String {
-    let mut out = String::with_capacity(chars.len());
-    let mut in_space = false;
-    for ch in chars {
-        if is_horizontal(ch) {
-            if !in_space {
-                out.push(' ');
-                in_space = true;
-            }
-        } else {
-            out.push(ch);
-            in_space = false;
-        }
-    }
-    out.trim_matches(is_horizontal).to_string()
+    collapse_horizontal(chars)
+        .trim_matches(is_horizontal)
+        .to_string()
 }
 
 fn is_horizontal(ch: char) -> bool {
@@ -646,15 +628,7 @@ fn is_persian_word(word: &str) -> bool {
 }
 
 fn join_parts(left: &str, right: &str) -> String {
-    if left
-        .chars()
-        .next_back()
-        .is_some_and(|c| NON_LEFT_JOINERS.contains(c))
-    {
-        format!("{left}{right}")
-    } else {
-        format!("{left}{ZWNJ}{right}")
-    }
+    format!("{left}{}{right}", preverb_joiner(left))
 }
 
 fn join_spans<F>(input: &str, mut try_join: F) -> Cow<'_, str>
@@ -969,17 +943,17 @@ fn mi_form_valid(form: &str, morph: &MorphologyEngine) -> bool {
     if morph.is_past_stem(form) {
         return true;
     }
-    VERB_PERSON_ENDINGS.iter().any(|ending| {
-        form.strip_suffix(ending)
-            .filter(|stem| !stem.is_empty())
-            .is_some_and(|stem| morph.is_known_verb_stem(stem))
-    })
+    person_ending_form_valid(form, morph)
 }
 
 fn conjugated_form_valid(form: &str, morph: &MorphologyEngine) -> bool {
     if morph.is_known_verb_stem(form) {
         return true;
     }
+    person_ending_form_valid(form, morph)
+}
+
+fn person_ending_form_valid(form: &str, morph: &MorphologyEngine) -> bool {
     VERB_PERSON_ENDINGS.iter().any(|ending| {
         form.strip_suffix(ending)
             .filter(|stem| !stem.is_empty())

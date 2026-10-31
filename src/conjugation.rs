@@ -29,8 +29,12 @@ impl Conjugation {
     pub fn from_roots(roots: &VerbRoots) -> Self {
         let past = roots.past.as_str();
         let present = roots.present.as_str();
-        let negative_past = negative_past_stem(past);
-        let subjunctive = subjunctive_stem(present);
+        let negative_past = prefixed_stem(past, "ن");
+        let subjunctive = if present == "باش" {
+            present.to_string()
+        } else {
+            prefixed_stem(present, "ب")
+        };
 
         Self {
             past: forms("", past, &PAST_ENDINGS),
@@ -67,25 +71,12 @@ fn forms(prefix: &str, stem: &str, endings: &[&str; 6]) -> Vec<String> {
         .collect()
 }
 
-fn negative_past_stem(past: &str) -> String {
-    if let Some(rest) = past.strip_prefix('آ') {
-        format!("نیا{rest}")
-    } else if let Some(rest) = past.strip_prefix('ا') {
-        format!("نی{rest}")
+fn prefixed_stem(stem: &str, prefix: &str) -> String {
+    if let Some(rest) = stem.strip_prefix('آ') {
+        format!("{prefix}یا{rest}")
+    } else if let Some(rest) = stem.strip_prefix('ا') {
+        format!("{prefix}ی{rest}")
     } else {
-        format!("ن{past}")
-    }
-}
-
-fn subjunctive_stem(present: &str) -> String {
-    if present == "باش" {
-        return present.to_string();
-    }
-    if let Some(rest) = present.strip_prefix('آ') {
-        format!("بیا{rest}")
-    } else if let Some(rest) = present.strip_prefix('ا') {
-        format!("بی{rest}")
-    } else {
-        format!("ب{present}")
+        format!("{prefix}{stem}")
     }
 }

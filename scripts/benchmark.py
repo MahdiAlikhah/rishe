@@ -86,6 +86,10 @@ def micro_f1(pairs):
     return 2 * tp / (2 * tp + fp + fn)
 
 
+def pct(hit, total):
+    return 100.0 * hit / total if total else 0.0
+
+
 def canon_lemma(s):
     s = s.replace("‌", "").split("#")[0]  # UD/Hazm "past#present"
     return s.split("/")[0]  # Shekar "past/present"

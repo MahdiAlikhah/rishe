@@ -37,7 +37,7 @@ use stemmer::Stemmer;
 use token_splitter::TokenSplitter;
 use tokenizer::{TokenKind, Tokenizer};
 
-#[cfg_attr(feature = "python", pyo3::pyclass(frozen))]
+#[cfg_attr(feature = "python", pyo3::pyclass(frozen, get_all))]
 #[derive(Debug, Clone)]
 pub struct ProcessedDoc {
     pub normalized_text: String,
@@ -157,9 +157,7 @@ impl Pipeline {
 
     #[cfg(feature = "models")]
     pub fn ner(&self, text: &str) -> Result<Vec<models::Entity>, String> {
-        Ok(models::merge_entities(
-            &self.pack("ner")?.tag_text_items(text)?,
-        ))
+        self.pack("ner")?.entities(text)
     }
 
     #[cfg(feature = "models")]
@@ -200,35 +198,26 @@ impl Pipeline {
 
         for tok in raw_tokens {
             if tok.kind == TokenKind::Word && opts.formalize {
+                let mut push_token = |token: Cow<'_, str>| {
+                    let lemma = if opts.lemmatize {
+                        self.morphology.lemmatize(&token).into_owned()
+                    } else {
+                        token.to_string()
+                    };
+                    tokens.push(token.into_owned());
+                    lemmas.push(lemma);
+                };
                 match self
                     .colloquial
                     .expand_and_formalize(tok.text, &self.morphology)
                 {
                     ExpandedTokens::Single(formal_tok) => {
                         let fixed_tok = self.morphology.fix_spaceless_verb(&formal_tok);
-                        let lemma = if opts.lemmatize {
-                            self.morphology.lemmatize(&fixed_tok).into_owned()
-                        } else {
-                            fixed_tok.to_string()
-                        };
-                        tokens.push(fixed_tok.into_owned());
-                        lemmas.push(lemma);
+                        push_token(fixed_tok);
                     }
                     ExpandedTokens::Pair(first, second) => {
-                        let lemma1 = if opts.lemmatize {
-                            self.morphology.lemmatize(&first).into_owned()
-                        } else {
-                            first.to_string()
-                        };
-                        let lemma2 = if opts.lemmatize {
-                            self.morphology.lemmatize(&second).into_owned()
-                        } else {
-                            second.to_string()
-                        };
-                        tokens.push(first.into_owned());
-                        lemmas.push(lemma1);
-                        tokens.push(second.into_owned());
-                        lemmas.push(lemma2);
+                        push_token(first);
+                        push_token(second);
                     }
                 }
             } else if tok.kind == TokenKind::Word && opts.lemmatize {
@@ -440,41 +429,7 @@ mod py_bindings {
 
     use super::*;
     use pyo3::prelude::*;
-
-    fn py_path(py: Python<'_>, value: &Bound<'_, pyo3::types::PyAny>) -> PyResult<String> {
-        let os = py.import_bound("os")?;
-        let path = os.getattr("fspath")?.call1((value,))?;
-        path.extract::<String>()
-            .map_err(|_| pyo3::exceptions::PyTypeError::new_err("path must be str or os.PathLike"))
-    }
-
-    #[pymethods]
-    impl ProcessedDoc {
-        #[getter]
-        fn normalized_text(&self) -> &str {
-            &self.normalized_text
-        }
-        #[getter]
-        fn formal_text(&self) -> &str {
-            &self.formal_text
-        }
-        #[getter]
-        fn sentences(&self) -> Vec<String> {
-            self.sentences.clone()
-        }
-        #[getter]
-        fn tokens(&self) -> Vec<String> {
-            self.tokens.clone()
-        }
-        #[getter]
-        fn lemmas(&self) -> Vec<String> {
-            self.lemmas.clone()
-        }
-        #[getter]
-        fn ezafe_markers(&self) -> Vec<bool> {
-            self.ezafe_markers.clone()
-        }
-    }
+    use std::path::PathBuf;
 
     #[pymethods]
     impl Pipeline {
@@ -482,13 +437,12 @@ mod py_bindings {
         #[pyo3(signature = (unify_digits=true, strip_diacritics=true, fix_zwnj=true, pos_pack=None, ner_pack=None, ezafe_pack=None))]
         #[allow(unused_variables)]
         pub fn py_new(
-            py: Python<'_>,
             unify_digits: bool,
             strip_diacritics: bool,
             fix_zwnj: bool,
-            pos_pack: Option<Bound<'_, pyo3::types::PyAny>>,
-            ner_pack: Option<Bound<'_, pyo3::types::PyAny>>,
-            ezafe_pack: Option<Bound<'_, pyo3::types::PyAny>>,
+            pos_pack: Option<PathBuf>,
+            ner_pack: Option<PathBuf>,
+            ezafe_pack: Option<PathBuf>,
         ) -> PyResult<Self> {
             #[cfg(feature = "models")]
             let mut pipe = Self::create(unify_digits, strip_diacritics, fix_zwnj);
@@ -499,8 +453,7 @@ mod py_bindings {
             {
                 for (task, path) in [("pos", pos_pack), ("ner", ner_pack), ("ezafe", ezafe_pack)] {
                     if let Some(path) = path {
-                        let path = py_path(py, &path)?;
-                        pipe.load_pack(task, &path)
+                        pipe.load_pack(task, &path.to_string_lossy())
                             .map_err(pyo3::exceptions::PyValueError::new_err)?;
                     }
                 }
@@ -843,9 +796,8 @@ mod py_bindings {
     #[pymethods]
     impl embeddings::Embeddings {
         #[new]
-        pub fn py_new(py: Python<'_>, path: &Bound<'_, pyo3::types::PyAny>) -> PyResult<Self> {
-            let path = py_path(py, path)?;
-            Self::load(&path).map_err(pyo3::exceptions::PyIOError::new_err)
+        pub fn py_new(path: PathBuf) -> PyResult<Self> {
+            Self::load(path).map_err(pyo3::exceptions::PyIOError::new_err)
         }
 
         fn __len__(&self) -> usize {
@@ -897,9 +849,8 @@ mod py_bindings {
     #[pymethods]
     impl models::ModelPack {
         #[new]
-        pub fn py_new(py: Python<'_>, path: &Bound<'_, pyo3::types::PyAny>) -> PyResult<Self> {
-            let path = py_path(py, path)?;
-            Self::load(&path).map_err(pyo3::exceptions::PyValueError::new_err)
+        pub fn py_new(path: PathBuf) -> PyResult<Self> {
+            Self::load(path).map_err(pyo3::exceptions::PyValueError::new_err)
         }
 
         #[pyo3(name = "tag")]
@@ -968,48 +919,6 @@ mod py_bindings {
         #[getter(max_len)]
         pub fn py_max_len(&self) -> usize {
             self.max_len()
-        }
-    }
-
-    #[cfg(feature = "models")]
-    #[pymethods]
-    impl models::TaggedToken {
-        #[getter(text)]
-        pub fn py_text(&self) -> &str {
-            &self.text
-        }
-        #[getter(tag)]
-        pub fn py_tag(&self) -> &str {
-            &self.tag
-        }
-        #[getter(start)]
-        pub fn py_start(&self) -> usize {
-            self.start
-        }
-        #[getter(end)]
-        pub fn py_end(&self) -> usize {
-            self.end
-        }
-    }
-
-    #[cfg(feature = "models")]
-    #[pymethods]
-    impl models::Entity {
-        #[getter(text)]
-        pub fn py_text(&self) -> &str {
-            &self.text
-        }
-        #[getter(label)]
-        pub fn py_label(&self) -> &str {
-            &self.label
-        }
-        #[getter(start)]
-        pub fn py_start(&self) -> usize {
-            self.start
-        }
-        #[getter(end)]
-        pub fn py_end(&self) -> usize {
-            self.end
         }
     }
 

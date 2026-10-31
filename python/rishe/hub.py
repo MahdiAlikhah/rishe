@@ -131,7 +131,7 @@ def _download(url: str, target: Path, sha256: str, *, force: bool = False) -> Pa
     part = target.with_name(target.name + ".part")
     last_error: Optional[Exception] = None
 
-    for attempt in range(3):
+    for _ in range(3):
         offset = part.stat().st_size if part.exists() else 0
         headers = {"User-Agent": "rishe"}
         if offset:
@@ -159,10 +159,7 @@ def _download(url: str, target: Path, sha256: str, *, force: bool = False) -> Pa
                 done = offset
                 next_report = 64 << 20
                 with open(part, mode) as output:
-                    while True:
-                        chunk = response.read(1 << 20)
-                        if not chunk:
-                            break
+                    for chunk in iter(lambda: response.read(1 << 20), b""):
                         output.write(chunk)
                         done += len(chunk)
                         if total and sys.stderr.isatty() and done >= next_report:
@@ -187,9 +184,6 @@ def _download(url: str, target: Path, sha256: str, *, force: bool = False) -> Pa
             return target
         except (urllib.error.URLError, TimeoutError, OSError, ValueError) as error:
             last_error = error
-            if attempt < 2:
-                continue
-            break
 
     raise RuntimeError(f"download failed after 3 attempts: {last_error}") from last_error
 

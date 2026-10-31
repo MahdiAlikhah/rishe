@@ -133,6 +133,19 @@ def main(argv: Optional[List[str]] = None) -> int:
     return 0
 
 
+def _tag_rows(items, task):
+    key = "label" if task == "ner" else "tag"
+    return [
+        {
+            "text": item.text,
+            key: getattr(item, key),
+            "start": item.start,
+            "end": item.end,
+        }
+        for item in items
+    ]
+
+
 def _pack(args) -> int:
     task = args.command
     try:
@@ -148,15 +161,7 @@ def _pack(args) -> int:
         return 2
 
     if args.json:
-        rows = []
-        for item in items:
-            row = {"text": item.text, "start": item.start, "end": item.end}
-            if task == "ner":
-                row["label"] = item.label
-            else:
-                row["tag"] = item.tag
-            rows.append(row)
-        print(json.dumps(rows, ensure_ascii=False))
+        print(json.dumps(_tag_rows(items, task), ensure_ascii=False))
     else:
         for item in items:
             label = item.label if task == "ner" else item.tag
@@ -212,7 +217,7 @@ def _serve(pipe: Pipeline, stages: List[str], mask_token: Optional[str]) -> int:
             continue
         try:
             request = json.loads(line)
-            command = request.get("command") or request.get("cmd")
+            command = request.get("command")
             text = request.get("text", "")
             if command == "normalize":
                 result = pipe.normalize(text)
@@ -228,26 +233,7 @@ def _serve(pipe: Pipeline, stages: List[str], mask_token: Optional[str]) -> int:
                 )
             elif command in ("pos", "ner", "ezafe"):
                 items = getattr(pipe, command)(text)
-                if command == "ner":
-                    result = [
-                        {
-                            "text": item.text,
-                            "label": item.label,
-                            "start": item.start,
-                            "end": item.end,
-                        }
-                        for item in items
-                    ]
-                else:
-                    result = [
-                        {
-                            "text": item.text,
-                            "tag": item.tag,
-                            "start": item.start,
-                            "end": item.end,
-                        }
-                        for item in items
-                    ]
+                result = _tag_rows(items, command)
             else:
                 raise ValueError(f"unknown command: {command!r}")
             response = {"ok": True, "result": result}

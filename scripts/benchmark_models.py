@@ -10,14 +10,9 @@ the gold token list. Rishe rows appear once the compact model pack lands.
 
 No accuracy claim ships without this table.
 """
-import sys
 import time
 from collections import Counter
 from difflib import SequenceMatcher
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-sys.stdout.reconfigure(encoding="utf-8")
 
 from benchmark import read
 from conllu import parse

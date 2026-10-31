@@ -11,14 +11,9 @@ pooling speed. Hazm has no sentence-vector helper; the baseline here is the
 mean of gensim word vectors over the same tokens (average pooling, not a
 trained sentence encoder).
 """
-import sys
 import time
-from pathlib import Path
 
 import numpy as np
-
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-sys.stdout.reconfigure(encoding="utf-8")
 
 from benchmark import load_ud, timeit
 from rishe import Embeddings, hub

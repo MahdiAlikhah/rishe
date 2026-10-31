@@ -17,9 +17,6 @@ __all__ = [
     "ConlluReader",
     "PeymaReader",
     "PlainTextReader",
-    "read_conllu",
-    "read_peyma",
-    "read_text",
 ]
 
 
@@ -133,18 +130,6 @@ class PlainTextReader:
                 line = raw.strip()
                 if line:
                     yield Sentence(text=line)
-
-
-def read_conllu(path: str | Path) -> List[Sentence]:
-    return list(ConlluReader(path))
-
-
-def read_peyma(path: str | Path) -> List[Sentence]:
-    return list(PeymaReader(path))
-
-
-def read_text(path: str | Path) -> List[Sentence]:
-    return list(PlainTextReader(path))
 
 
 def _sentence(

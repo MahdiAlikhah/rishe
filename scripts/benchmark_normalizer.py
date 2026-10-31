@@ -10,13 +10,7 @@ library constructed once. Agreement is exact string equality on the same
 sentences. Shekar exposes one class per operator; Hazm exposes one composite
 Normalizer, so it is compared on the composite pipeline only.
 """
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-sys.stdout.reconfigure(encoding="utf-8")
-
-from benchmark import load_ud, timeit
+from benchmark import load_ud, pct, timeit
 
 from hazm import Normalizer as HazmNormalizer
 from rishe import Pipeline
@@ -34,10 +28,6 @@ from shekar.preprocessing.normalizers import (
     WordSpacingNormalizer,
     YaNormalizer,
 )
-
-
-def pct(hit, total):
-    return 100.0 * hit / total if total else 0.0
 
 
 def brief(text, limit=70):

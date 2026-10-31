@@ -140,7 +140,7 @@ pub fn to_persian(text: &str) -> String {
     out
 }
 
-fn persian_digit(ch: char) -> Option<char> {
+pub(crate) fn persian_digit(ch: char) -> Option<char> {
     match ch {
         '\u{06F0}'..='\u{06F9}' => char::from_u32(ch as u32 - 0x06F0 + 0x30),
         '\u{0660}'..='\u{0669}' => char::from_u32(ch as u32 - 0x0660 + 0x30),

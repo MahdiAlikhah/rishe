@@ -2,8 +2,6 @@
 Rishe (ریشه): High-performance Persian NLP engine.
 """
 
-from collections.abc import Iterable
-
 from . import hub
 from ._core import Embeddings, Entity, ModelPack, Pipeline, ProcessedDoc, TaggedToken
 from .compat import (
@@ -16,16 +14,7 @@ from .compat import (
     sent_tokenize,
     word_tokenize,
 )
-from .corpora import (
-    ConlluReader,
-    PeymaReader,
-    PlainTextReader,
-    Sentence,
-    Token,
-    read_conllu,
-    read_peyma,
-    read_text,
-)
+from .corpora import ConlluReader, PeymaReader, PlainTextReader, Sentence, Token
 
 __all__ = [
     "Pipeline",
@@ -35,15 +24,11 @@ __all__ = [
     "TaggedToken",
     "Entity",
     "hub",
-    "flatten",
     "Token",
     "Sentence",
     "ConlluReader",
     "PeymaReader",
     "PlainTextReader",
-    "read_conllu",
-    "read_peyma",
-    "read_text",
     "Normalizer",
     "WordTokenizer",
     "SentenceTokenizer",
@@ -53,12 +38,3 @@ __all__ = [
     "word_tokenize",
     "sent_tokenize",
 ]
-
-
-def flatten(items: Iterable) -> Iterable[str]:
-    """Yield strings from a nested iterable, preserving order."""
-    for item in items:
-        if isinstance(item, str):
-            yield item
-        elif isinstance(item, Iterable) and not isinstance(item, (str, bytes)):
-            yield from flatten(item)

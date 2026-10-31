@@ -8,12 +8,8 @@ Without RISHE_PACK_ROOT, the packs are read from the Rishe Hub cache.
 import argparse
 import os
 import statistics
-import sys
 import time
 from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-sys.stdout.reconfigure(encoding="utf-8")
 
 from benchmark_models import load_peyma_ner, load_ud_pos
 from rishe import ModelPack, hub

@@ -25,10 +25,6 @@ impl Stemmer {
             }
         }
 
-        let lemma = morph.lemmatize(word);
-        if lemma.as_ref() != word {
-            return lemma;
-        }
-        Cow::Borrowed(word)
+        morph.lemmatize(word)
     }
 }

@@ -273,7 +273,7 @@ pub(crate) fn is_regional(ch: char) -> bool {
     matches!(ch as u32, 0x1F1E6..=0x1F1FF)
 }
 
-fn is_skin_tone(ch: char) -> bool {
+pub(crate) fn is_skin_tone(ch: char) -> bool {
     matches!(ch as u32, 0x1F3FB..=0x1F3FF)
 }
 

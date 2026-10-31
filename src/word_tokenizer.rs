@@ -1,4 +1,4 @@
-use crate::maskers::{email_spans, is_emoji_base, is_regional};
+use crate::maskers::{email_spans, is_emoji_base, is_regional, is_skin_tone};
 use crate::morphology::MorphologyEngine;
 
 const VS16: char = '\u{FE0F}';
@@ -82,10 +82,6 @@ fn separate_emoji(text: &str) -> String {
         i += 1;
     }
     out
-}
-
-fn is_skin_tone(ch: char) -> bool {
-    matches!(ch as u32, 0x1F3FB..=0x1F3FF)
 }
 
 fn replace_emails(text: &str) -> String {
