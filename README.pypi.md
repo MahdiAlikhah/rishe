@@ -13,6 +13,8 @@ dependencies, and the base pipeline needs no model downloads.
   </a>
 </p>
 
+[Persian README](https://github.com/MahdiAlikhah/rishe/blob/main/README.fa.md)
+
 ## Install
 
 ```bash
@@ -27,11 +29,14 @@ Python 3.9+. Linux (glibc and musl), macOS and Windows wheels are published.
 from rishe import Pipeline
 
 pipe = Pipeline()
-doc = pipe("اون داره تو خونه کتاب میخونه، چیه؟")
+doc = pipe("اون گفت فردا می‌ره کتابخونه و یه کتاب خوب می‌خونه.")
 
-doc.tokens       # ['آن', 'دارد', 'تو', 'خانه', 'کتاب', 'می‌خواند', '،', 'چیست', '؟']
-doc.lemmas       # ['آن', 'داشت', 'تو', 'خانه', 'کتاب', 'خواند', '،', 'چیست', '؟']
-doc.formal_text  # 'آن دارد تو خانه کتاب می‌خواند، چیست؟'
+print(doc.tokens)
+# ['آن', 'گفت', 'فردا', 'می‌رود', 'کتابخانه', 'و', 'یک', 'کتاب', 'خوب', 'می‌خواند', '.']
+print(doc.lemmas)
+# ['آن', 'گفت', 'فردا', 'رفت', 'کتابخانه', 'و', 'یک', 'کتاب', 'خوب', 'خواند', '.']
+print(doc.formal_text)
+# 'آن گفت فردا می‌رود کتابخانه و یک کتاب خوب می‌خواند.'
 ```
 
 `pipe.normalize`, `word_tokenize`, `sent_tokenize`, `lemmatize`, `stem`,

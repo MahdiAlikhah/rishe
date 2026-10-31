@@ -70,6 +70,21 @@ jobs:
           restore-keys: cargo-models-${{ runner.os }}-
       - run: cargo test --locked --features models
 
+  python-tests:
+    name: python tests
+    needs: version-check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+      - run: python -m pip install maturin
+      - run: maturin build --release --out dist
+      - run: python -m pip install --no-deps dist/*.whl
+      - run: python -m unittest discover -s python/tests -v
+
   wheels:
     name: wheel (${{ matrix.target }})
     needs: version-check
@@ -117,7 +132,7 @@ jobs:
   # Tag-triggered releases. PyPI uses trusted publishing (OIDC): register this
   # repo + workflow "release.yml" as a trusted publisher on pypi.org first.
   publish-pypi:
-    needs: [rust, wheels, sdist]
+    needs: [rust, wheels, sdist, python-tests]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:

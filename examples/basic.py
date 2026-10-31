@@ -3,7 +3,7 @@
 from rishe import Pipeline
 
 pipe = Pipeline()
-doc = pipe("اون داره تو خونه کتاب میخونه، چیه؟")
+doc = pipe("اون گفت فردا می‌ره کتابخونه و یه کتاب خوب می‌خونه.")
 
 print("normalized:", doc.normalized_text)
 print("formal:    ", doc.formal_text)

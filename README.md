@@ -12,6 +12,12 @@
   </a>
 </p>
 
+<p align="center">
+  <a href="README.fa.md">فارسی</a> ·
+  <a href="README.pypi.md">Python</a> ·
+  <a href="README.crates.md">Rust</a>
+</p>
+
 Rishe turns raw Persian text into clean, structured data: normalized text,
 tokens, sentences, lemmas, ezafe markers, stems, verb forms, spell suggestions
 and optional POS/NER tags. One engine, prebuilt Python wheels and a Rust crate.
@@ -29,15 +35,19 @@ and optional POS/NER tags. One engine, prebuilt Python wheels and a Rust crate.
 from rishe import Pipeline
 
 pipe = Pipeline()
-doc = pipe("اون داره تو خونه کتاب میخونه، چیه؟")
+doc = pipe("اون گفت فردا می‌ره کتابخونه و یه کتاب خوب می‌خونه.")
 
 print(doc.tokens)
+# ['آن', 'گفت', 'فردا', 'می‌رود', 'کتابخانه', 'و', 'یک', 'کتاب', 'خوب', 'می‌خواند', '.']
 print(doc.lemmas)
+# ['آن', 'گفت', 'فردا', 'رفت', 'کتابخانه', 'و', 'یک', 'کتاب', 'خوب', 'خواند', '.']
 print(doc.formal_text)
+# 'آن گفت فردا می‌رود کتابخانه و یک کتاب خوب می‌خواند.'
 ```
 
 More Python usage is in [README.pypi.md](README.pypi.md); the Rust API is in
-[README.crates.md](README.crates.md).
+[README.crates.md](README.crates.md). Persian readers can start with
+[README.fa.md](README.fa.md).
 
 ## What it does
 

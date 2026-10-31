@@ -25,6 +25,16 @@ class TinyPackTest(unittest.TestCase):
         pipe = Pipeline(pos_pack=TINY_PACK)
         self.assertEqual(pipe.pos("good bad")[1].tag, "B")
 
+    def test_cli_serve_tiny_pack(self):
+        output = StringIO()
+        request = json.dumps({"command": "pos", "text": "good bad"}) + "\n"
+        with patch("sys.stdin", StringIO(request)), redirect_stdout(output):
+            code = main(["serve", "--pos-pack", str(TINY_PACK)])
+        self.assertEqual(code, 0)
+        response = json.loads(output.getvalue().strip())
+        self.assertTrue(response["ok"])
+        self.assertEqual(response["result"][1]["tag"], "B")
+
 
 class PackCacheTest(unittest.TestCase):
     def test_pack_cache(self):

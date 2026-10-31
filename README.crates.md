@@ -6,11 +6,12 @@
 
 Fast Persian NLP and morphology for Rust.
 
+[Persian README](https://github.com/MahdiAlikhah/rishe/blob/main/README.fa.md)
+
 ## Install
 
-```toml
-[dependencies]
-rishe = "0.6"
+```bash
+cargo add rishe
 ```
 
 The default crate has no model downloads and builds on Rust 1.75. The optional
@@ -87,9 +88,8 @@ let sentences = SentenceSplitter::split(text);
 
 ## Model packs
 
-```toml
-[dependencies]
-rishe = { version = "0.6", features = ["models"] }
+```bash
+cargo add rishe --features models
 ```
 
 Download a pack from
