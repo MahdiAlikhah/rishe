@@ -148,7 +148,7 @@ pub(crate) fn persian_digit(ch: char) -> Option<char> {
     }
 }
 
-fn utf8_digit(ch: char) -> Option<char> {
+pub(crate) fn utf8_digit(ch: char) -> Option<char> {
     if ch.is_ascii_digit() {
         char::from_u32(ch as u32 - 0x30 + 0x06F0)
     } else {

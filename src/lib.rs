@@ -1,6 +1,7 @@
 pub mod augment;
 pub mod colloquial;
 pub mod conjugation;
+pub mod dates;
 pub mod detokenizer;
 pub mod embeddings;
 pub mod ezafe;

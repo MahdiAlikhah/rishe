@@ -26,8 +26,9 @@ and optional POS/NER tags. One engine, prebuilt Python wheels and a Rust crate.
 
 - **Python** — `pip install rishe` (Python 3.9+, no Python dependencies).
   Read [README.pypi.md](README.pypi.md) or the [PyPI page](https://pypi.org/project/rishe/).
-- **Rust** — `cargo add rishe` (Rust 1.75+; model packs need 1.91).
-  Read [README.crates.md](README.crates.md) or the [crates.io page](https://crates.io/crates/rishe).
+- **Rust** — `cargo add rishe` (Rust 1.75+; model packs need 1.91), or
+  `cargo install rishe` for the CLI. Read [README.crates.md](README.crates.md)
+  or the [crates.io page](https://crates.io/crates/rishe).
 
 ## Quick start
 
@@ -54,7 +55,8 @@ More Python usage is in [README.pypi.md](README.pypi.md); the Rust API is in
 - Normalization, word/sentence tokenization, lemmatization, stemming, verb
   conjugation and inflection.
 - Colloquial → formal rewriting, clitic splitting, spell correction, stopword
-  removal and ezafe detection.
+  removal and ezafe detection. The Rust crate also parses and converts Jalali
+  dates.
 - Static fastText/word2vec embeddings, loaded and pooled in-process.
 - Optional POS, NER and learned ezafe packs, downloaded separately and run
   without ONNX Runtime or a Python ML stack.

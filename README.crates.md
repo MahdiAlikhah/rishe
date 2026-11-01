@@ -17,6 +17,16 @@ cargo add rishe
 The default crate has no model downloads and builds on Rust 1.75. The optional
 `models` feature adds POS, NER and ezafe pack inference and needs Rust 1.91.
 
+```bash
+cargo install rishe
+rishe normalize "مي كنم"
+rishe date "۱۲ مرداد ۱۴۰۲"
+```
+
+The `rishe` binary covers normalization, tokenization, lemmatization, masking
+and Jalali date parsing; add `--features models` for `pos`, `ner` and `ezafe`
+with `--pack <dir>`.
+
 ## What you get
 
 - `Pipeline`: normalization, tokenization, sentence splitting, lemmatization,
@@ -24,14 +34,14 @@ The default crate has no model downloads and builds on Rust 1.75. The optional
 - Morphology methods: stemming, conjugation, inflection, clitic splitting,
   spell correction and stopword helpers.
 - Normalization and masking stages, key-phrase extraction, transliteration,
-  augmentation and number/utility helpers.
+  augmentation, Jalali date parsing and number/utility helpers.
 - Static fastText/word2vec embeddings, loaded once and shared read-only.
 - Optional POS, NER and learned ezafe model packs.
 
 The individual engines are public modules too: `normalizer`, `tokenizer`,
 `word_tokenizer`, `sbd`, `ezafe`, `morphology`, `conjugation`, `inflector`,
 `stemmer`, `spell`, `stopwords`, `keywords`, `transliterate`, `augment`,
-`utilities` and `embeddings`.
+`dates`, `utilities` and `embeddings`.
 
 ## Quickstart
 

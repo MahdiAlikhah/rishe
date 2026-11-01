@@ -1,9 +1,9 @@
 [package]
 name = "rishe"
-version = "0.6.4"
+version = "0.7.0"
 edition = "2021"
 rust-version = "1.75"
-description = "Rishe (ریشه): High-performance Persian NLP engine in Rust — tokenization, SBD, lemmatization, ezafe detection, informal→formal normalization, stemming, spell checking, embeddings"
+description = "Rishe (ریشه): High-performance Persian NLP engine in Rust — tokenization, SBD, lemmatization, ezafe detection, informal→formal normalization, stemming, spell checking, Jalali date parsing, embeddings"
 license = "MIT OR Apache-2.0"
 readme = "README.crates.md"
 keywords = ["nlp", "persian", "farsi", "tokenization", "lemmatization"]
@@ -16,6 +16,7 @@ exclude = [
     ".*",
     "*.html",
     "data/corpora/*",
+    "data/*.pdf",
     "data/raw_*",
     "docs/*",
     "python/*",
@@ -26,6 +27,10 @@ exclude = [
 [lib]
 name = "rishe"
 crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "rishe"
+path = "src/bin/rishe.rs"
 
 [features]
 default = []

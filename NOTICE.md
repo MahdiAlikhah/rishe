@@ -21,6 +21,11 @@ The model downloaded by `rishe.hub.pull("hazm-fasttext-300")` is
 repository. It is not bundled with Rishe and is not covered by Rishe's license;
 check that repository for the model's own terms before redistributing it.
 
+The Jalali calendar conversion in `src/dates.rs` follows the Borkowski
+algorithm as implemented by
+[jalaali-js](https://github.com/jalaali/jalaali-js), copyright (c) 2015 Behrang
+Noruzi Niya, distributed under the MIT License; the MIT terms below apply.
+
 The optional `models` feature links [tract](https://github.com/sonos/tract)
 (MIT OR Apache-2.0) and [tokenizers](https://github.com/huggingface/tokenizers)
 (Apache-2.0). The task-pack weights are downloaded separately from
