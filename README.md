@@ -55,8 +55,7 @@ More Python usage is in [README.pypi.md](README.pypi.md); the Rust API is in
 - Normalization, word/sentence tokenization, lemmatization, stemming, verb
   conjugation and inflection.
 - Colloquial → formal rewriting, clitic splitting, spell correction, stopword
-  removal and ezafe detection. The Rust crate also parses and converts Jalali
-  dates.
+  removal, ezafe detection and Jalali date parsing.
 - Static fastText/word2vec embeddings, loaded and pooled in-process.
 - Optional POS, NER and learned ezafe packs, downloaded separately and run
   without ONNX Runtime or a Python ML stack.

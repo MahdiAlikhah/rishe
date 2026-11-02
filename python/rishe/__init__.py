@@ -2,8 +2,18 @@
 Rishe (ریشه): High-performance Persian NLP engine.
 """
 
+from typing import Optional
+
 from . import hub
-from ._core import Embeddings, Entity, ModelPack, Pipeline, ProcessedDoc, TaggedToken
+from ._core import (
+    Embeddings,
+    Entity,
+    JalaliDate,
+    ModelPack,
+    Pipeline,
+    ProcessedDoc,
+    TaggedToken,
+)
 from .compat import (
     Lemmatizer,
     Normalizer,
@@ -19,6 +29,8 @@ from .corpora import ConlluReader, PeymaReader, PlainTextReader, Sentence, Token
 __all__ = [
     "Pipeline",
     "ProcessedDoc",
+    "JalaliDate",
+    "parse_date",
     "Embeddings",
     "ModelPack",
     "TaggedToken",
@@ -38,3 +50,8 @@ __all__ = [
     "word_tokenize",
     "sent_tokenize",
 ]
+
+
+def parse_date(text: str) -> Optional[JalaliDate]:
+    """Parse a Jalali date from Persian or numeric text."""
+    return JalaliDate.parse(text)

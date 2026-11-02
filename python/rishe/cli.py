@@ -7,7 +7,7 @@ import json
 import sys
 from typing import List, Optional
 
-from . import Pipeline, hub
+from . import Pipeline, hub, parse_date
 
 DEFAULT_MASK_STAGES = [
     "url",
@@ -59,6 +59,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     mask.add_argument("--mask-token", default=None, help="override every mask default")
     mask.add_argument("--json", action="store_true", help="emit JSON")
 
+    date = subparsers.add_parser("date", help="Parse a Jalali date into Gregorian ISO.")
+    date.add_argument("text", nargs="?", help="text; reads stdin when omitted")
+    date.add_argument("--json", action="store_true", help="emit JSON")
+
     for name, description in (
         ("pos", "Part-of-speech tagging with a model pack."),
         ("ner", "Named-entity recognition with a model pack."),
@@ -93,6 +97,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = parser.parse_args(argv)
     if args.command == "hub":
         return _hub(args)
+    if args.command == "date":
+        return _date(args)
     if args.command in ("pos", "ner", "ezafe"):
         return _pack(args)
 
@@ -144,6 +150,41 @@ def _tag_rows(items, task):
         }
         for item in items
     ]
+
+
+def _date(args) -> int:
+    text = _read_text(args.text)
+    date = parse_date(text)
+    if date is None:
+        print(f"cannot parse a Jalali date from {text!r}", file=sys.stderr)
+        return 2
+    gregorian = date.to_gregorian()
+    iso = date.iso
+    if iso is None or gregorian is None:
+        print(f"invalid Jalali date: {date!r}", file=sys.stderr)
+        return 2
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "jalali": {
+                        "year": date.year,
+                        "month": date.month,
+                        "day": date.day,
+                    },
+                    "gregorian": {
+                        "year": gregorian[0],
+                        "month": gregorian[1],
+                        "day": gregorian[2],
+                    },
+                    "iso": iso,
+                },
+                ensure_ascii=False,
+            )
+        )
+    else:
+        print(iso)
+    return 0
 
 
 def _pack(args) -> int:

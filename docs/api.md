@@ -7,6 +7,7 @@ Main Python objects:
 
 - `Pipeline` — normalization, tokenization, lemmatization, morphology and sentence splitting
 - `ProcessedDoc` — the result of `pipe(text)`
+- `JalaliDate` / `parse_date` — Jalali parsing, formatting and Gregorian conversion
 - `Embeddings` — static word and sentence vectors
 - `rishe.hub` — explicit model download and cache
 - `rishe.corpora` — CoNLL-U, PEYMA and plain-text readers

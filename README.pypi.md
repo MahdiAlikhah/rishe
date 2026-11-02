@@ -80,6 +80,7 @@ No lexicon paths are needed: the classes use Rishe's compiled-in lexicons.
 - Normalization, tokenization, sentence splitting and lemmatization.
 - Stemming, conjugation, inflection, clitic splitting, spell correction,
   stopwords and ezafe detection.
+- Jalali date parsing, formatting and Gregorian conversion.
 - Static fastText/word2vec embeddings with sentence pooling.
 - Optional POS, NER and learned ezafe model packs.
 
@@ -128,6 +129,19 @@ pipe.to_persian("хона")                    # 'خانه'
 
 `keyboard_noise`, `ocr_noise` and `whitespace_noise` add reproducible typing, OCR
 and spacing noise; pass `seed=` for deterministic output.
+
+### Jalali dates
+
+```python
+from rishe import JalaliDate, parse_date
+
+date = parse_date("۱۲ مرداد ۱۴۰۲")        # JalaliDate(1402, 5, 12)
+date.iso                                   # '2023-08-03'
+date.to_gregorian()                        # (2023, 8, 3)
+date.format_persian()                      # '۱۲ مرداد ۱۴۰۲'
+
+JalaliDate.from_gregorian(2023, 8, 3)      # JalaliDate(1402, 5, 12)
+```
 
 ### Tokenizer options
 

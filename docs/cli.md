@@ -3,7 +3,7 @@
 The `rishe` command ships with the Python package (`pip install rishe`) and as a
 Rust binary (`cargo install rishe`). Both accept text as an argument or read it
 from stdin when the argument is omitted. The Hub and JSON-lines server commands
-are Python-only; the Rust binary adds `date`.
+are Python-only.
 
 ```bash
 rishe normalize "مي كنم"                 # می‌کنم
@@ -18,16 +18,25 @@ rishe mask --stages url "به https://a.b برو"
 override the per-stage default. The Rust binary takes comma-separated stages
 (`--stages url,email`).
 
-## Date parsing (Rust binary)
+## Date parsing
 
 `rishe date` accepts `۱۴۰۲/۰۵/۱۲`, `1402-5-12`, `12.5.1402` and
-`۱۲ مرداد ۱۴۰۲`, and prints the Gregorian ISO date. In Rust the same logic is
-available as `rishe::dates`:
+`۱۲ مرداد ۱۴۰۲`, and prints the Gregorian ISO date:
 
 ```bash
 rishe date "۱۲ مرداد ۱۴۰۲"                # 2023-08-03
 rishe date "1402/05/12" --json            # jalali + gregorian + ISO
 ```
+
+```python
+from rishe import parse_date
+
+date = parse_date("۱۲ مرداد ۱۴۰۲")
+date.iso                # '2023-08-03'
+date.format_persian()   # '۱۲ مرداد ۱۴۰۲'
+```
+
+In Rust the same logic is available as `rishe::dates`:
 
 ```rust
 let date = rishe::dates::parse("۱۲ مرداد ۱۴۰۲").expect("date");

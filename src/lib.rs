@@ -432,6 +432,84 @@ mod py_bindings {
     use pyo3::prelude::*;
     use std::path::PathBuf;
 
+    #[pyclass(frozen, get_all, module = "rishe._core")]
+    #[derive(Clone, Copy)]
+    pub struct JalaliDate {
+        pub year: i32,
+        pub month: u8,
+        pub day: u8,
+    }
+
+    impl JalaliDate {
+        fn as_date(self) -> dates::Jalali {
+            dates::Jalali {
+                year: self.year,
+                month: self.month,
+                day: self.day,
+            }
+        }
+    }
+
+    #[pymethods]
+    impl JalaliDate {
+        #[new]
+        pub fn py_new(year: i32, month: u8, day: u8) -> PyResult<Self> {
+            dates::Jalali::new(year, month, day)
+                .map(|date| Self {
+                    year: date.year,
+                    month: date.month,
+                    day: date.day,
+                })
+                .ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err(format!(
+                        "invalid Jalali date: {year}-{month}-{day}"
+                    ))
+                })
+        }
+
+        #[staticmethod]
+        pub fn parse(text: &str) -> Option<Self> {
+            dates::parse(text).map(|date| Self {
+                year: date.year,
+                month: date.month,
+                day: date.day,
+            })
+        }
+
+        #[staticmethod]
+        pub fn from_gregorian(year: i32, month: u8, day: u8) -> Option<Self> {
+            dates::Jalali::from_gregorian(dates::Gregorian { year, month, day }).map(|date| Self {
+                year: date.year,
+                month: date.month,
+                day: date.day,
+            })
+        }
+
+        #[getter]
+        pub fn iso(&self) -> Option<String> {
+            self.as_date().to_iso()
+        }
+
+        #[allow(clippy::wrong_self_convention)]
+        pub fn to_gregorian(&self) -> Option<(i32, u8, u8)> {
+            self.as_date()
+                .to_gregorian()
+                .map(|date| (date.year, date.month, date.day))
+        }
+
+        pub fn format_persian(&self) -> String {
+            self.as_date().format_persian()
+        }
+
+        pub fn format_numeric(&self) -> String {
+            self.as_date().format_numeric()
+        }
+
+        fn __repr__(&self) -> String {
+            format!("JalaliDate({}, {}, {})", self.year, self.month, self.day)
+        }
+    }
+
     #[pymethods]
     impl Pipeline {
         #[new]
@@ -927,6 +1005,7 @@ mod py_bindings {
     pub fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
         m.add_class::<Pipeline>()?;
         m.add_class::<ProcessedDoc>()?;
+        m.add_class::<JalaliDate>()?;
         m.add_class::<embeddings::Embeddings>()?;
         #[cfg(feature = "models")]
         m.add_class::<models::ModelPack>()?;
