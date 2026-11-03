@@ -20,7 +20,8 @@
 
 Rishe turns raw Persian text into clean, structured data: normalized text,
 tokens, sentences, lemmas, ezafe markers, stems, verb forms, spell suggestions
-and optional POS/NER tags. One engine, prebuilt Python wheels and a Rust crate.
+and optional POS/NER tags or dependency trees. One engine, prebuilt Python
+wheels and a Rust crate.
 
 ## Choose your entry point
 
@@ -57,8 +58,8 @@ More Python usage is in [README.pypi.md](README.pypi.md); the Rust API is in
 - Colloquial → formal rewriting, clitic splitting, spell correction, stopword
   removal, ezafe detection and Jalali date parsing.
 - Static fastText/word2vec embeddings, loaded and pooled in-process.
-- Optional POS, NER and learned ezafe packs, downloaded separately and run
-  without ONNX Runtime or a Python ML stack.
+- Optional POS, NER, learned ezafe and dependency-parsing packs, downloaded
+  separately and run without ONNX Runtime or a Python ML stack.
 
 ## Architecture
 
@@ -66,8 +67,8 @@ More Python usage is in [README.pypi.md](README.pypi.md); the Rust API is in
   the optional pack runtime.
 - **Python interface** — abi3 wheels over the same core; no Python runtime
   dependencies.
-- **Optional model packs** — POS, NER and ezafe are separate downloads; the base
-  install stays model-free.
+- **Optional model packs** — POS, NER, ezafe and dependency parsing are
+  separate downloads; the base install stays model-free.
 
 ## Performance & benchmarks
 

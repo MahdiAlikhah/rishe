@@ -44,6 +44,35 @@ assert_eq!(date.to_iso().as_deref(), Some("2023-08-03"));
 assert_eq!(date.format_persian(), "۱۲ مرداد ۱۴۰۲");
 ```
 
+## Dependency parsing
+
+`rishe depparse` loads a depparse pack and prints one word, head index and
+relation per line. `head` is zero-based; `-` marks the root.
+
+```bash
+rishe hub pull depparse-compact
+rishe depparse --pack "$(rishe hub info depparse-compact | cut -f2)" \
+  "کتاب‌های خوب را به دوستانم می‌دهم."
+# کتاب‌های	5	obj
+# خوب	0	amod
+# را	0	case
+# به	4	case
+# دوستانم	5	obl:arg
+# می‌دهم	-	root
+# .	5	punct
+```
+
+The Python API returns `Dependency` objects with `text`, `head`, `relation`,
+`start` and `end`:
+
+```python
+from rishe import Pipeline
+
+pipe = Pipeline(depparse_pack="path/to/depparse")
+for item in pipe.depparse("کتاب‌های خوب را به دوستانم می‌دهم."):
+    print(item.text, item.head, item.relation)
+```
+
 ## Models
 
 Downloads are explicit; the base install never touches the network.

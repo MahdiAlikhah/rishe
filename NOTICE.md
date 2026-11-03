@@ -34,6 +34,12 @@ are not bundled with Rishe, and are not covered by Rishe's license. They are
 fine-tuned from `HooshvareLab/albert-fa-zwnj-base-v2` (Apache-2.0); check the
 model repository card for the pack terms and training-data provenance.
 
+The dependency-parsing pack is trained on the UD Persian Seraji and PerDT
+treebanks from [Universal Dependencies](https://universaldependencies.org/).
+Those treebanks are distributed under CC BY-SA 4.0, and the derived parser
+weights are released under CC BY-SA 4.0; keep the UD attribution and
+share-alike terms when redistributing the pack.
+
 ---
 
 The MIT License (MIT)

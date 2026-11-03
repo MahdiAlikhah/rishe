@@ -82,7 +82,7 @@ No lexicon paths are needed: the classes use Rishe's compiled-in lexicons.
   stopwords and ezafe detection.
 - Jalali date parsing, formatting and Gregorian conversion.
 - Static fastText/word2vec embeddings with sentence pooling.
-- Optional POS, NER and learned ezafe model packs.
+- Optional POS, NER, learned ezafe and dependency-parsing model packs.
 
 ## Feature tour
 
@@ -168,13 +168,16 @@ for sentence in ConlluReader("data/corpora/fa_perdt-ud-test.conllu"):
 
 ## Model packs
 
-POS, NER and ezafe are separate, checksum-verified downloads. They run inside
-the package without ONNX Runtime or a Python ML stack.
+POS, NER, ezafe and dependency parsing are separate, checksum-verified
+downloads. They run inside the package without ONNX Runtime or a Python ML
+stack. The depparse pack is `depparse-compact` and carries its own CC BY-SA
+4.0 notice.
 
 ```bash
 rishe hub pull pos-compact
 rishe hub pull ner-compact
 rishe hub pull ezafe-compact
+rishe hub pull depparse-compact
 ```
 
 ```python
@@ -195,13 +198,19 @@ for entity in pipe.ner("سرلشگر فیروزآبادی به پادشاه عر
 for token in pipe.ezafe("کتابخانه مرکزی دانشگاه شریف"):
     print(token.text, token.tag, token.start, token.end)
 
+parser = Pipeline(depparse_pack=hub.path_pack("depparse-compact"))
+for item in parser.depparse("کتاب‌های خوب را به دوستانم می‌دهم."):
+    print(item.text, item.head, item.relation)
+
 pipe.pos_batch(["کتاب‌های خوب", "خوب است"])
 pipe.ner_batch(["فیروزآبادی گفت.", "عربستان جای خوبی است."])
 pipe.ezafe_batch(["کتابخانه مرکزی", "دانشگاه شریف"])
 ```
 
 `TaggedToken` has `text`, `tag`, `start` and `end`; `Entity` has `text`,
-`label`, `start` and `end`. Start/end are character offsets. The lower-level
+`label`, `start` and `end`; `Dependency` has `text`, `head`, `relation`,
+`start` and `end`. Start/end are character offsets; `head` is zero-based or
+`None` for the root. The lower-level
 `ModelPack` class is still available when you want one task:
 
 ```python
@@ -236,6 +245,7 @@ rishe tokenize "سلام دنیا" --json
 rishe pos "کتاب‌های خوب را به دوستانم می‌دهم."
 rishe ner --json "سرلشگر فیروزآبادی به پادشاه عربستان گفت."
 rishe ezafe "کتابخانه مرکزی دانشگاه شریف"
+rishe depparse --pack path/to/depparse "کتاب‌های خوب را به دوستانم می‌دهم."
 rishe hub info pos-compact
 rishe hub verify pos-compact
 rishe hub remove pos-compact

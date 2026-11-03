@@ -12,6 +12,11 @@ from rishe import Entity, ModelPack, Pipeline, TaggedToken, hub
 from rishe.cli import main
 
 PACK_ROOT = Path(os.environ["RISHE_TEST_PACK"]) if os.environ.get("RISHE_TEST_PACK") else None
+DEPPARSE_PACK = (
+    Path(os.environ["RISHE_TEST_DEPPARSE_PACK"])
+    if os.environ.get("RISHE_TEST_DEPPARSE_PACK")
+    else None
+)
 TINY_PACK = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "tiny-pack"
 
 
@@ -41,6 +46,7 @@ class PackCacheTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             with patch.dict(os.environ, {"RISHE_HOME": root}):
                 self.assertIsNone(hub.cached_pack("pos-compact"))
+                self.assertEqual(hub.PACKS["depparse-compact"], "depparse")
                 target = Path(root) / "models" / "pos-compact"
                 target.mkdir(parents=True)
                 for name in hub.PACK_REQUIRED:
@@ -84,6 +90,43 @@ class PackCacheTest(unittest.TestCase):
                     self.assertTrue(hub.verify("pos-compact"))
                     (target / "model.onnx").write_bytes(b"corrupt")
                     self.assertFalse(hub.verify("pos-compact"))
+
+
+@unittest.skipUnless(
+    DEPPARSE_PACK is not None and DEPPARSE_PACK.is_dir(),
+    "RISHE_TEST_DEPPARSE_PACK is not set",
+)
+class DependencyParseTest(unittest.TestCase):
+    def test_depparse(self):
+        pipe = Pipeline(depparse_pack=DEPPARSE_PACK)
+        dependencies = pipe.depparse("کتاب‌های خوب را به دوستانم می‌دهم.")
+        self.assertTrue(dependencies)
+        self.assertEqual(
+            sum(item.head is None for item in dependencies),
+            1,
+        )
+        for item in dependencies:
+            if item.head is not None:
+                self.assertLess(item.head, len(dependencies))
+        batch = pipe.depparse_batch(["کتاب خوب است.", "به تهران رفت."])
+        self.assertEqual(len(batch), 2)
+
+    def test_cli_depparse(self):
+        output = StringIO()
+        with redirect_stdout(output):
+            code = main(
+                [
+                    "depparse",
+                    "--pack",
+                    str(DEPPARSE_PACK),
+                    "--json",
+                    "کتاب‌های خوب را به دوستانم می‌دهم.",
+                ]
+            )
+        self.assertEqual(code, 0)
+        rows = json.loads(output.getvalue())
+        self.assertEqual(sum(row["head"] is None for row in rows), 1)
+        self.assertTrue(all("relation" in row for row in rows))
 
 
 @unittest.skipUnless(PACK_ROOT is not None and PACK_ROOT.is_dir(), "RISHE_TEST_PACK is not set")

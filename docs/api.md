@@ -9,6 +9,7 @@ Main Python objects:
 - `ProcessedDoc` — the result of `pipe(text)`
 - `JalaliDate` / `parse_date` — Jalali parsing, formatting and Gregorian conversion
 - `Embeddings` — static word and sentence vectors
+- `Dependency` — one dependency arc from `Pipeline.depparse`
 - `rishe.hub` — explicit model download and cache
 - `rishe.corpora` — CoNLL-U, PEYMA and plain-text readers
 

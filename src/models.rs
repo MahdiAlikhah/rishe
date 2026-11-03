@@ -36,6 +36,140 @@ pub struct Entity {
     pub end: usize,
 }
 
+#[cfg_attr(
+    feature = "python",
+    pyo3::pyclass(frozen, module = "rishe._core", get_all)
+)]
+/// One word and its dependency head; `head` is zero-based or `None` for the root.
+#[derive(Debug, Clone)]
+pub struct Dependency {
+    pub text: String,
+    pub head: Option<usize>,
+    pub relation: String,
+    pub start: usize,
+    pub end: usize,
+}
+
+#[derive(Clone, Copy)]
+struct ArcEdge {
+    from: usize,
+    to: usize,
+    weight: f64,
+    from_original: usize,
+    to_original: usize,
+}
+
+fn maximum_spanning_tree(scores: &[Vec<f64>]) -> Option<Vec<usize>> {
+    let word_count = scores.len();
+    if word_count == 0 {
+        return Some(Vec::new());
+    }
+    let root = word_count;
+    let mut edges = Vec::with_capacity(word_count * (word_count + 1));
+    for dependent in 0..word_count {
+        for head in 0..word_count {
+            if head != dependent {
+                edges.push(ArcEdge {
+                    from: head,
+                    to: dependent,
+                    weight: scores[dependent][head + 1],
+                    from_original: head,
+                    to_original: dependent,
+                });
+            }
+        }
+        edges.push(ArcEdge {
+            from: root,
+            to: dependent,
+            weight: scores[dependent][0] - 1_000_000_000.0,
+            from_original: root,
+            to_original: dependent,
+        });
+    }
+    let parents = maximum_arborescence(word_count + 1, root, &edges)?;
+    Some(parents[..word_count].to_vec())
+}
+
+fn maximum_arborescence(node_count: usize, root: usize, edges: &[ArcEdge]) -> Option<Vec<usize>> {
+    let mut incoming = vec![f64::NEG_INFINITY; node_count];
+    let mut parent = vec![usize::MAX; node_count];
+    for edge in edges {
+        if edge.from != edge.to && edge.weight > incoming[edge.to] {
+            incoming[edge.to] = edge.weight;
+            parent[edge.to] = edge.from;
+        }
+    }
+    incoming[root] = 0.0;
+    parent[root] = root;
+    if (0..node_count).any(|node| node != root && parent[node] == usize::MAX) {
+        return None;
+    }
+
+    let mut component = vec![usize::MAX; node_count];
+    let mut visited = vec![usize::MAX; node_count];
+    let mut components = 0;
+    for start in 0..node_count {
+        if start == root {
+            continue;
+        }
+        let mut node = start;
+        while node != root && visited[node] != start && component[node] == usize::MAX {
+            visited[node] = start;
+            node = parent[node];
+        }
+        if node != root && component[node] == usize::MAX {
+            let mut member = parent[node];
+            component[node] = components;
+            while member != node {
+                component[member] = components;
+                member = parent[member];
+            }
+            components += 1;
+        }
+    }
+    if components == 0 {
+        return Some(parent);
+    }
+
+    for node in 0..node_count {
+        if component[node] == usize::MAX {
+            component[node] = components;
+            components += 1;
+        }
+    }
+    let contracted_root = component[root];
+    let mut contracted = Vec::with_capacity(edges.len());
+    for edge in edges {
+        let from = component[edge.from];
+        let to = component[edge.to];
+        if from == to {
+            continue;
+        }
+        contracted.push(ArcEdge {
+            from,
+            to,
+            weight: edge.weight - incoming[edge.to],
+            from_original: edge.from,
+            to_original: edge.to,
+        });
+    }
+    let contracted_parent = maximum_arborescence(components, contracted_root, &contracted)?;
+    let mut result = parent;
+    for (node, component_parent) in contracted_parent.into_iter().enumerate() {
+        if node == contracted_root {
+            continue;
+        }
+        if let Some(edge) = contracted
+            .iter()
+            .filter(|edge| edge.from == component_parent && edge.to == node)
+            .max_by(|left, right| left.weight.total_cmp(&right.weight))
+        {
+            result[edge.to_original] = edge.from_original;
+        }
+    }
+    Some(result)
+}
+
 pub fn merge_entities(tokens: &[TaggedToken]) -> Vec<Entity> {
     let mut entities = Vec::new();
     let mut current: Option<(String, usize, usize, String)> = None;
@@ -232,10 +366,12 @@ impl ModelPack {
             .collect())
     }
 
-    /// Word-level single call.
-    pub fn tag_words(&self, words: &[&str]) -> Result<Vec<(String, String)>, String> {
+    fn encode_words(
+        &self,
+        words: &[&str],
+    ) -> Result<Option<(Vec<i64>, Vec<usize>, Vec<String>)>, String> {
         if words.is_empty() {
-            return Ok(Vec::new());
+            return Ok(None);
         }
 
         let cls = self
@@ -272,9 +408,17 @@ impl ModelPack {
             kept.push((*word).to_owned());
         }
         if kept.is_empty() {
-            return Ok(Vec::new());
+            return Ok(None);
         }
         ids.push(sep);
+        Ok(Some((ids, positions, kept)))
+    }
+
+    /// Word-level single call.
+    pub fn tag_words(&self, words: &[&str]) -> Result<Vec<(String, String)>, String> {
+        let Some((ids, positions, kept)) = self.encode_words(words)? else {
+            return Ok(Vec::new());
+        };
 
         let shape = (1, ids.len());
         let input_ids = Array2::from_shape_vec(shape, ids)
@@ -311,6 +455,160 @@ impl ModelPack {
                 }
             }
             result.push((word, self.labels[best].clone()));
+        }
+        Ok(result)
+    }
+
+    pub fn depparse(&self, text: &str) -> Result<Vec<Dependency>, String> {
+        let tokens = WordTokenizer::tokenize(text);
+        let words: Vec<&str> = tokens.iter().map(|token| token.text).collect();
+        let Some((ids, positions, kept)) = self.encode_words(&words)? else {
+            return Ok(Vec::new());
+        };
+        let word_count = kept.len();
+        let token_count = ids.len();
+        let pad_id = self.tokenizer.token_to_id("[PAD]").unwrap_or(0) as i64;
+        let mut padded_ids = vec![pad_id; self.max_len];
+        padded_ids[..token_count].copy_from_slice(&ids);
+        let mut attention = vec![0_i64; self.max_len];
+        attention[..token_count].fill(1);
+        let sequence_shape = (1, self.max_len);
+        let word_shape = (1, word_count);
+        let positions: Vec<i64> = positions.into_iter().map(|value| value as i64).collect();
+        let mask = vec![true; word_count];
+
+        let scores = {
+            let input_ids = Array2::from_shape_vec(sequence_shape, padded_ids.clone())
+                .map_err(|error| format!("invalid input shape: {error}"))?
+                .tract()
+                .map_err(|error| format!("cannot build input tensor: {error}"))?;
+            let attention_mask = Array2::from_shape_vec(sequence_shape, attention.clone())
+                .map_err(|error| format!("invalid attention mask: {error}"))?
+                .tract()
+                .map_err(|error| format!("cannot build attention mask: {error}"))?;
+            let word_positions = Array2::from_shape_vec(word_shape, positions.clone())
+                .map_err(|error| format!("invalid word positions: {error}"))?
+                .tract()
+                .map_err(|error| format!("cannot build word positions: {error}"))?;
+            let word_mask = Array2::from_shape_vec(word_shape, mask.clone())
+                .map_err(|error| format!("invalid word mask: {error}"))?
+                .tract()
+                .map_err(|error| format!("cannot build word mask: {error}"))?;
+            let head_indices = Array2::<i64>::zeros(word_shape)
+                .tract()
+                .map_err(|error| format!("cannot build head indices: {error}"))?;
+            let outputs = self
+                .runnable
+                .run([
+                    input_ids,
+                    attention_mask,
+                    word_positions,
+                    word_mask,
+                    head_indices,
+                ])
+                .map_err(|error| format!("inference failed: {error}"))?;
+            let arcs = outputs
+                .first()
+                .ok_or_else(|| "model returned no arc scores".to_string())?
+                .ndarray::<f32>()
+                .map_err(|error| format!("cannot read arc scores: {error}"))?;
+            if arcs.shape().get(2).copied() != Some(word_count + 1) {
+                return Err("arc scores have an unexpected shape".to_string());
+            }
+            (0..word_count)
+                .map(|dependent| {
+                    (0..=word_count)
+                        .map(|head| arcs[[0, dependent, head]] as f64)
+                        .collect()
+                })
+                .collect::<Vec<Vec<f64>>>()
+        };
+
+        let parents = maximum_spanning_tree(&scores)
+            .ok_or_else(|| "cannot decode a dependency tree".to_string())?;
+        let head_indices: Vec<i64> = parents
+            .iter()
+            .map(|&parent| {
+                if parent == word_count {
+                    0
+                } else {
+                    parent as i64 + 1
+                }
+            })
+            .collect();
+
+        let input_ids = Array2::from_shape_vec(sequence_shape, padded_ids)
+            .map_err(|error| format!("invalid input shape: {error}"))?
+            .tract()
+            .map_err(|error| format!("cannot build input tensor: {error}"))?;
+        let attention_mask = Array2::from_shape_vec(sequence_shape, attention)
+            .map_err(|error| format!("invalid attention mask: {error}"))?
+            .tract()
+            .map_err(|error| format!("cannot build attention mask: {error}"))?;
+        let word_positions = Array2::from_shape_vec(word_shape, positions)
+            .map_err(|error| format!("invalid word positions: {error}"))?
+            .tract()
+            .map_err(|error| format!("cannot build word positions: {error}"))?;
+        let word_mask = Array2::from_shape_vec(word_shape, mask)
+            .map_err(|error| format!("invalid word mask: {error}"))?
+            .tract()
+            .map_err(|error| format!("cannot build word mask: {error}"))?;
+        let head_indices = Array2::from_shape_vec(word_shape, head_indices)
+            .map_err(|error| format!("invalid head indices: {error}"))?
+            .tract()
+            .map_err(|error| format!("cannot build head indices: {error}"))?;
+        let outputs = self
+            .runnable
+            .run([
+                input_ids,
+                attention_mask,
+                word_positions,
+                word_mask,
+                head_indices,
+            ])
+            .map_err(|error| format!("inference failed: {error}"))?;
+        let relations = outputs
+            .get(1)
+            .ok_or_else(|| "model returned no relation logits".to_string())?
+            .ndarray::<f32>()
+            .map_err(|error| format!("cannot read relation logits: {error}"))?;
+        let label_count = relations.shape().get(2).copied().unwrap_or(0);
+        if label_count != self.labels.len() {
+            return Err(format!(
+                "model has {label_count} labels, labels.json has {}",
+                self.labels.len()
+            ));
+        }
+
+        let mut cursor = 0;
+        let mut result = Vec::with_capacity(word_count);
+        for (index, word) in kept.iter().enumerate() {
+            let Some(offset) = tokens[cursor..]
+                .iter()
+                .position(|token| token.text == word.as_str())
+            else {
+                continue;
+            };
+            let token = &tokens[cursor + offset];
+            let mut best = 0;
+            for label in 1..label_count {
+                if relations[[0, index, label]] > relations[[0, index, best]] {
+                    best = label;
+                }
+            }
+            let parent = parents[index];
+            result.push(Dependency {
+                text: word.clone(),
+                head: if parent == word_count {
+                    None
+                } else {
+                    Some(parent)
+                },
+                relation: self.labels[best].clone(),
+                start: text[..token.start].chars().count(),
+                end: text[..token.end].chars().count(),
+            });
+            cursor += offset + 1;
         }
         Ok(result)
     }
@@ -364,6 +662,50 @@ mod tests {
             (entities[1].text.as_str(), entities[1].label.as_str()),
             ("ب پ", "LOC")
         );
+    }
+
+    #[test]
+    fn mst_breaks_cycle_with_single_root() {
+        let scores = vec![vec![8.0, 0.0, 10.0], vec![9.0, 10.0, 0.0]];
+        assert_eq!(maximum_spanning_tree(&scores), Some(vec![1, 2]));
+    }
+
+    #[test]
+    fn mst_roots_a_single_word() {
+        assert_eq!(maximum_spanning_tree(&[vec![5.0]]), Some(vec![1]));
+    }
+
+    #[test]
+    fn depparse_loaded_pack() {
+        let Ok(path) = std::env::var("RISHE_DEPPARSE_PACK") else {
+            return;
+        };
+        let pack = ModelPack::load(path).expect("load depparse pack");
+        let dependencies = pack
+            .depparse("کتاب‌های خوب را به دوستانم می‌دهم.")
+            .expect("depparse");
+        assert!(!dependencies.is_empty());
+        assert_eq!(
+            dependencies
+                .iter()
+                .filter(|item| item.head.is_none())
+                .count(),
+            1
+        );
+        for dependency in &dependencies {
+            if let Some(head) = dependency.head {
+                assert!(head < dependencies.len());
+            }
+        }
+        for start in 0..dependencies.len() {
+            let mut seen = vec![false; dependencies.len()];
+            let mut node = start;
+            while let Some(head) = dependencies[node].head {
+                assert!(!seen[node]);
+                seen[node] = true;
+                node = head;
+            }
+        }
     }
 
     #[test]

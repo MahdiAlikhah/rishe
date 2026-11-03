@@ -20,6 +20,7 @@ Commands:
   pos         POS tagging with a model pack (needs the `models` feature).
   ner         Named-entity recognition with a model pack (needs `models`).
   ezafe       Ezafe tagging with a model pack (needs `models`).
+  depparse    Dependency parsing with a model pack (needs `models`).
 
 Options:
   --json              Emit JSON.
@@ -129,7 +130,7 @@ fn run() -> Result<(), String> {
             emit(&masked, options.json);
         }
         "date" => emit_date(&text, options.json)?,
-        "pos" | "ner" | "ezafe" => {
+        "pos" | "ner" | "ezafe" | "depparse" => {
             pack_tag(&command, options.pack.as_deref(), &text, options.json)?
         }
         other => return Err(format!("unknown command: {other}\n\n{USAGE}")),
@@ -239,6 +240,37 @@ fn pack_tag(task: &str, pack: Option<&str>, text: &str, json: bool) -> Result<()
             } else {
                 for item in &items {
                     println!("{}\t{}", item.text, item.tag);
+                }
+            }
+        }
+        "depparse" => {
+            let items = pipe.depparse(text)?;
+            if json {
+                let rows: Vec<String> = items
+                    .iter()
+                    .map(|item| {
+                        let head = item
+                            .head
+                            .map(|head| head.to_string())
+                            .unwrap_or_else(|| "null".to_string());
+                        format!(
+                            "{{\"text\":{},\"head\":{},\"relation\":{},\"start\":{},\"end\":{}}}",
+                            json_string(&item.text),
+                            head,
+                            json_string(&item.relation),
+                            item.start,
+                            item.end
+                        )
+                    })
+                    .collect();
+                println!("[{}]", rows.join(","));
+            } else {
+                for item in &items {
+                    let head = item
+                        .head
+                        .map(|head| head.to_string())
+                        .unwrap_or_else(|| "-".to_string());
+                    println!("{}\t{}\t{}", item.text, head, item.relation);
                 }
             }
         }

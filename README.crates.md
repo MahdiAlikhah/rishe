@@ -119,14 +119,21 @@ for entity in pipe.ner("سرلشگر فیروزآبادی به پادشاه عر
     println!("{}\t{}\t{}..{}", entity.text, entity.label, entity.start, entity.end);
 }
 
+pipe.load_pack("depparse", "path/to/depparse").expect("load depparse");
+for item in pipe.depparse("کتاب‌های خوب را به دوستانم می‌دهم.").expect("depparse") {
+    println!("{}\t{:?}\t{}", item.text, item.head, item.relation);
+}
+
 let batch = pipe
     .pos_batch(&["کتاب‌های خوب".to_string(), "خوب است".to_string()])
     .expect("batch");
 ```
 
 `TaggedToken` exposes `text`, `tag`, `start` and `end`; `Entity` exposes
-`text`, `label`, `start` and `end`. Offsets are character offsets. The
-lower-level `rishe::models::ModelPack` is still available for one task.
+`text`, `label`, `start` and `end`; `Dependency` exposes `text`, `head`,
+`relation`, `start` and `end`. Offsets are character offsets, and `head` is a
+zero-based word index or `None` for the root. The lower-level
+`rishe::models::ModelPack` is still available for one task.
 
 The packs are word-level ONNX files run through tract. No ONNX Runtime install
 is required.

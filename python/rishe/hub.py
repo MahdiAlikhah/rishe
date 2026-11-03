@@ -56,9 +56,10 @@ PACKS: Dict[str, str] = {
     "pos-compact": "pos",
     "ner-compact": "ner",
     "ezafe-compact": "ezafe",
+    "depparse-compact": "depparse",
 }
 PACK_BASE = "https://huggingface.co/MahdiAlikhah/rishe-models/resolve/main"
-PACK_MANIFEST_SHA256 = "a8ad4ae2c354c2d278344e5433fce0dd3fb5116415d4e5d2c788b0b407010661"
+PACK_MANIFEST_SHA256 = "60885efc0680a47a3f7efbd3bc699c19766dc33c6b072b44c31086811d43f12e"
 PACK_REQUIRED = ("model.onnx", "tokenizer.json", "labels.json")
 
 

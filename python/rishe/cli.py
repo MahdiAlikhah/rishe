@@ -63,6 +63,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     date.add_argument("text", nargs="?", help="text; reads stdin when omitted")
     date.add_argument("--json", action="store_true", help="emit JSON")
 
+    depparse = subparsers.add_parser(
+        "depparse", help="Dependency parsing with a model pack."
+    )
+    depparse.add_argument("text", nargs="?", help="text; reads stdin when omitted")
+    depparse.add_argument("--pack", required=True, help="depparse pack directory")
+    depparse.add_argument("--json", action="store_true", help="emit JSON")
+
     for name, description in (
         ("pos", "Part-of-speech tagging with a model pack."),
         ("ner", "Named-entity recognition with a model pack."),
@@ -79,6 +86,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     serve.add_argument("--pos-pack", default=None)
     serve.add_argument("--ner-pack", default=None)
     serve.add_argument("--ezafe-pack", default=None)
+    serve.add_argument("--depparse-pack", default=None)
 
     hub_parser = subparsers.add_parser("hub", help="Download and cache models.")
     hub_commands = hub_parser.add_subparsers(dest="hub_command", required=True)
@@ -99,13 +107,15 @@ def main(argv: Optional[List[str]] = None) -> int:
         return _hub(args)
     if args.command == "date":
         return _date(args)
+    if args.command == "depparse":
+        return _depparse(args)
     if args.command in ("pos", "ner", "ezafe"):
         return _pack(args)
 
     if args.command == "serve":
         packs = {
             f"{task}_pack": getattr(args, f"{task}_pack")
-            for task in ("pos", "ner", "ezafe")
+            for task in ("pos", "ner", "ezafe", "depparse")
             if getattr(args, f"{task}_pack")
         }
         try:
@@ -184,6 +194,33 @@ def _date(args) -> int:
         )
     else:
         print(iso)
+    return 0
+
+
+def _depparse(args) -> int:
+    try:
+        pipe = Pipeline(depparse_pack=args.pack)
+        items = pipe.depparse(_read_text(args.text))
+    except (OSError, ValueError) as error:
+        print(error, file=sys.stderr)
+        return 2
+
+    if args.json:
+        rows = [
+            {
+                "text": item.text,
+                "head": item.head,
+                "relation": item.relation,
+                "start": item.start,
+                "end": item.end,
+            }
+            for item in items
+        ]
+        print(json.dumps(rows, ensure_ascii=False))
+    else:
+        for item in items:
+            head = "-" if item.head is None else str(item.head)
+            print(f"{item.text}\t{head}\t{item.relation}")
     return 0
 
 
@@ -272,6 +309,17 @@ def _serve(pipe: Pipeline, stages: List[str], mask_token: Optional[str]) -> int:
                     request.get("stages", stages),
                     request.get("mask_token", mask_token),
                 )
+            elif command == "depparse":
+                result = [
+                    {
+                        "text": item.text,
+                        "head": item.head,
+                        "relation": item.relation,
+                        "start": item.start,
+                        "end": item.end,
+                    }
+                    for item in pipe.depparse(text)
+                ]
             elif command in ("pos", "ner", "ezafe"):
                 items = getattr(pipe, command)(text)
                 result = _tag_rows(items, command)

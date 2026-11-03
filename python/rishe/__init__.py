@@ -6,6 +6,7 @@ from typing import Optional
 
 from . import hub
 from ._core import (
+    Dependency,
     Embeddings,
     Entity,
     JalaliDate,
@@ -35,6 +36,7 @@ __all__ = [
     "ModelPack",
     "TaggedToken",
     "Entity",
+    "Dependency",
     "hub",
     "Token",
     "Sentence",

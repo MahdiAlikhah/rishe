@@ -98,6 +98,8 @@ pub struct Pipeline {
     ner: Option<models::ModelPack>,
     #[cfg(feature = "models")]
     ezafe: Option<models::ModelPack>,
+    #[cfg(feature = "models")]
+    depparse: Option<models::ModelPack>,
 }
 
 impl Pipeline {
@@ -119,6 +121,8 @@ impl Pipeline {
             ner: None,
             #[cfg(feature = "models")]
             ezafe: None,
+            #[cfg(feature = "models")]
+            depparse: None,
         }
     }
 
@@ -135,6 +139,7 @@ impl Pipeline {
             "pos" => self.pos = Some(pack),
             "ner" => self.ner = Some(pack),
             "ezafe" => self.ezafe = Some(pack),
+            "depparse" => self.depparse = Some(pack),
             other => return Err(format!("unknown pack task: {other}")),
         }
         Ok(())
@@ -146,6 +151,7 @@ impl Pipeline {
             "pos" => self.pos.as_ref(),
             "ner" => self.ner.as_ref(),
             "ezafe" => self.ezafe.as_ref(),
+            "depparse" => self.depparse.as_ref(),
             other => return Err(format!("unknown pack task: {other}")),
         }
         .ok_or_else(|| format!("{task} pack is not loaded"))
@@ -179,6 +185,16 @@ impl Pipeline {
     #[cfg(feature = "models")]
     pub fn ezafe_batch(&self, texts: &[String]) -> Result<Vec<Vec<models::TaggedToken>>, String> {
         self.pack("ezafe")?.tag_text_batch(texts)
+    }
+
+    #[cfg(feature = "models")]
+    pub fn depparse(&self, text: &str) -> Result<Vec<models::Dependency>, String> {
+        self.pack("depparse")?.depparse(text)
+    }
+
+    #[cfg(feature = "models")]
+    pub fn depparse_batch(&self, texts: &[String]) -> Result<Vec<Vec<models::Dependency>>, String> {
+        texts.par_iter().map(|text| self.depparse(text)).collect()
     }
 
     #[inline]
@@ -513,7 +529,7 @@ mod py_bindings {
     #[pymethods]
     impl Pipeline {
         #[new]
-        #[pyo3(signature = (unify_digits=true, strip_diacritics=true, fix_zwnj=true, pos_pack=None, ner_pack=None, ezafe_pack=None))]
+        #[pyo3(signature = (unify_digits=true, strip_diacritics=true, fix_zwnj=true, pos_pack=None, ner_pack=None, ezafe_pack=None, depparse_pack=None))]
         #[allow(unused_variables)]
         pub fn py_new(
             unify_digits: bool,
@@ -522,6 +538,7 @@ mod py_bindings {
             pos_pack: Option<PathBuf>,
             ner_pack: Option<PathBuf>,
             ezafe_pack: Option<PathBuf>,
+            depparse_pack: Option<PathBuf>,
         ) -> PyResult<Self> {
             #[cfg(feature = "models")]
             let mut pipe = Self::create(unify_digits, strip_diacritics, fix_zwnj);
@@ -530,7 +547,12 @@ mod py_bindings {
 
             #[cfg(feature = "models")]
             {
-                for (task, path) in [("pos", pos_pack), ("ner", ner_pack), ("ezafe", ezafe_pack)] {
+                for (task, path) in [
+                    ("pos", pos_pack),
+                    ("ner", ner_pack),
+                    ("ezafe", ezafe_pack),
+                    ("depparse", depparse_pack),
+                ] {
                     if let Some(path) = path {
                         pipe.load_pack(task, &path.to_string_lossy())
                             .map_err(pyo3::exceptions::PyValueError::new_err)?;
@@ -539,7 +561,11 @@ mod py_bindings {
             }
             #[cfg(not(feature = "models"))]
             {
-                if pos_pack.is_some() || ner_pack.is_some() || ezafe_pack.is_some() {
+                if pos_pack.is_some()
+                    || ner_pack.is_some()
+                    || ezafe_pack.is_some()
+                    || depparse_pack.is_some()
+                {
                     return Err(pyo3::exceptions::PyValueError::new_err(
                         "model packs require the `models` feature",
                     ));
@@ -599,6 +625,24 @@ mod py_bindings {
             texts: Vec<String>,
         ) -> PyResult<Vec<Vec<models::TaggedToken>>> {
             py.allow_threads(|| self.ezafe_batch(&texts))
+                .map_err(pyo3::exceptions::PyValueError::new_err)
+        }
+
+        #[cfg(feature = "models")]
+        #[pyo3(name = "depparse")]
+        pub fn py_depparse(&self, py: Python<'_>, text: &str) -> PyResult<Vec<models::Dependency>> {
+            py.allow_threads(|| self.depparse(text))
+                .map_err(pyo3::exceptions::PyValueError::new_err)
+        }
+
+        #[cfg(feature = "models")]
+        #[pyo3(name = "depparse_batch")]
+        pub fn py_depparse_batch(
+            &self,
+            py: Python<'_>,
+            texts: Vec<String>,
+        ) -> PyResult<Vec<Vec<models::Dependency>>> {
+            py.allow_threads(|| self.depparse_batch(&texts))
                 .map_err(pyo3::exceptions::PyValueError::new_err)
         }
 
@@ -1013,6 +1057,8 @@ mod py_bindings {
         m.add_class::<models::TaggedToken>()?;
         #[cfg(feature = "models")]
         m.add_class::<models::Entity>()?;
+        #[cfg(feature = "models")]
+        m.add_class::<models::Dependency>()?;
         Ok(())
     }
 }

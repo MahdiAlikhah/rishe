@@ -131,3 +131,19 @@ another training run and risks the measured per-task accuracy. It is deferred
 until there is actual demand for an all-in-one download. The per-task 44.8 MB
 is the number to compare with Shekar's ~11 MB int8 models; the trade is
 precision (fp32) and accuracy, not install size.
+
+## Dependency parsing (0.8.0)
+
+The compact parser is an ALBERT backbone with a biaffine arc scorer and a
+head-conditioned relation classifier, decoded with single-root MST. It is
+48.1 MB and runs through the same tract pack runtime. Full card:
+[`MODEL_CARD_0.8.0.md`](MODEL_CARD_0.8.0.md).
+
+| test treebank | UAS | LAS | LAS no punct |
+|---|---:|---:|---:|
+| UD-Seraji | 85.38 | 77.99 | 78.18 |
+| UD-PerDT | 91.84 | 87.31 | 87.33 |
+
+Across seeds 42, 43 and 44, mean ± sample std LAS is 76.70 ± 1.18 on Seraji and
+87.71 ± 0.43 on PerDT. The released pack is seed 42. These are compact-model
+numbers: below BERT-scale Hazm/spaCy `trf`, above spaCy's compact `sm` on PerDT.
