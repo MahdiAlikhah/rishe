@@ -78,6 +78,7 @@ jobs:
           manylinux: ${{ matrix.manylinux }}
           args: --release --out dist
           rust-toolchain: stable
+          zig: true
       - uses: actions/upload-artifact@v4
         with:
           name: wheels-${{ matrix.target }}
