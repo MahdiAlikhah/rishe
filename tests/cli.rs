@@ -36,6 +36,34 @@ fn parses_jalali_dates() {
 }
 
 #[test]
+fn serves_json_lines() {
+    use std::io::Write;
+    let mut child = rishe()
+        .arg("serve")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn rishe serve");
+    child
+        .stdin
+        .as_mut()
+        .expect("stdin")
+        .write_all("{\"command\":\"normalize\",\"text\":\"مي كنم\"}\n".as_bytes())
+        .expect("write stdin");
+    let output = child.wait_with_output().expect("wait");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        "{\"ok\":true,\"result\":\"می‌کنم\"}"
+    );
+}
+
+#[test]
+fn lists_hub_packs() {
+    let output = stdout(rishe().args(["hub", "list"]));
+    assert!(output.contains("depparse-compact\t"));
+}
+
+#[test]
 fn reads_stdin_and_reports_bad_input() {
     let mut child = rishe()
         .arg("normalize")

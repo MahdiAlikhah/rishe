@@ -5,6 +5,7 @@ pub mod dates;
 pub mod detokenizer;
 pub mod embeddings;
 pub mod ezafe;
+pub mod hub;
 pub mod inflector;
 pub mod keywords;
 pub mod maskers;

@@ -62,6 +62,13 @@ The `Pipeline` exposes the same utilities directly: `normalize_stages`,
 `textrank`, `ngrams` and batch processing. Sentence splitting lives in
 `rishe::sbd::SentenceSplitter`.
 
+The Rust binary also has `hub` and `serve` commands, mirroring the Python CLI:
+
+```bash
+rishe hub pull depparse-compact
+printf '%s\n' '{"command":"normalize","text":"مي كنم"}' | rishe serve
+```
+
 ```rust
 use rishe::sbd::SentenceSplitter;
 use rishe::Pipeline;
@@ -135,8 +142,14 @@ let batch = pipe
 zero-based word index or `None` for the root. The lower-level
 `rishe::models::ModelPack` is still available for one task.
 
-The packs are word-level ONNX files run through tract. No ONNX Runtime install
-is required.
+The packs are ONNX files run through tract. No ONNX Runtime install is
+required. The default build uses tract's CPU runtime; optional GPU features
+are available as `cuda` (CUDA 13) and `metal` (macOS):
+
+```bash
+cargo install rishe --features models,cuda
+cargo install rishe --features models,metal
+```
 
 ## Embeddings
 

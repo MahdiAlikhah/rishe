@@ -1,9 +1,10 @@
 //! `rishe` command-line interface.
 
-use std::io::Read;
+use std::io::{BufRead, Read};
 use std::process::ExitCode;
 
 use rishe::{dates, Pipeline};
+use serde_json::{json, Value};
 
 const USAGE: &str = "\
 rishe - Persian NLP from the command line
@@ -21,6 +22,8 @@ Commands:
   ner         Named-entity recognition with a model pack (needs `models`).
   ezafe       Ezafe tagging with a model pack (needs `models`).
   depparse    Dependency parsing with a model pack (needs `models`).
+  hub         Download and cache model packs.
+  serve       JSON-lines server on stdin/stdout.
 
 Options:
   --json              Emit JSON.
@@ -82,6 +85,13 @@ fn run() -> Result<(), String> {
         _ => {}
     }
 
+    if command == "hub" {
+        return rishe::hub::run(&args.collect::<Vec<_>>());
+    }
+    if command == "serve" {
+        return serve(&args.collect::<Vec<_>>());
+    }
+
     let mut options = Options {
         json: false,
         stages: DEFAULT_MASK_STAGES.iter().map(|s| s.to_string()).collect(),
@@ -136,6 +146,194 @@ fn run() -> Result<(), String> {
         other => return Err(format!("unknown command: {other}\n\n{USAGE}")),
     }
     Ok(())
+}
+
+fn serve(args: &[String]) -> Result<(), String> {
+    let mut stages = DEFAULT_MASK_STAGES
+        .iter()
+        .map(|stage| stage.to_string())
+        .collect::<Vec<_>>();
+    let mut mask_token = None;
+    let mut pos_pack = None;
+    let mut ner_pack = None;
+    let mut ezafe_pack = None;
+    let mut depparse_pack = None;
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--stages" => {
+                index += 1;
+                stages = args
+                    .get(index)
+                    .ok_or("--stages needs a value")?
+                    .split(',')
+                    .filter(|stage| !stage.is_empty())
+                    .map(str::to_owned)
+                    .collect();
+            }
+            "--mask-token" => {
+                index += 1;
+                mask_token = Some(args.get(index).ok_or("--mask-token needs a value")?.clone());
+            }
+            "--pos-pack" => {
+                index += 1;
+                pos_pack = Some(args.get(index).ok_or("--pos-pack needs a value")?.clone());
+            }
+            "--ner-pack" => {
+                index += 1;
+                ner_pack = Some(args.get(index).ok_or("--ner-pack needs a value")?.clone());
+            }
+            "--ezafe-pack" => {
+                index += 1;
+                ezafe_pack = Some(args.get(index).ok_or("--ezafe-pack needs a value")?.clone());
+            }
+            "--depparse-pack" => {
+                index += 1;
+                depparse_pack = Some(
+                    args.get(index)
+                        .ok_or("--depparse-pack needs a value")?
+                        .clone(),
+                );
+            }
+            "-h" | "--help" => {
+                print!("{USAGE}");
+                return Ok(());
+            }
+            other => return Err(format!("unknown serve option: {other}")),
+        }
+        index += 1;
+    }
+
+    #[allow(unused_mut)]
+    let mut pipe = Pipeline::create(true, true, true);
+    #[cfg(feature = "models")]
+    for (task, path) in [
+        ("pos", pos_pack),
+        ("ner", ner_pack),
+        ("ezafe", ezafe_pack),
+        ("depparse", depparse_pack),
+    ] {
+        if let Some(path) = path {
+            pipe.load_pack(task, &path)?;
+        }
+    }
+    #[cfg(not(feature = "models"))]
+    if pos_pack.is_some() || ner_pack.is_some() || ezafe_pack.is_some() || depparse_pack.is_some() {
+        return Err("model packs require the `models` feature".to_string());
+    }
+
+    let stdin = std::io::stdin();
+    for line in stdin.lock().lines() {
+        let line = line.map_err(|error| format!("cannot read stdin: {error}"))?;
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let response = match handle_request(&pipe, line, &stages, mask_token.as_deref()) {
+            Ok(result) => json!({"ok": true, "result": result}),
+            Err(error) => json!({"ok": false, "error": error}),
+        };
+        println!(
+            "{}",
+            serde_json::to_string(&response).map_err(|error| error.to_string())?
+        );
+    }
+    Ok(())
+}
+
+fn handle_request(
+    pipe: &Pipeline,
+    line: &str,
+    default_stages: &[String],
+    default_mask_token: Option<&str>,
+) -> Result<Value, String> {
+    let request: Value =
+        serde_json::from_str(line).map_err(|error| format!("invalid JSON: {error}"))?;
+    let command = request
+        .get("command")
+        .and_then(Value::as_str)
+        .ok_or("request has no command")?;
+    let text = request.get("text").and_then(Value::as_str).unwrap_or("");
+    let result = match command {
+        "normalize" => json!(pipe.normalize_stages(text, &[])?),
+        "tokenize" => json!(pipe.word_tokenize(text)),
+        "lemmatize" => json!(pipe.process(text).lemmas),
+        "mask" => {
+            let stages = request
+                .get("stages")
+                .and_then(Value::as_array)
+                .map(|values| {
+                    values
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_owned)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_else(|| default_stages.to_vec());
+            let token = request
+                .get("mask_token")
+                .and_then(Value::as_str)
+                .or(default_mask_token);
+            json!(pipe.mask_stages(text, &stages, token)?)
+        }
+        "date" => {
+            let date =
+                dates::parse(text).ok_or_else(|| format!("cannot parse date from {text:?}"))?;
+            let gregorian = date
+                .to_gregorian()
+                .ok_or_else(|| format!("invalid Jalali date: {date:?}"))?;
+            json!({
+                "jalali": {"year": date.year, "month": date.month, "day": date.day},
+                "gregorian": {"year": gregorian.year, "month": gregorian.month, "day": gregorian.day},
+                "iso": gregorian.to_iso(),
+            })
+        }
+        "pos" | "ner" | "ezafe" | "depparse" => model_result(pipe, command, text)?,
+        other => return Err(format!("unknown command: {other}")),
+    };
+    Ok(result)
+}
+
+#[cfg(feature = "models")]
+fn model_result(pipe: &Pipeline, command: &str, text: &str) -> Result<Value, String> {
+    let result = match command {
+        "pos" | "ezafe" => {
+            let items = if command == "pos" {
+                pipe.pos(text)?
+            } else {
+                pipe.ezafe(text)?
+            };
+            items
+                .into_iter()
+                .map(|item| {
+                    json!({"text": item.text, "tag": item.tag, "start": item.start, "end": item.end})
+                })
+                .collect()
+        }
+        "ner" => pipe
+            .ner(text)?
+            .into_iter()
+            .map(|item| {
+                json!({"text": item.text, "label": item.label, "start": item.start, "end": item.end})
+            })
+            .collect(),
+        "depparse" => pipe
+            .depparse(text)?
+            .into_iter()
+            .map(|item| {
+                json!({"text": item.text, "head": item.head, "relation": item.relation, "start": item.start, "end": item.end})
+            })
+            .collect(),
+        _ => Vec::new(),
+    };
+    Ok(Value::Array(result))
+}
+
+#[cfg(not(feature = "models"))]
+fn model_result(_pipe: &Pipeline, command: &str, _text: &str) -> Result<Value, String> {
+    Err(format!(
+        "{command} requires the `models` feature; install with `cargo install rishe --features models`"
+    ))
 }
 
 fn read_text(parts: &[String]) -> Result<String, String> {

@@ -3,7 +3,7 @@
 The `rishe` command ships with the Python package (`pip install rishe`) and as a
 Rust binary (`cargo install rishe`). Both accept text as an argument or read it
 from stdin when the argument is omitted. The Hub and JSON-lines server commands
-are Python-only.
+are available in both binaries.
 
 ```bash
 rishe normalize "مي كنم"                 # می‌کنم
@@ -81,6 +81,13 @@ Downloads are explicit; the base install never touches the network.
 rishe hub list                             # registered models and cache status
 rishe hub pull hazm-fasttext-300           # 2.3 GB, checksum-verified
 rishe hub pull https://example.com/fa.vec --sha256 <64-hex-digest>
+```
+
+```bash
+rishe hub list
+rishe hub pull depparse-compact
+rishe hub info depparse-compact
+rishe hub verify depparse-compact
 ```
 
 Models land in `$RISHE_HOME/models` or `~/.cache/rishe/models`, and

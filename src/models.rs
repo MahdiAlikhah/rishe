@@ -66,13 +66,13 @@ fn maximum_spanning_tree(scores: &[Vec<f64>]) -> Option<Vec<usize>> {
     }
     let root = word_count;
     let mut edges = Vec::with_capacity(word_count * (word_count + 1));
-    for dependent in 0..word_count {
+    for (dependent, row) in scores.iter().enumerate() {
         for head in 0..word_count {
             if head != dependent {
                 edges.push(ArcEdge {
                     from: head,
                     to: dependent,
-                    weight: scores[dependent][head + 1],
+                    weight: row[head + 1],
                     from_original: head,
                     to_original: dependent,
                 });
@@ -81,7 +81,7 @@ fn maximum_spanning_tree(scores: &[Vec<f64>]) -> Option<Vec<usize>> {
         edges.push(ArcEdge {
             from: root,
             to: dependent,
-            weight: scores[dependent][0] - 1_000_000_000.0,
+            weight: row[0] - 1_000_000_000.0,
             from_original: root,
             to_original: dependent,
         });
@@ -131,9 +131,9 @@ fn maximum_arborescence(node_count: usize, root: usize, edges: &[ArcEdge]) -> Op
         return Some(parent);
     }
 
-    for node in 0..node_count {
-        if component[node] == usize::MAX {
-            component[node] = components;
+    for component in &mut component {
+        if *component == usize::MAX {
+            *component = components;
             components += 1;
         }
     }
@@ -225,6 +225,8 @@ pub struct ModelPack {
     runnable: Runnable,
 }
 
+type EncodedWords = (Vec<i64>, Vec<usize>, Vec<String>);
+
 impl ModelPack {
     pub fn load(path: impl AsRef<Path>) -> Result<Self, String> {
         let path = path.as_ref();
@@ -285,7 +287,14 @@ impl ModelPack {
             .map_err(|error| format!("cannot load {}: {error}", model_path.display()))?
             .into_model()
             .map_err(|error| format!("cannot prepare {}: {error}", model_path.display()))?;
-        let runtime = tract::runtime_for_name("default")
+        let runtime_name = if cfg!(feature = "cuda") {
+            "cuda"
+        } else if cfg!(feature = "metal") {
+            "metal"
+        } else {
+            "default"
+        };
+        let runtime = tract::runtime_for_name(runtime_name)
             .map_err(|error| format!("cannot create tract runtime: {error}"))?;
         let runnable = runtime
             .prepare(model)
@@ -366,10 +375,7 @@ impl ModelPack {
             .collect())
     }
 
-    fn encode_words(
-        &self,
-        words: &[&str],
-    ) -> Result<Option<(Vec<i64>, Vec<usize>, Vec<String>)>, String> {
+    fn encode_words(&self, words: &[&str]) -> Result<Option<EncodedWords>, String> {
         if words.is_empty() {
             return Ok(None);
         }

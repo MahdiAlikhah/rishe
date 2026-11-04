@@ -1,0 +1,7 @@
+{
+  "normalize": {"iterations": 5000, "max_seconds": 5.0},
+  "tokenize": {"iterations": 5000, "max_seconds": 5.0},
+  "lemmatize": {"iterations": 5000, "max_seconds": 5.0},
+  "mask": {"iterations": 5000, "max_seconds": 5.0},
+  "date": {"iterations": 5000, "max_seconds": 5.0}
+}
