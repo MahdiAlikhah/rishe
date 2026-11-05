@@ -6,3 +6,11 @@ __pycache__/
 *.so
 /dist
 /data/corpora/
+/data/*.pdf
+
+# Training outputs and model packs stay out of git.
+/training/result/**/artifacts*/
+/training/**/*.vec
+/training/**/*.model
+/training/**/sentences.txt
+/training/**/*.zip

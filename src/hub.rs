@@ -6,12 +6,20 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-const MODELS: &[(&str, &str, &str, &str)] = &[(
-    "hazm-fasttext-300",
-    "https://huggingface.co/roshan-research/hazm-word-embedding/resolve/main/fasttext_skipgram_300.vec",
-    "43054876a1a3a62a067ad51304957f5f69fbca1620ca2fe610da6d4c9c8d2d04",
-    "hazm-fasttext-300.vec",
-)];
+const MODELS: &[(&str, &str, &str, &str)] = &[
+    (
+        "rishe-embed-fa-300",
+        "https://huggingface.co/MahdiAlikhah/rishe-models/resolve/main/embeddings/rishe-embed-fa-300.vec",
+        "afed6aa266e07745ce7b6b1e2f6600f6f0373dc91e197902d7305e19d2d35bf5",
+        "rishe-embed-fa-300.vec",
+    ),
+    (
+        "hazm-fasttext-300",
+        "https://huggingface.co/roshan-research/hazm-word-embedding/resolve/main/fasttext_skipgram_300.vec",
+        "43054876a1a3a62a067ad51304957f5f69fbca1620ca2fe610da6d4c9c8d2d04",
+        "hazm-fasttext-300.vec",
+    ),
+];
 const PACKS: &[(&str, &str)] = &[
     ("pos-compact", "pos"),
     ("ner-compact", "ner"),
@@ -25,7 +33,7 @@ const PACK_REQUIRED: [&str; 3] = ["model.onnx", "tokenizer.json", "labels.json"]
 
 pub fn run(args: &[String]) -> Result<(), String> {
     let Some(command) = args.first().map(String::as_str) else {
-        return Err("usage: rishe hub <pull|list|info|remove|verify> ...".to_string());
+        return Err("usage: rishe hub <pull|list|info|path|remove|verify> ...".to_string());
     };
     match command {
         "list" => list(),
@@ -33,6 +41,11 @@ pub fn run(args: &[String]) -> Result<(), String> {
             args.get(1)
                 .map(String::as_str)
                 .ok_or("hub info needs a name")?,
+        ),
+        "path" => path(
+            args.get(1)
+                .map(String::as_str)
+                .ok_or("hub path needs a name")?,
         ),
         "remove" => remove(
             args.get(1)
@@ -143,6 +156,18 @@ fn info(name: &str) -> Result<(), String> {
     };
     println!("{name}\t{}\t{bytes} bytes", path.display());
     Ok(())
+}
+
+fn path(name: &str) -> Result<(), String> {
+    match cached_model(name)? {
+        Some(path) => {
+            println!("{}", path.display());
+            Ok(())
+        }
+        None => Err(format!(
+            "{name:?} is not cached; run `rishe hub pull {name}`"
+        )),
+    }
 }
 
 fn remove(name: &str) -> Result<(), String> {
@@ -273,6 +298,19 @@ fn cached_pack(name: &str) -> Result<Option<PathBuf>, String> {
             None
         },
     )
+}
+
+/// Local path of a pulled single-file model, or `None` when it is not cached.
+///
+/// The name must be one of the registered models (see `rishe hub list`). This
+/// never touches the network; use `rishe hub pull` to download first.
+pub fn cached_model(name: &str) -> Result<Option<PathBuf>, String> {
+    let (_, _, _, filename) = MODELS
+        .iter()
+        .find(|(model, _, _, _)| *model == name)
+        .ok_or_else(|| format!("unknown model {name:?}; known models: {}", model_names()))?;
+    let path = cache_dir()?.join(filename);
+    Ok(path.is_file().then_some(path))
 }
 
 fn cache_dir() -> Result<PathBuf, String> {

@@ -20,6 +20,12 @@ pipe = Pipeline()
 doc = pipe("کتاب‌های خوب را به دوستانم می‌دهم.")
 print(doc.tokens, doc.lemmas)
 
-model = Embeddings(hub.path("hazm-fasttext-300"))
-print(model.sentence_vector("این کتاب خوب است"))
+model = Embeddings(hub.path("rishe-embed-fa-300"))
+print(model.dim, len(model))
+print(model.similarity("کتاب", "خوب"))
+print(model.sentence_similarity("این کتاب خوب است", "کتاب خوبی بود"))
+print(model.most_similar("کتاب", 5))
 ```
+
+The embedding model is a separate download (CC BY-SA 4.0). The base install does
+not bundle weights and importing `rishe` never touches the network.

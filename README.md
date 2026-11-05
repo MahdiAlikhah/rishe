@@ -61,6 +61,23 @@ More Python usage is in [README.pypi.md](README.pypi.md); the Rust API is in
 - Optional POS, NER, learned ezafe and dependency-parsing packs, downloaded
   separately and run without ONNX Runtime or a Python ML stack.
 
+## Embeddings
+
+```bash
+rishe hub pull rishe-embed-fa-300   # 135 MB, checksum-verified
+```
+
+```python
+from rishe import Embeddings, hub
+
+vectors = Embeddings(hub.path("rishe-embed-fa-300"))
+vectors.most_similar("کتاب", 5)
+vectors.sentence_similarity("این کتاب خوب است", "کتاب خوبی بود")
+```
+
+`rishe-embed-fa-300` is a 300-dimensional, 38,864-word Word2Vec model trained on
+Persian Wikipedia. The vectors are CC BY-SA 4.0; see [NOTICE.md](NOTICE.md).
+
 ## Architecture
 
 - **Rust core** — normalization, tokenization, morphology, embedding math and
@@ -84,5 +101,9 @@ The core, feature and model-pack benchmarks live in the docs:
 
 Dual-licensed under [Apache-2.0](LICENSE-APACHE) or [MIT](LICENSE-MIT).
 Lexicon attributions are in [NOTICE.md](NOTICE.md).
+
+The code license does not cover downloaded model weights: the
+`rishe-embed-fa-300` vectors are released under CC BY-SA 4.0, and each optional
+task pack carries its own terms. See [NOTICE.md](NOTICE.md).
 
 Built by Mahdi Alikhah.

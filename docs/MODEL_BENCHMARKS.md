@@ -147,3 +147,29 @@ head-conditioned relation classifier, decoded with single-root MST. It is
 Across seeds 42, 43 and 44, mean ± sample std LAS is 76.70 ± 1.18 on Seraji and
 87.71 ± 0.43 on PerDT. The released pack is seed 42. These are compact-model
 numbers: below BERT-scale Hazm/spaCy `trf`, above spaCy's compact `sm` on PerDT.
+
+## Static embeddings (0.9.0)
+
+The first-party embedding pack is Word2Vec skip-gram over Persian Wikipedia,
+exported as a text `.vec` and loaded directly by `rishe.Embeddings`. It does not
+use ONNX or the task-pack runtime. Full card:
+[`MODEL_CARD_0.9.0.md`](MODEL_CARD_0.9.0.md).
+
+Same eight hand-picked pairs; the random baseline samples each model's own
+vocabulary (100 pairs, seed 42). Latency is one loaded model on CPU, single
+thread, measured on the 0.9.0 training host.
+
+| model | size | vocab | positive mean | random mean | gap | `most_similar` |
+|---|---:|---:|---:|---:|---:|---:|
+| **Rishe `rishe-embed-fa-300`** | **135 MB** | **38,864** | **0.4808** | **0.1558** | **0.3250** | **5.5 ms** |
+| Rishe `rishe-embed-fa-300-135k` | 475 MB | 135,513 | 0.5055 | 0.2553 | 0.2503 | 23.5 ms |
+| Hazm `hazm-fasttext-300` | 2.33 GB | 884,790 | 0.5565 | 0.2057 | 0.3509 | 152 ms |
+
+Hazm has the strongest raw pair similarities and the best own-vocabulary gap;
+Rishe is ~17× smaller and its `most_similar` scan is ~28× faster. The 135k
+variant is a coverage experiment, not the default: it raises the related-pair
+mean but raises the random baseline more. On a shared 2,955-word baseline the
+gaps are 0.3334 / 0.3202 / 0.3145, i.e. within noise for eight pairs. These are
+intrinsic sanity numbers, not a gold Persian WordSim/SimLex score. Reproduce
+with `python scripts/compare_embeddings.py` after
+`rishe hub pull rishe-embed-fa-300`.

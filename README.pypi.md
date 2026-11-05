@@ -224,18 +224,25 @@ pack.tag_words(["کتاب‌های", "خوب"])  # tuple output
 ## Embeddings
 
 ```bash
-rishe hub pull hazm-fasttext-300   # optional 2.3 GB static embedding file
+rishe hub pull rishe-embed-fa-300   # 135 MB, checksum-verified
 ```
 
 ```python
 from rishe import Embeddings, hub
 
-emb = Embeddings(hub.path("hazm-fasttext-300"))
-emb.dim, len(emb)                      # vector size, vocabulary size
+emb = Embeddings(hub.path("rishe-embed-fa-300"))
+emb.dim, len(emb)                      # 300, 38864
 emb.vector("کتاب")                     # list[float] or None
+emb.similarity("کتاب", "خوب")           # cosine similarity
 emb.sentence_vector("این کتاب خوب است") # mean of in-vocab token vectors
+emb.sentence_similarity("این کتاب خوب است", "کتاب خوبی بود")
 emb.most_similar("کتاب", 5)            # [(word, cosine), ...]
 ```
+
+`rishe-embed-fa-300` is the first-party 30k-article model (38,864 words).
+[`hazm-fasttext-300`](https://huggingface.co/roshan-research/hazm-word-embedding)
+remains available through `hub.pull` as a larger external comparison model.
+The vectors are CC BY-SA 4.0; see [NOTICE.md](NOTICE.md).
 
 ## CLI
 
@@ -246,6 +253,8 @@ rishe pos "کتاب‌های خوب را به دوستانم می‌دهم."
 rishe ner --json "سرلشگر فیروزآبادی به پادشاه عربستان گفت."
 rishe ezafe "کتابخانه مرکزی دانشگاه شریف"
 rishe depparse --pack path/to/depparse "کتاب‌های خوب را به دوستانم می‌دهم."
+rishe similar کتاب --top 5
+rishe similarity کتاب خوب
 rishe hub info pos-compact
 rishe hub verify pos-compact
 rishe hub remove pos-compact
@@ -265,6 +274,11 @@ Dual-licensed under
 [Apache-2.0](https://github.com/MahdiAlikhah/rishe/blob/main/LICENSE-APACHE) or
 [MIT](https://github.com/MahdiAlikhah/rishe/blob/main/LICENSE-MIT), at your
 option. Lexicon attributions are in
+[NOTICE.md](https://github.com/MahdiAlikhah/rishe/blob/main/NOTICE.md).
+
+The code license does not cover downloaded model weights. The
+`rishe-embed-fa-300` vectors are released under CC BY-SA 4.0, and each optional
+task pack carries its own terms; see
 [NOTICE.md](https://github.com/MahdiAlikhah/rishe/blob/main/NOTICE.md).
 
 Built by Mahdi Alikhah.

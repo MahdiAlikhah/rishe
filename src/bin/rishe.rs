@@ -3,7 +3,7 @@
 use std::io::{BufRead, Read};
 use std::process::ExitCode;
 
-use rishe::{dates, Pipeline};
+use rishe::{dates, embeddings::Embeddings, Pipeline};
 use serde_json::{json, Value};
 
 const USAGE: &str = "\
@@ -22,6 +22,9 @@ Commands:
   ner         Named-entity recognition with a model pack (needs `models`).
   ezafe       Ezafe tagging with a model pack (needs `models`).
   depparse    Dependency parsing with a model pack (needs `models`).
+  embed       Mean embedding vector for the input text.
+  similar     Nearest words to a word (needs an embedding model).
+  similarity  Cosine similarity between two words.
   hub         Download and cache model packs.
   serve       JSON-lines server on stdin/stdout.
 
@@ -30,6 +33,8 @@ Options:
   --stages a,b        Maskers to apply, in order.
   --mask-token TEXT   Override every mask default.
   --pack DIR          Model-pack directory.
+  --model PATH|NAME   Embedding `.vec` file or hub model name.
+  --top N             Neighbour count for `similar` (default 5).
   -h, --help          Show this help.
   -V, --version       Show the version.
 
@@ -54,6 +59,8 @@ struct Options {
     stages: Vec<String>,
     mask_token: Option<String>,
     pack: Option<String>,
+    model: Option<String>,
+    top: usize,
     text: Vec<String>,
 }
 
@@ -97,6 +104,8 @@ fn run() -> Result<(), String> {
         stages: DEFAULT_MASK_STAGES.iter().map(|s| s.to_string()).collect(),
         mask_token: None,
         pack: None,
+        model: None,
+        top: 5,
         text: Vec::new(),
     };
     let mut args = args.peekable();
@@ -115,6 +124,14 @@ fn run() -> Result<(), String> {
                 options.mask_token = Some(args.next().ok_or("--mask-token needs a value")?);
             }
             "--pack" => options.pack = Some(args.next().ok_or("--pack needs a value")?),
+            "--model" => options.model = Some(args.next().ok_or("--model needs a value")?),
+            "--top" => {
+                options.top = args
+                    .next()
+                    .ok_or("--top needs a value")?
+                    .parse::<usize>()
+                    .map_err(|_| "--top must be a positive integer")?;
+            }
             "-h" | "--help" => {
                 print!("{USAGE}");
                 return Ok(());
@@ -124,6 +141,10 @@ fn run() -> Result<(), String> {
             }
             text => options.text.push(text.to_owned()),
         }
+    }
+
+    if matches!(command.as_str(), "embed" | "similar" | "similarity") {
+        return embedding_command(&command, &options);
     }
 
     let text = read_text(&options.text)?;
@@ -148,6 +169,86 @@ fn run() -> Result<(), String> {
     Ok(())
 }
 
+fn embedding_command(command: &str, options: &Options) -> Result<(), String> {
+    let embeddings = load_embeddings(options.model.as_deref())?;
+    match command {
+        "embed" => {
+            let text = read_text(&options.text)?;
+            let vector = embeddings.sentence_vector(&text);
+            if options.json {
+                let values: Vec<String> = vector.iter().map(|value| value.to_string()).collect();
+                println!("[{}]", values.join(","));
+            } else {
+                let values: Vec<String> =
+                    vector.iter().map(|value| format!("{value:.6}")).collect();
+                println!("{}", values.join(" "));
+            }
+        }
+        "similar" => {
+            if options.text.len() != 1 {
+                return Err("similar needs exactly one word".to_string());
+            }
+            if options.top == 0 {
+                return Err("--top must be at least 1".to_string());
+            }
+            let word = options.text[0].as_str();
+            let neighbours = embeddings.most_similar(word, options.top);
+            if neighbours.is_empty() {
+                return Err(format!("{word:?} is not in the vocabulary"));
+            }
+            if options.json {
+                let rows: Vec<String> = neighbours
+                    .iter()
+                    .map(|(word, score)| {
+                        format!("{{\"word\":{},\"score\":{score}}}", json_string(word))
+                    })
+                    .collect();
+                println!("[{}]", rows.join(","));
+            } else {
+                for (word, score) in &neighbours {
+                    println!("{word}\t{score:.4}");
+                }
+            }
+        }
+        "similarity" => {
+            if options.text.len() != 2 {
+                return Err("similarity needs exactly two words".to_string());
+            }
+            let first = options.text[0].as_str();
+            let second = options.text[1].as_str();
+            let score = embeddings.similarity(first, second).ok_or_else(|| {
+                let missing = if embeddings.contains(first) {
+                    second
+                } else {
+                    first
+                };
+                format!("{missing:?} is not in the vocabulary")
+            })?;
+            if options.json {
+                println!("{{\"score\":{score}}}");
+            } else {
+                println!("{score:.6}");
+            }
+        }
+        other => return Err(format!("unknown command: {other}")),
+    }
+    Ok(())
+}
+
+fn load_embeddings(model: Option<&str>) -> Result<Embeddings, String> {
+    let name = model.unwrap_or("rishe-embed-fa-300");
+    let direct = std::path::Path::new(name);
+    let path = if direct.is_file() {
+        direct.to_path_buf()
+    } else if name.ends_with(".vec") || name.contains('/') || name.contains('\\') {
+        return Err(format!("embedding file not found: {name}"));
+    } else {
+        rishe::hub::cached_model(name)?
+            .ok_or_else(|| format!("{name:?} is not cached; run `rishe hub pull {name}`"))?
+    };
+    Embeddings::load(path)
+}
+
 fn serve(args: &[String]) -> Result<(), String> {
     let mut stages = DEFAULT_MASK_STAGES
         .iter()
@@ -158,6 +259,7 @@ fn serve(args: &[String]) -> Result<(), String> {
     let mut ner_pack = None;
     let mut ezafe_pack = None;
     let mut depparse_pack = None;
+    let mut model = None;
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
@@ -195,6 +297,10 @@ fn serve(args: &[String]) -> Result<(), String> {
                         .clone(),
                 );
             }
+            "--model" => {
+                index += 1;
+                model = Some(args.get(index).ok_or("--model needs a value")?.clone());
+            }
             "-h" | "--help" => {
                 print!("{USAGE}");
                 return Ok(());
@@ -222,6 +328,11 @@ fn serve(args: &[String]) -> Result<(), String> {
         return Err("model packs require the `models` feature".to_string());
     }
 
+    let embeddings = match model.as_deref() {
+        Some(value) => Some(load_embeddings(Some(value))?),
+        None => None,
+    };
+
     let stdin = std::io::stdin();
     for line in stdin.lock().lines() {
         let line = line.map_err(|error| format!("cannot read stdin: {error}"))?;
@@ -229,7 +340,13 @@ fn serve(args: &[String]) -> Result<(), String> {
         if line.is_empty() {
             continue;
         }
-        let response = match handle_request(&pipe, line, &stages, mask_token.as_deref()) {
+        let response = match handle_request(
+            &pipe,
+            embeddings.as_ref(),
+            line,
+            &stages,
+            mask_token.as_deref(),
+        ) {
             Ok(result) => json!({"ok": true, "result": result}),
             Err(error) => json!({"ok": false, "error": error}),
         };
@@ -243,6 +360,7 @@ fn serve(args: &[String]) -> Result<(), String> {
 
 fn handle_request(
     pipe: &Pipeline,
+    embeddings: Option<&Embeddings>,
     line: &str,
     default_stages: &[String],
     default_mask_token: Option<&str>,
@@ -289,9 +407,47 @@ fn handle_request(
             })
         }
         "pos" | "ner" | "ezafe" | "depparse" => model_result(pipe, command, text)?,
+        "embed" | "similar" | "similarity" => {
+            embedding_result(embeddings, &request, command, text)?
+        }
         other => return Err(format!("unknown command: {other}")),
     };
     Ok(result)
+}
+
+fn embedding_result(
+    embeddings: Option<&Embeddings>,
+    request: &Value,
+    command: &str,
+    text: &str,
+) -> Result<Value, String> {
+    let embeddings = embeddings
+        .ok_or_else(|| "serve has no embedding model; pass --model <path-or-name>".to_string())?;
+    match command {
+        "embed" => Ok(json!(embeddings.sentence_vector(text))),
+        "similar" => {
+            let word = request.get("word").and_then(Value::as_str).unwrap_or(text);
+            let n = request.get("n").and_then(Value::as_u64).unwrap_or(5) as usize;
+            let rows: Vec<Value> = embeddings
+                .most_similar(word, n)
+                .into_iter()
+                .map(|(word, score)| json!({"word": word, "score": score}))
+                .collect();
+            Ok(Value::Array(rows))
+        }
+        "similarity" => {
+            let first = request.get("a").and_then(Value::as_str).unwrap_or(text);
+            let second = request
+                .get("b")
+                .and_then(Value::as_str)
+                .ok_or("similarity needs `a` and `b`")?;
+            let score = embeddings
+                .similarity(first, second)
+                .ok_or_else(|| format!("out of vocabulary: {first:?} or {second:?}"))?;
+            Ok(json!({"score": score}))
+        }
+        other => Err(format!("unknown command: {other}")),
+    }
 }
 
 #[cfg(feature = "models")]

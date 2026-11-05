@@ -73,13 +73,37 @@ for item in pipe.depparse("کتاب‌های خوب را به دوستانم م�
     print(item.text, item.head, item.relation)
 ```
 
+## Embeddings
+
+`rishe embed`, `rishe similar` and `rishe similarity` use a static `.vec` model.
+`--model` accepts a file path or a hub model name; it defaults to
+`rishe-embed-fa-300`, so pull that once.
+
+```bash
+rishe hub pull rishe-embed-fa-300
+rishe similar کتاب --top 5
+rishe similarity کتاب خوب
+rishe embed "این کتاب خوب است" --json
+```
+
+`similar` prints `word<TAB>score`, `similarity` prints one score, and `embed`
+prints the mean sentence vector (space-separated floats, or a JSON array with
+`--json`). Out-of-vocabulary words exit with status 2.
+
+The JSON-lines server accepts the same three commands when started with
+`--model`: `{"command":"similar","word":"کتاب","n":5}`,
+`{"command":"similarity","a":"کتاب","b":"خوب"}` and
+`{"command":"embed","text":"این کتاب خوب است"}`.
+
 ## Models
 
 Downloads are explicit; the base install never touches the network.
 
 ```bash
 rishe hub list                             # registered models and cache status
-rishe hub pull hazm-fasttext-300           # 2.3 GB, checksum-verified
+rishe hub pull rishe-embed-fa-300          # 135 MB, checksum-verified
+rishe hub path rishe-embed-fa-300          # local cache path
+rishe hub pull hazm-fasttext-300           # 2.3 GB external comparison model
 rishe hub pull https://example.com/fa.vec --sha256 <64-hex-digest>
 ```
 
@@ -99,6 +123,10 @@ Models land in `$RISHE_HOME/models` or `~/.cache/rishe/models`, and
 `rishe serve` reads one JSON object per line from stdin and writes one JSON
 response per line. It is dependency-free and keeps one `Pipeline` alive across
 requests.
+
+Pass `--model` (and/or `--pos-pack`, `--depparse-pack`, ...) to load optional
+models once for the whole session. The embedding commands are only available
+when `--model` is set.
 
 ```bash
 printf '%s\n' \

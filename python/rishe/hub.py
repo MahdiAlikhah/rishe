@@ -45,6 +45,11 @@ class Model(NamedTuple):
 
 
 MODELS: Dict[str, Model] = {
+    "rishe-embed-fa-300": Model(
+        url="https://huggingface.co/MahdiAlikhah/rishe-models/resolve/main/embeddings/rishe-embed-fa-300.vec",
+        sha256="afed6aa266e07745ce7b6b1e2f6600f6f0373dc91e197902d7305e19d2d35bf5",
+        filename="rishe-embed-fa-300.vec",
+    ),
     "hazm-fasttext-300": Model(
         url="https://huggingface.co/roshan-research/hazm-word-embedding/resolve/main/fasttext_skipgram_300.vec",
         sha256="43054876a1a3a62a067ad51304957f5f69fbca1620ca2fe610da6d4c9c8d2d04",

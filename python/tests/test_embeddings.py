@@ -15,6 +15,12 @@ TINY = """6 3
 مردم 1 1 0
 """
 
+EMBEDDINGS_PACK = (
+    Path(os.environ["RISHE_TEST_EMBEDDINGS_PACK"])
+    if os.environ.get("RISHE_TEST_EMBEDDINGS_PACK")
+    else None
+)
+
 
 class EmbeddingsTest(unittest.TestCase):
     @classmethod
@@ -81,9 +87,35 @@ class HubTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 hub.cached("unknown-model")
 
+    def test_first_party_embedding_is_registered(self):
+        model = hub.MODELS["rishe-embed-fa-300"]
+        self.assertTrue(model.url.endswith("/embeddings/rishe-embed-fa-300.vec"))
+        self.assertEqual(
+            model.sha256,
+            "afed6aa266e07745ce7b6b1e2f6600f6f0373dc91e197902d7305e19d2d35bf5",
+        )
+        self.assertEqual(model.filename, "rishe-embed-fa-300.vec")
+
     def test_custom_url_requires_checksum(self):
         with self.assertRaises(ValueError):
             hub.pull("https://example.com/model.vec")
+
+
+@unittest.skipUnless(
+    EMBEDDINGS_PACK is not None and EMBEDDINGS_PACK.is_file(),
+    "RISHE_TEST_EMBEDDINGS_PACK is not set",
+)
+class RealPackTest(unittest.TestCase):
+    def test_real_pack(self):
+        embeddings = Embeddings(EMBEDDINGS_PACK)
+        self.assertEqual(embeddings.dim, 300)
+        self.assertGreaterEqual(len(embeddings), 30_000)
+        self.assertTrue(embeddings.contains("کتاب"))
+        self.assertEqual(len(embeddings.most_similar("کتاب", 5)), 5)
+        self.assertAlmostEqual(embeddings.similarity("کتاب", "کتاب"), 1.0, places=5)
+        self.assertEqual(
+            len(embeddings.sentence_vector("این کتاب خوب است")), 300
+        )
 
 
 if __name__ == "__main__":

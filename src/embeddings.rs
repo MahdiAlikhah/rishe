@@ -281,13 +281,18 @@ mod tests {
 دنیا 0 0 0.5\n\
 مردم 1 1 0\n";
 
+    /// Scratch file inside `target/`, which is writable in every test runner.
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("rishe-test-tmp");
+        std::fs::create_dir_all(&dir).expect("create test scratch dir");
+        dir.join(name)
+    }
+
     #[test]
     fn test_load_lookup_and_math() {
-        let path = std::env::temp_dir().join(format!(
-            "rishe_embeddings_{}_{}.vec",
-            std::process::id(),
-            line!()
-        ));
+        let path = scratch("embeddings_load.vec");
         std::fs::write(&path, TINY).unwrap();
         let embeddings = Embeddings::load(&path).unwrap();
         std::fs::remove_file(&path).ok();
@@ -323,16 +328,28 @@ mod tests {
 
     #[test]
     fn test_rejects_malformed_files() {
-        let path = std::env::temp_dir().join(format!(
-            "rishe_embeddings_bad_{}_{}.vec",
-            std::process::id(),
-            line!()
-        ));
+        let path = scratch("embeddings_bad.vec");
         std::fs::write(&path, "not a header\n").unwrap();
         assert!(Embeddings::load(&path).is_err());
 
         std::fs::write(&path, "1 3\nکتاب 1 0\n").unwrap();
         assert!(Embeddings::load(&path).is_err());
         std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn embedding_loaded_pack() {
+        let Ok(path) = std::env::var("RISHE_EMBEDDINGS_PACK") else {
+            return;
+        };
+        let embeddings = Embeddings::load(&path).expect("load embedding pack");
+        assert_eq!(embeddings.dim(), 300);
+        assert!(embeddings.len() >= 30_000);
+        assert!(embeddings.contains("کتاب"));
+        assert_eq!(embeddings.most_similar("کتاب", 5).len(), 5);
+        assert!((embeddings.similarity("کتاب", "کتاب").unwrap() - 1.0).abs() < 1e-5);
+        let vector = embeddings.sentence_vector("این کتاب خوب است");
+        assert_eq!(vector.len(), 300);
+        assert!(vector.iter().any(|value| *value != 0.0));
     }
 }

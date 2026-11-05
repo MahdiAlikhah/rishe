@@ -5,9 +5,10 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from pathlib import Path
 from typing import List, Optional
 
-from . import Pipeline, hub, parse_date
+from . import Embeddings, Pipeline, hub, parse_date
 
 DEFAULT_MASK_STAGES = [
     "url",
@@ -87,6 +88,26 @@ def main(argv: Optional[List[str]] = None) -> int:
     serve.add_argument("--ner-pack", default=None)
     serve.add_argument("--ezafe-pack", default=None)
     serve.add_argument("--depparse-pack", default=None)
+    serve.add_argument("--model", default=None, help="embedding .vec path or hub model name")
+
+    embed = subparsers.add_parser("embed", help="Mean embedding vector for text.")
+    embed.add_argument("text", nargs="?", help="text; reads stdin when omitted")
+    embed.add_argument("--model", default=None, help=".vec path or hub model name")
+    embed.add_argument("--json", action="store_true", help="emit JSON")
+
+    similar = subparsers.add_parser("similar", help="Nearest words to a word.")
+    similar.add_argument("word")
+    similar.add_argument("--top", type=int, default=5, help="neighbour count")
+    similar.add_argument("--model", default=None, help=".vec path or hub model name")
+    similar.add_argument("--json", action="store_true", help="emit JSON")
+
+    similarity = subparsers.add_parser(
+        "similarity", help="Cosine similarity between two words."
+    )
+    similarity.add_argument("first")
+    similarity.add_argument("second")
+    similarity.add_argument("--model", default=None, help=".vec path or hub model name")
+    similarity.add_argument("--json", action="store_true", help="emit JSON")
 
     hub_parser = subparsers.add_parser("hub", help="Download and cache models.")
     hub_commands = hub_parser.add_subparsers(dest="hub_command", required=True)
@@ -97,6 +118,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     hub_commands.add_parser("list", help="List known models and cache status.")
     hub_info = hub_commands.add_parser("info", help="Show cache information.")
     hub_info.add_argument("name")
+    hub_path = hub_commands.add_parser("path", help="Print a cached model path.")
+    hub_path.add_argument("name")
     hub_remove = hub_commands.add_parser("remove", help="Remove a cached model or pack.")
     hub_remove.add_argument("name")
     hub_verify = hub_commands.add_parser("verify", help="Verify cached checksums.")
@@ -112,6 +135,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.command in ("pos", "ner", "ezafe"):
         return _pack(args)
 
+    if args.command in ("embed", "similar", "similarity"):
+        return _embedding(args)
+
     if args.command == "serve":
         packs = {
             f"{task}_pack": getattr(args, f"{task}_pack")
@@ -120,10 +146,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         }
         try:
             pipe = Pipeline(**packs)
+            embeddings = _load_embeddings(args.model) if args.model else None
         except (OSError, ValueError) as error:
             print(error, file=sys.stderr)
             return 2
-        return _serve(pipe, args.stages, args.mask_token)
+        return _serve(pipe, args.stages, args.mask_token, embeddings)
 
     pipe = Pipeline()
 
@@ -253,6 +280,12 @@ def _hub(args) -> int:
             print(hub.pull_pack(args.name, force=args.force))
         else:
             print(hub.pull(args.name, sha256=args.sha256, force=args.force))
+    elif args.hub_command == "path":
+        try:
+            print(hub.path(args.name))
+        except (FileNotFoundError, ValueError) as error:
+            print(error, file=sys.stderr)
+            return 2
     elif args.hub_command == "info":
         try:
             info = hub.info(args.name)
@@ -288,7 +321,72 @@ def _hub(args) -> int:
     return 0
 
 
-def _serve(pipe: Pipeline, stages: List[str], mask_token: Optional[str]) -> int:
+def _load_embeddings(name: Optional[str]) -> Embeddings:
+    value = name or "rishe-embed-fa-300"
+    direct = Path(value)
+    if direct.is_file():
+        return Embeddings(direct)
+    if value.endswith(".vec") or "/" in value or "\\" in value:
+        raise FileNotFoundError(f"embedding file not found: {value}")
+    cached = hub.cached(value)
+    if cached is None:
+        raise FileNotFoundError(
+            f"{value!r} is not cached; run `rishe hub pull {value}`"
+        )
+    return Embeddings(cached)
+
+
+def _embedding(args) -> int:
+    try:
+        vectors = _load_embeddings(args.model)
+    except (OSError, ValueError) as error:
+        print(error, file=sys.stderr)
+        return 2
+
+    if args.command == "embed":
+        vector = vectors.sentence_vector(_read_text(args.text))
+        if args.json:
+            print(json.dumps(vector))
+        else:
+            print(" ".join(f"{value:.6f}" for value in vector))
+        return 0
+
+    if args.command == "similar":
+        if args.top < 1:
+            print("--top must be at least 1", file=sys.stderr)
+            return 2
+        neighbours = vectors.most_similar(args.word, args.top)
+        if not neighbours:
+            print(f"{args.word!r} is not in the vocabulary", file=sys.stderr)
+            return 2
+        if args.json:
+            rows = [{"word": word, "score": score} for word, score in neighbours]
+            print(json.dumps(rows, ensure_ascii=False))
+        else:
+            for word, score in neighbours:
+                print(f"{word}\t{score:.4f}")
+        return 0
+
+    score = vectors.similarity(args.first, args.second)
+    if score is None:
+        print(
+            f"out of vocabulary: {args.first!r} or {args.second!r}",
+            file=sys.stderr,
+        )
+        return 2
+    if args.json:
+        print(json.dumps({"score": score}))
+    else:
+        print(f"{score:.6f}")
+    return 0
+
+
+def _serve(
+    pipe: Pipeline,
+    stages: List[str],
+    mask_token: Optional[str],
+    embeddings: Optional[Embeddings] = None,
+) -> int:
     for line in sys.stdin:
         line = line.strip()
         if not line:
@@ -323,6 +421,28 @@ def _serve(pipe: Pipeline, stages: List[str], mask_token: Optional[str]) -> int:
             elif command in ("pos", "ner", "ezafe"):
                 items = getattr(pipe, command)(text)
                 result = _tag_rows(items, command)
+            elif command in ("embed", "similar", "similarity"):
+                if embeddings is None:
+                    raise ValueError("serve has no embedding model; pass --model")
+                if command == "embed":
+                    result = embeddings.sentence_vector(text)
+                elif command == "similar":
+                    word = request.get("word", text)
+                    result = [
+                        {"word": candidate, "score": score}
+                        for candidate, score in embeddings.most_similar(
+                            word, int(request.get("n", 5))
+                        )
+                    ]
+                else:
+                    first = request.get("a", text)
+                    second = request["b"]
+                    score = embeddings.similarity(first, second)
+                    if score is None:
+                        raise ValueError(
+                            f"out of vocabulary: {first!r} or {second!r}"
+                        )
+                    result = {"score": score}
             else:
                 raise ValueError(f"unknown command: {command!r}")
             response = {"ok": True, "result": result}

@@ -61,6 +61,49 @@ fn serves_json_lines() {
 fn lists_hub_packs() {
     let output = stdout(rishe().args(["hub", "list"]));
     assert!(output.contains("depparse-compact\t"));
+    assert!(output.contains("rishe-embed-fa-300\t"));
+}
+
+#[test]
+fn embeds_similar_and_similarity() {
+    let model = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/mini-embed.vec");
+
+    let vector = stdout(rishe().args(["embed", "کتاب", "--model", model, "--json"]));
+    let values = vector
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .split(',')
+        .count();
+    assert_eq!(values, 8);
+
+    let identical = stdout(rishe().args(["similarity", "کتاب", "کتاب", "--model", model]));
+    assert_eq!(identical, "1.000000");
+
+    let neighbours =
+        stdout(rishe().args(["similar", "کتاب", "--model", model, "--top", "2", "--json"]));
+    assert!(neighbours.starts_with("[{\"word\":"));
+    assert_eq!(neighbours.matches("\"score\"").count(), 2);
+
+    let missing = rishe()
+        .args(["similar", "ناموجود", "--model", model])
+        .output()
+        .expect("run rishe");
+    assert_eq!(missing.status.code(), Some(2));
+}
+
+#[test]
+fn hub_path_reports_the_cache_path() {
+    let near_miss = rishe()
+        .args(["hub", "path", "rishe-embed-fa-300"])
+        .output()
+        .expect("run rishe");
+    if near_miss.status.success() {
+        let path = String::from_utf8_lossy(&near_miss.stdout);
+        assert!(path.trim_end().ends_with("rishe-embed-fa-300.vec"));
+    } else {
+        assert_eq!(near_miss.status.code(), Some(2));
+        assert!(String::from_utf8_lossy(&near_miss.stderr).contains("not cached"));
+    }
 }
 
 #[test]
