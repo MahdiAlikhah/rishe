@@ -28,9 +28,10 @@ Hazm/fastText comparison file and loads in well under a second.
 | Workers | 4 |
 | Seed | 42 |
 | Vector file | 135,072,816 bytes |
-| Zip | 56,280,808 bytes |
+| Zip | 56,287,225 bytes |
 | Vector SHA-256 | `afed6aa266e07745ce7b6b1e2f6600f6f0373dc91e197902d7305e19d2d35bf5` |
-| Zip SHA-256 | `73eccefeab1523a912cb8b8bcd446deebd529ebe8f1271d63f1ecdf410e456fa` |
+| Zip SHA-256 | `2ce8f375f30aad313189300ec071fadc15835185be38d51ba4412f9f814c68d7` |
+| License | CC BY-SA 4.0 (`LICENSE`) |
 | Version | 0.9.0 |
 
 The vocabulary is an FST mapping word → row index; the vectors are one flat
@@ -41,10 +42,9 @@ read-only across threads.
 
 The corpus is streamed and tokenized with Rishe's own pipeline
 (`Pipeline.sent_tokenize` then `Pipeline.word_tokenize`), so the training tokens
-match the runtime tokenizer. The recipe is the defaults in
-`training/rishe_0.9.0_embeddings.ipynb`: 10 epochs, 30k articles,
-`min_count=20`, `max_final_vocab=100_000`, 4 workers, seed 42. Training ran on a
-CPU host in 395.5 s.
+match the runtime tokenizer. The recipe is the released profile: 30,000
+articles, `min_count=20`, `max_final_vocab=100_000`, 10 epochs, 4 workers,
+seed 42. Training ran on a CPU host in 395.5 s.
 
 ## Evaluation
 
@@ -120,8 +120,8 @@ print(vectors.sentence_similarity("این کتاب خوب است", "کتاب خ�
 The training corpus is Wikipedia, distributed under CC BY-SA and the GFDL. The
 derived vectors are released under **CC BY-SA 4.0**; the Rishe code is
 MIT/Apache-2.0 and the weights are licensed separately. The pack-local
-`NOTICE.md` carries the attribution and share-alike terms. Keep the Wikipedia
-attribution when redistributing the vectors.
+`LICENSE` holds the full terms and `NOTICE.md` the attribution. Keep the
+Wikipedia attribution when redistributing the vectors.
 
 ## Author
 
