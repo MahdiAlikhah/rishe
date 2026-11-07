@@ -6,5 +6,5 @@ building the extension):
 ```bash
 python examples/basic.py
 python examples/masking_keywords.py
-python examples/embeddings.py     # needs the rishe-embed-fa-300 pack
+python examples/embeddings.py     # needs the rishe-embed-fa-300-v2 pack
 ```

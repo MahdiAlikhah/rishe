@@ -933,6 +933,12 @@ mod py_bindings {
             self.dim()
         }
 
+        /// Storage width of the file the vectors were loaded from: "f32" or "f16".
+        #[getter(dtype)]
+        fn py_dtype(&self) -> &'static str {
+            self.dtype().as_str()
+        }
+
         #[pyo3(name = "contains")]
         pub fn py_contains(&self, word: &str) -> bool {
             self.contains(word)

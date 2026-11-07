@@ -3,7 +3,8 @@
 The `rishe` command ships with the Python package (`pip install rishe`) and as a
 Rust binary (`cargo install rishe`). Both accept text as an argument or read it
 from stdin when the argument is omitted. The Hub and JSON-lines server commands
-are available in both binaries.
+are available in both binaries; `rishe convert`, which rewrites embedding files,
+ships with the Rust binary.
 
 ```bash
 rishe normalize "مي كنم"                 # می‌کنم
@@ -75,12 +76,12 @@ for item in pipe.depparse("کتاب‌های خوب را به دوستانم م�
 
 ## Embeddings
 
-`rishe embed`, `rishe similar` and `rishe similarity` use a static `.vec` model.
-`--model` accepts a file path or a hub model name; it defaults to
-`rishe-embed-fa-300`, so pull that once.
+`rishe embed`, `rishe similar` and `rishe similarity` use a static word-vector
+model. `--model` accepts a file path (`.vec` or `.rvec`) or a hub model name; it
+defaults to `rishe-embed-fa-300-v2`, so pull that once.
 
 ```bash
-rishe hub pull rishe-embed-fa-300
+rishe hub pull rishe-embed-fa-300-v2
 rishe similar کتاب --top 5
 rishe similarity کتاب خوب
 rishe embed "این کتاب خوب است" --json
@@ -89,6 +90,15 @@ rishe embed "این کتاب خوب است" --json
 `similar` prints `word<TAB>score`, `similarity` prints one score, and `embed`
 prints the mean sentence vector (space-separated floats, or a JSON array with
 `--json`). Out-of-vocabulary words exit with status 2.
+
+`rishe convert` rewrites a word2vec text file in Rishe's compact binary format.
+The format is auto-detected on load, so both files behave identically; `f16`
+halves the file size and changes a stored value by less than 0.1% relative.
+
+```bash
+rishe convert model.vec model.rvec            # f16 by default
+rishe convert model.vec model.f32.rvec --dtype f32
+```
 
 The JSON-lines server accepts the same three commands when started with
 `--model`: `{"command":"similar","word":"کتاب","n":5}`,
@@ -101,8 +111,9 @@ Downloads are explicit; the base install never touches the network.
 
 ```bash
 rishe hub list                             # registered models and cache status
-rishe hub pull rishe-embed-fa-300          # 135 MB, checksum-verified
-rishe hub path rishe-embed-fa-300          # local cache path
+rishe hub pull rishe-embed-fa-300-v2       # 42 MB, checksum-verified
+rishe hub path rishe-embed-fa-300-v2       # local cache path
+rishe hub pull rishe-embed-fa-300          # 135 MB, the 0.9.x pack
 rishe hub pull hazm-fasttext-300           # 2.3 GB external comparison model
 rishe hub pull https://example.com/fa.vec --sha256 <64-hex-digest>
 ```

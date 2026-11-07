@@ -3,7 +3,11 @@
 use std::io::{BufRead, Read};
 use std::process::ExitCode;
 
-use rishe::{dates, embeddings::Embeddings, Pipeline};
+use rishe::{
+    dates,
+    embeddings::{DType, Embeddings},
+    Pipeline,
+};
 use serde_json::{json, Value};
 
 const USAGE: &str = "\
@@ -25,6 +29,7 @@ Commands:
   embed       Mean embedding vector for the input text.
   similar     Nearest words to a word (needs an embedding model).
   similarity  Cosine similarity between two words.
+  convert     Rewrite an embedding `.vec` file as a compact `.rvec` file.
   hub         Download and cache model packs.
   serve       JSON-lines server on stdin/stdout.
 
@@ -33,7 +38,8 @@ Options:
   --stages a,b        Maskers to apply, in order.
   --mask-token TEXT   Override every mask default.
   --pack DIR          Model-pack directory.
-  --model PATH|NAME   Embedding `.vec` file or hub model name.
+  --model PATH|NAME   Embedding `.vec`/`.rvec` file or hub model name.
+  --dtype f16|f32     Storage width for `convert` (default f16).
   --top N             Neighbour count for `similar` (default 5).
   -h, --help          Show this help.
   -V, --version       Show the version.
@@ -94,6 +100,9 @@ fn run() -> Result<(), String> {
 
     if command == "hub" {
         return rishe::hub::run(&args.collect::<Vec<_>>());
+    }
+    if command == "convert" {
+        return convert(&args.collect::<Vec<_>>());
     }
     if command == "serve" {
         return serve(&args.collect::<Vec<_>>());
@@ -235,12 +244,62 @@ fn embedding_command(command: &str, options: &Options) -> Result<(), String> {
     Ok(())
 }
 
+/// `rishe convert <input> <output.rvec> [--dtype f16|f32]`
+fn convert(args: &[String]) -> Result<(), String> {
+    let mut dtype = DType::F16;
+    let mut paths: Vec<&str> = Vec::new();
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--dtype" => {
+                index += 1;
+                let value = args.get(index).ok_or("--dtype needs a value")?;
+                dtype = DType::parse(value)
+                    .ok_or_else(|| format!("unknown dtype {value:?}; use f16 or f32"))?;
+            }
+            "-h" | "--help" => {
+                print!("{USAGE}");
+                return Ok(());
+            }
+            other if other.starts_with('-') => {
+                return Err(format!("unknown convert option: {other}"));
+            }
+            other => paths.push(other),
+        }
+        index += 1;
+    }
+    let (Some(input), Some(output)) = (paths.first(), paths.get(1)) else {
+        return Err("convert needs an input and an output path".to_string());
+    };
+    if paths.len() > 2 {
+        return Err("convert takes exactly one input and one output path".to_string());
+    }
+
+    let embeddings = Embeddings::load(input)?;
+    embeddings.save(output, dtype)?;
+    let bytes = std::fs::metadata(output)
+        .map(|meta| meta.len())
+        .map_err(|error| format!("cannot stat {output}: {error}"))?;
+    println!(
+        "wrote {output}: {} words x {} dims as {}, {} bytes",
+        embeddings.len(),
+        embeddings.dim(),
+        dtype.as_str(),
+        bytes
+    );
+    Ok(())
+}
+
 fn load_embeddings(model: Option<&str>) -> Result<Embeddings, String> {
-    let name = model.unwrap_or("rishe-embed-fa-300");
+    let name = model.unwrap_or("rishe-embed-fa-300-v2");
     let direct = std::path::Path::new(name);
     let path = if direct.is_file() {
         direct.to_path_buf()
-    } else if name.ends_with(".vec") || name.contains('/') || name.contains('\\') {
+    } else if name.ends_with(".vec")
+        || name.ends_with(".rvec")
+        || name.contains('/')
+        || name.contains('\\')
+    {
         return Err(format!("embedding file not found: {name}"));
     } else {
         rishe::hub::cached_model(name)?

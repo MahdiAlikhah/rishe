@@ -224,14 +224,14 @@ pack.tag_words(["کتاب‌های", "خوب"])  # tuple output
 ## Embeddings
 
 ```bash
-rishe hub pull rishe-embed-fa-300   # 135 MB, checksum-verified
+rishe hub pull rishe-embed-fa-300-v2   # 42 MB, checksum-verified
 ```
 
 ```python
 from rishe import Embeddings, hub
 
-emb = Embeddings(hub.path("rishe-embed-fa-300"))
-emb.dim, len(emb)                      # 300, 38864
+emb = Embeddings(hub.path("rishe-embed-fa-300-v2"))
+emb.dim, len(emb), emb.dtype           # 300, 68144, 'f16'
 emb.vector("کتاب")                     # list[float] or None
 emb.similarity("کتاب", "خوب")           # cosine similarity
 emb.sentence_vector("این کتاب خوب است") # mean of in-vocab token vectors
@@ -239,10 +239,15 @@ emb.sentence_similarity("این کتاب خوب است", "کتاب خوبی بو
 emb.most_similar("کتاب", 5)            # [(word, cosine), ...]
 ```
 
-`rishe-embed-fa-300` is the first-party 30k-article model (38,864 words).
+`rishe-embed-fa-300-v2` is the first-party model: 300 dimensions, 68,144 words,
+trained on 150,000 Wikipedia articles. The hub serves the compact binary `.rvec`
+file, which stores IEEE 754 binary16 values and decodes them back to `f32` on
+load; the same matrix is also published as word2vec text, and `Embeddings`
+accepts either file. The 0.9.x 30,000-article pack remains available as
+`rishe-embed-fa-300`, and
 [`hazm-fasttext-300`](https://huggingface.co/roshan-research/hazm-word-embedding)
-remains available through `hub.pull` as a larger external comparison model.
-The vectors are CC BY-SA 4.0; see [NOTICE.md](NOTICE.md).
+is still downloadable as a larger external comparison model. The vectors are
+CC BY-SA 4.0; see [NOTICE.md](NOTICE.md).
 
 ## CLI
 
@@ -277,8 +282,8 @@ option. Lexicon attributions are in
 [NOTICE.md](https://github.com/MahdiAlikhah/rishe/blob/main/NOTICE.md).
 
 The code license does not cover downloaded model weights. The
-`rishe-embed-fa-300` vectors are released under CC BY-SA 4.0, and each optional
-task pack carries its own terms; see
+`rishe-embed-fa-300-v2` vectors are released under CC BY-SA 4.0, and each
+optional task pack carries its own terms; see
 [NOTICE.md](https://github.com/MahdiAlikhah/rishe/blob/main/NOTICE.md).
 
 Built by Mahdi Alikhah.

@@ -15,9 +15,11 @@ trailers or list anyone else as author/contributor.
 - Model packs are versioned separately from the crate. A new model does not
   require a crate release unless the loader or CLI changes.
 - Two kinds of model artifact exist:
-  - **single-file models** (`Embeddings`, e.g. `rishe-embed-fa-300`) are
+  - **single-file models** (`Embeddings`, e.g. `rishe-embed-fa-300-v2`) are
     registered in `MODELS` in `src/hub.rs` and `python/rishe/hub.py` with a
-    pinned SHA-256;
+    pinned SHA-256. The file may be word2vec text (`.vec`) or Rishe's compact
+    binary (`.rvec`); the hub entry points at whichever file the default
+    download should be;
   - **task packs** (POS/NER/ezafe/depparse) are described by the HF
     `manifest.json`, whose hash is pinned as `PACK_MANIFEST_SHA256` in the same
     two files.
@@ -41,11 +43,11 @@ If the optional model packs are available locally, run the gated tests too:
 
 ```bash
 RISHE_DEPPARSE_PACK=/path/to/depparse \
-RISHE_EMBEDDINGS_PACK=/path/to/rishe-embed-fa-300.vec \
+RISHE_EMBEDDINGS_PACK=/path/to/rishe-embed-fa-300-v2.rvec \
 cargo test --features models
 
 RISHE_TEST_DEPPARSE_PACK=/path/to/depparse \
-RISHE_TEST_EMBEDDINGS_PACK=/path/to/rishe-embed-fa-300.vec \
+RISHE_TEST_EMBEDDINGS_PACK=/path/to/rishe-embed-fa-300-v2.rvec \
 python -m unittest discover -s python/tests -p "test_*.py" -v
 ```
 
@@ -109,14 +111,23 @@ python -m unittest discover -s python/tests -p "test_*.py" -v
 ## Model artifacts
 
 The model repository is `MahdiAlikhah/rishe-models`. Large files are stored with
-Git LFS; `.vec` is already tracked in `.gitattributes`.
+Git LFS; `.vec` is already tracked in `.gitattributes`, and a `.rvec` payload is
+added to it by the Hub client on the first upload (check the commit diff and add
+the pattern by hand if it is missing).
 
 When publishing or refreshing a pack:
 
 1. Build the pack directory: payload (`.vec` or `.onnx`), `MODEL_CARD.md`,
    `NOTICE.md`, `LICENSE`, `metrics.json`, `manifest.json`, `SHA256SUMS`, and
-   the zip.
-2. The manifest lists every file except itself and `SHA256SUMS`.
+   the zip. For a full-precision pack that also ships a compact binary, generate
+   the second payload from the first, so both hold the same matrix:
+
+   ```bash
+   rishe convert pack.vec pack.rvec --dtype f16
+   ```
+
+2. The manifest lists every file except itself and `SHA256SUMS`, and records the
+   default file plus the format of each payload.
 3. Upload the directory (full upload on first publish; when only metadata
    changed, exclude the payload so the pinned file is untouched), then confirm
    the LFS OID equals the payload's SHA-256:
@@ -125,9 +136,10 @@ When publishing or refreshing a pack:
    # first publish
    hf upload MahdiAlikhah/rishe-models path/to/pack embeddings
    # metadata-only refresh (payload unchanged)
-   hf upload MahdiAlikhah/rishe-models path/to/pack embeddings --exclude "*.vec"
+   hf upload MahdiAlikhah/rishe-models path/to/pack embeddings \
+     --exclude "*.vec" --exclude "*.rvec"
 
-   curl -sI "https://huggingface.co/MahdiAlikhah/rishe-models/resolve/main/embeddings/<file>.vec"
+   curl -sI "https://huggingface.co/MahdiAlikhah/rishe-models/resolve/main/embeddings/<file>.rvec"
    ```
 
 4. Never modify a published payload file: the hub pins its SHA-256. Metadata

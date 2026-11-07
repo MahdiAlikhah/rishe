@@ -148,28 +148,62 @@ Across seeds 42, 43 and 44, mean ± sample std LAS is 76.70 ± 1.18 on Seraji an
 87.71 ± 0.43 on PerDT. The released pack is seed 42. These are compact-model
 numbers: below BERT-scale Hazm/spaCy `trf`, above spaCy's compact `sm` on PerDT.
 
-## Static embeddings (0.9.0)
+## Static embeddings (0.10.0)
 
-The first-party embedding pack is Word2Vec skip-gram over Persian Wikipedia,
-exported as a text `.vec` and loaded directly by `rishe.Embeddings`. It does not
-use ONNX or the task-pack runtime. Full card:
-[`MODEL_CARD_0.9.0.md`](MODEL_CARD_0.9.0.md).
+The first-party embedding pack is Word2Vec skip-gram over Persian Wikipedia.
+`rishe-embed-fa-300-v2` is the current default: 68,144 words from 150,000
+articles, published both as a word2vec text `.vec` file and as a compact `f16`
+binary `.rvec` file. It loads directly into `rishe.Embeddings`; there is no ONNX
+or Python ML stack involved. Full cards:
+[`MODEL_CARD_0.10.0.md`](MODEL_CARD_0.10.0.md) for v2 and
+[`MODEL_CARD_0.9.0.md`](MODEL_CARD_0.9.0.md) for the previous pack.
 
 Same eight hand-picked pairs; the random baseline samples each model's own
-vocabulary (100 pairs, seed 42). Latency is one loaded model on CPU, single
-thread, measured on the 0.9.0 training host.
+vocabulary (100 pairs, seed 42).
 
 | model | size | vocab | positive mean | random mean | gap | `most_similar` |
 |---|---:|---:|---:|---:|---:|---:|
-| **Rishe `rishe-embed-fa-300`** | **135 MB** | **38,864** | **0.4808** | **0.1558** | **0.3250** | **5.5 ms** |
+| **Rishe `rishe-embed-fa-300-v2`** | **42 MB** | **68,144** | **0.4740** | **0.1393** | **0.3347** | **11.7 ms** |
+| Rishe `rishe-embed-fa-300` (0.9.x) | 135 MB | 38,864 | 0.4808 | 0.1558 | 0.3250 | 5.5 ms |
 | Rishe `rishe-embed-fa-300-135k` | 475 MB | 135,513 | 0.5055 | 0.2553 | 0.2503 | 23.5 ms |
 | Hazm `hazm-fasttext-300` | 2.33 GB | 884,790 | 0.5565 | 0.2057 | 0.3509 | 152 ms |
 
-Hazm has the strongest raw pair similarities and the best own-vocabulary gap;
-Rishe is ~17× smaller and its `most_similar` scan is ~28× faster. The 135k
-variant is a coverage experiment, not the default: it raises the related-pair
-mean but raises the random baseline more. On a shared 2,955-word baseline the
-gaps are 0.3334 / 0.3202 / 0.3145, i.e. within noise for eight pairs. These are
-intrinsic sanity numbers, not a gold Persian WordSim/SimLex score. Reproduce
+v2 doubles the vocabulary of the 0.9.x pack and lifts ParsiNLU-entailment token
+coverage from 82.6% to 97.2%, with macro F1 from 0.2438 to 0.2985 (see its model
+card). Hazm keeps the best own-vocabulary gap and 1.3 points more coverage, at
+55× the download and ~13× the query time; on the downstream task v2 scores
+higher (0.2985 vs 0.2602 macro F1). The 135k variant is a coverage experiment,
+not the default: it raises the related-pair mean but raises the random baseline
+more. Scored on one shared word list, v2 and the 0.9.x pack separate the same
+way (0.3526 vs 0.3434 over 4,403 words), and the earlier three-way comparison on
+2,955 shared words gave 0.3334 / 0.3202 / 0.3145 for v1 / 135k / Hazm. These are
+intrinsic sanity numbers, not a gold Persian WordSim/SimLex score.
+
+Sizes are the downloaded file. v2 is published as a 236 MB word2vec text file
+and as a 42 MB `f16` binary holding the same matrix; the hub pulls the binary,
+which also loads about 2.4× faster (236 ms versus 575 ms for 68,144 × 300 on the
+same host). The `most_similar` column times one query with the model already
+loaded, single thread, on the host that produced each row: 11.7 ms is on the
+0.10.0 host, where the 0.9.x pack answers the same query in 6.7 ms. Reproduce
 with `python scripts/compare_embeddings.py` after
-`rishe hub pull rishe-embed-fa-300`.
+`rishe hub pull rishe-embed-fa-300-v2`.
+
+## Contextual encoders (zero-shot, 0.10.0)
+
+The same ParsiNLU-entailment protocol scores contextual encoders far above any
+static model, at two to three orders of magnitude more memory. They are listed
+here as the reference point for future sentence-embedding packs; Rishe does not
+bundle them, and each needs its own runtime.
+
+| model | parameters | dim | weights | pooling | macro F1 |
+|---|---:|---:|---:|---|---:|
+| Rishe `rishe-embed-fa-300-v2` (static, for scale) | 20.4M values | 300 | 42 MB | mean | 0.2985 |
+| E5-small | 118M | 384 | 471 MB | `query: ` prefix | 0.3492 |
+| EmbeddingGemma 2 | 740M total (270M text) | 768 | 1,489 MB | `SentenceSimilarity` / STS | 0.3721 |
+| EmbeddingGemma 2 | 740M total (270M text) | 768 | 1,489 MB | `Classification` | 0.3601 |
+| BGE-M3 | 568M | 1,024 | 2,271 MB | `query: ` prefix | 0.3853 |
+
+EmbeddingGemma 2's weights include vision and audio towers; a text-only pack
+would be substantially smaller than 1,489 MB. Prompt choice matters: the
+`Classification` model card prompt loses ~0.012 macro F1 against the
+`SentenceSimilarity` one on this task.

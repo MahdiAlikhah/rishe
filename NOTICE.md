@@ -40,13 +40,13 @@ Those treebanks are distributed under CC BY-SA 4.0, and the derived parser
 weights are released under CC BY-SA 4.0; keep the UD attribution and
 share-alike terms when redistributing the pack.
 
-The `rishe-embed-fa-300` embedding pack is trained on Persian Wikipedia
-(`wikimedia/wikipedia`, config `20231101.fa`). Wikipedia text is distributed
-under CC BY-SA and the GFDL. The derived vectors are released under
-**CC BY-SA 4.0** and are not covered by Rishe's MIT/Apache-2.0 code license;
-keep the upstream attribution and share-alike terms when redistributing them.
-The pack's `LICENSE` and `NOTICE.md` are published with the weights on
-Hugging Face (`MahdiAlikhah/rishe-models`, `embeddings/`).
+The `rishe-embed-fa-300` and `rishe-embed-fa-300-v2` embedding packs are trained
+on Persian Wikipedia (`wikimedia/wikipedia`, config `20231101.fa`). Wikipedia
+text is distributed under CC BY-SA and the GFDL. The derived vectors are
+released under **CC BY-SA 4.0** and are not covered by Rishe's MIT/Apache-2.0
+code license; keep the upstream attribution and share-alike terms when
+redistributing them. Each pack's `LICENSE` and `NOTICE.md` are published with
+the weights on Hugging Face (`MahdiAlikhah/rishe-models`, `embeddings/`).
 
 ---
 

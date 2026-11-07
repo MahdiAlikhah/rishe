@@ -37,6 +37,7 @@ class EmbeddingsTest(unittest.TestCase):
     def test_shape_and_lookup(self):
         self.assertEqual(len(self.embeddings), 6)
         self.assertEqual(self.embeddings.dim, 3)
+        self.assertEqual(self.embeddings.dtype, "f32")
         self.assertEqual(self.embeddings.vector("کتاب"), [1.0, 0.0, 0.0])
         self.assertIsNone(self.embeddings.vector("ناموجود"))
         self.assertTrue(self.embeddings.contains("خانه"))
@@ -96,6 +97,19 @@ class HubTest(unittest.TestCase):
         )
         self.assertEqual(model.filename, "rishe-embed-fa-300.vec")
 
+    def test_current_embedding_is_registered(self):
+        model = hub.MODELS["rishe-embed-fa-300-v2"]
+        self.assertTrue(
+            model.url.endswith(
+                "/embeddings/rishe-embed-fa-300-v2/rishe-embed-fa-300-v2.rvec"
+            )
+        )
+        self.assertEqual(
+            model.sha256,
+            "b870a2d88dc04cadaf117d7fb8aad07264c640293adb8689e69cac3d123a37f1",
+        )
+        self.assertEqual(model.filename, "rishe-embed-fa-300-v2.rvec")
+
     def test_custom_url_requires_checksum(self):
         with self.assertRaises(ValueError):
             hub.pull("https://example.com/model.vec")
@@ -110,6 +124,7 @@ class RealPackTest(unittest.TestCase):
         embeddings = Embeddings(EMBEDDINGS_PACK)
         self.assertEqual(embeddings.dim, 300)
         self.assertGreaterEqual(len(embeddings), 30_000)
+        self.assertIn(embeddings.dtype, ("f32", "f16"))
         self.assertTrue(embeddings.contains("کتاب"))
         self.assertEqual(len(embeddings.most_similar("کتاب", 5)), 5)
         self.assertAlmostEqual(embeddings.similarity("کتاب", "کتاب"), 1.0, places=5)

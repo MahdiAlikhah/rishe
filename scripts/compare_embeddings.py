@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Compare Rishe embedding packs with each other and with Hazm.
 
-This is the harness behind the tables in ``docs/MODEL_CARD_0.9.0.md`` and
-``docs/MODEL_BENCHMARKS.md``. It uses the 0.9.0 evaluation set: eight
+This is the harness behind the static-embedding tables in
+``docs/MODEL_BENCHMARKS.md`` and ``docs/MODEL_CARD_0.10.0.md``. It uses eight
 hand-picked Persian pairs plus two random baselines.
 
 - **own vocabulary** (the primary baseline, also stored in ``metrics.json``):
@@ -11,13 +11,16 @@ hand-picked Persian pairs plus two random baselines.
   that appear in every model's first 5,000 most frequent entries, so all models
   are scored on the same pairs.
 
-    rishe hub pull rishe-embed-fa-300
+    rishe hub pull rishe-embed-fa-300-v2
     python scripts/compare_embeddings.py
 
     # explicit files, no Hazm
     python scripts/compare_embeddings.py \
-        --model "rishe-30k=path/to/rishe-embed-fa-300.vec" \
-        --model "rishe-135k=path/to/rishe-embed-fa-300.vec" --no-hazm
+        --model "rishe-v2=path/to/rishe-embed-fa-300-v2.rvec" \
+        --model "rishe-v1=path/to/rishe-embed-fa-300.vec" --no-hazm
+
+Both pack formats are accepted: word2vec text (``.vec``) and Rishe's compact
+binary (``.rvec``, format version 1).
 
 These are intrinsic sanity checks, not a gold Persian WordSim/SimLex score.
 """
@@ -28,6 +31,7 @@ import argparse
 import gc
 import random
 import statistics
+import struct
 import time
 from pathlib import Path
 from typing import Dict, List, Tuple
@@ -48,15 +52,16 @@ PAIRS: List[Tuple[str, str, str]] = [
 SEED = 42
 RANDOM_SAMPLES = 100
 COMMON_WORDS = 5_000
-REPO = Path(__file__).resolve().parents[1]
-DEFAULT_PACKS = [
-    ("rishe-30k", REPO / "training/result/rishe-0.9.0/artifacts/rishe-embed-fa-300/rishe-embed-fa-300.vec"),
-    ("rishe-135k", REPO / "training/result/rishe-0.9.0/artifacts-135k/rishe-embed-fa-300/rishe-embed-fa-300.vec"),
-]
+RVEC_MAGIC = b"RVEC"
+DEFAULT_MODELS = ["rishe-embed-fa-300-v2", "rishe-embed-fa-300"]
 
 
 def read_words(path: Path) -> List[str]:
     """Vocabulary in file order (frequency order for gensim exports)."""
+    with path.open("rb") as handle:
+        head = handle.read(4)
+    if head == RVEC_MAGIC:
+        return read_rvec_words(path)
     words: List[str] = []
     with path.open("r", encoding="utf-8", errors="replace") as handle:
         handle.readline()
@@ -64,6 +69,23 @@ def read_words(path: Path) -> List[str]:
             word = line.split(" ", 1)[0]
             if word:
                 words.append(word)
+    return words
+
+
+def read_rvec_words(path: Path) -> List[str]:
+    """Vocabulary of a `.rvec` file (format version 1)."""
+    with path.open("rb") as handle:
+        header = handle.read(15)
+        if len(header) != 15 or header[:4] != RVEC_MAGIC:
+            raise ValueError(f"{path} is not an .rvec file")
+        version = struct.unpack("<H", header[4:6])[0]
+        if version != 1:
+            raise ValueError(f"{path}: unsupported .rvec version {version}")
+        vocab = struct.unpack("<I", header[11:15])[0]
+        words: List[str] = []
+        for _ in range(vocab):
+            size = struct.unpack("<H", handle.read(2))[0]
+            words.append(handle.read(size).decode("utf-8"))
     return words
 
 
@@ -162,7 +184,15 @@ def main() -> int:
                 parser.error(f"--model expects LABEL=PATH, got {item!r}")
             models.append((label, Path(raw)))
     else:
-        models = [(label, path) for label, path in DEFAULT_PACKS if path.is_file()]
+        for name in DEFAULT_MODELS:
+            cached = hub.cached(name)
+            if cached is not None and Path(cached).is_file():
+                models.append((name, Path(cached)))
+        if not models:
+            parser.error(
+                "no cached packs; run `rishe hub pull rishe-embed-fa-300-v2` "
+                "or pass --model LABEL=PATH"
+            )
 
     if not args.no_hazm:
         hazm_path = Path(args.hazm) if args.hazm else hub.cached("hazm-fasttext-300")

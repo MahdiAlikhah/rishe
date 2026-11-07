@@ -61,7 +61,38 @@ fn serves_json_lines() {
 fn lists_hub_packs() {
     let output = stdout(rishe().args(["hub", "list"]));
     assert!(output.contains("depparse-compact\t"));
+    assert!(output.contains("rishe-embed-fa-300-v2\t"));
     assert!(output.contains("rishe-embed-fa-300\t"));
+}
+
+#[test]
+fn converts_embeddings_to_binary() {
+    let model = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/mini-embed.vec");
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join("rishe-test-tmp");
+    std::fs::create_dir_all(&dir).expect("create scratch dir");
+    let binary = dir.join("cli-convert.rvec");
+    let binary = binary.to_str().expect("utf-8 path").to_owned();
+
+    let message = stdout(rishe().args(["convert", model, &binary, "--dtype", "f16"]));
+    assert!(message.contains("as f16"), "unexpected output: {message}");
+
+    let identical = stdout(rishe().args(["similarity", "کتاب", "کتاب", "--model", &binary]));
+    assert_eq!(identical, "1.000000");
+
+    let neighbours = stdout(rishe().args([
+        "similar", "کتاب", "--model", &binary, "--top", "2", "--json",
+    ]));
+    assert_eq!(neighbours.matches("\"score\"").count(), 2);
+
+    let bad = rishe()
+        .args(["convert", model, &binary, "--dtype", "f64"])
+        .output()
+        .expect("run rishe");
+    assert_eq!(bad.status.code(), Some(2));
+
+    std::fs::remove_file(&binary).ok();
 }
 
 #[test]

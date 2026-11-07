@@ -155,7 +155,11 @@ cargo install rishe --features models,metal
 
 Static fastText/word2vec embeddings are available through
 `rishe::embeddings::Embeddings`; the model is loaded once and shared read-only.
-The first-party pack is `rishe hub pull rishe-embed-fa-300` (CC BY-SA 4.0).
+The first-party pack is `rishe hub pull rishe-embed-fa-300-v2` (CC BY-SA 4.0).
+`Embeddings::load` accepts word2vec text and the compact binary `.rvec` format
+(`f32` or `f16` payloads are detected from the header and decoded on load), and
+`Embeddings::save` writes either width. `rishe convert model.vec model.rvec`
+does the same from the command line.
 
 ```rust
 let embeddings = rishe::embeddings::Embeddings::load("path/to/model.vec")
@@ -180,8 +184,8 @@ option. Lexicon attributions are in
 [NOTICE.md](https://github.com/MahdiAlikhah/rishe/blob/main/NOTICE.md).
 
 The code license does not cover downloaded model weights. The
-`rishe-embed-fa-300` vectors are released under CC BY-SA 4.0, and each optional
-task pack carries its own terms; see
+`rishe-embed-fa-300-v2` vectors are released under CC BY-SA 4.0, and each
+optional task pack carries its own terms; see
 [NOTICE.md](https://github.com/MahdiAlikhah/rishe/blob/main/NOTICE.md).
 
 Built by Mahdi Alikhah.

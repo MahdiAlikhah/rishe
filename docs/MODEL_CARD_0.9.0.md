@@ -4,6 +4,9 @@ Static 300-dimensional Persian word embeddings for Rishe 0.9.0. Sentence and
 document vectors are the mean of in-vocabulary token vectors, computed by the
 runtime; there is no separate sentence encoder.
 
+Superseded by [`rishe-embed-fa-300-v2`](MODEL_CARD_0.10.0.md) as the default pack
+in Rishe 0.10.0; this 30,000-article pack stays published for anyone pinning it.
+
 This is a compact, qualitatively evaluated model, not a state-of-the-art
 contextual embedding. It exists so the zero-dependency Rishe install has a
 first-party Persian embedding option that is 17× smaller than the usual

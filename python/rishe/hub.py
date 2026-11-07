@@ -45,6 +45,11 @@ class Model(NamedTuple):
 
 
 MODELS: Dict[str, Model] = {
+    "rishe-embed-fa-300-v2": Model(
+        url="https://huggingface.co/MahdiAlikhah/rishe-models/resolve/main/embeddings/rishe-embed-fa-300-v2/rishe-embed-fa-300-v2.rvec",
+        sha256="b870a2d88dc04cadaf117d7fb8aad07264c640293adb8689e69cac3d123a37f1",
+        filename="rishe-embed-fa-300-v2.rvec",
+    ),
     "rishe-embed-fa-300": Model(
         url="https://huggingface.co/MahdiAlikhah/rishe-models/resolve/main/embeddings/rishe-embed-fa-300.vec",
         sha256="afed6aa266e07745ce7b6b1e2f6600f6f0373dc91e197902d7305e19d2d35bf5",

@@ -64,19 +64,24 @@ More Python usage is in [README.pypi.md](README.pypi.md); the Rust API is in
 ## Embeddings
 
 ```bash
-rishe hub pull rishe-embed-fa-300   # 135 MB, checksum-verified
+rishe hub pull rishe-embed-fa-300-v2   # 42 MB, checksum-verified
 ```
 
 ```python
 from rishe import Embeddings, hub
 
-vectors = Embeddings(hub.path("rishe-embed-fa-300"))
+vectors = Embeddings(hub.path("rishe-embed-fa-300-v2"))
+print(vectors.dim, len(vectors), vectors.dtype)
 vectors.most_similar("کتاب", 5)
 vectors.sentence_similarity("این کتاب خوب است", "کتاب خوبی بود")
 ```
 
-`rishe-embed-fa-300` is a 300-dimensional, 38,864-word Word2Vec model trained on
-Persian Wikipedia. The vectors are CC BY-SA 4.0; see [NOTICE.md](NOTICE.md).
+`rishe-embed-fa-300-v2` is a 300-dimensional, 68,144-word Word2Vec skip-gram
+model trained on 150,000 Persian Wikipedia articles. The hub serves the compact
+`.rvec` file, which stores the same matrix as IEEE 754 binary16; `rishe convert`
+rewrites any word2vec `.vec` file that way, and `Embeddings` reads both formats
+without extra options. The 0.9.x 30,000-article pack stays available as
+`rishe-embed-fa-300`. The vectors are CC BY-SA 4.0; see [NOTICE.md](NOTICE.md).
 
 ## Architecture
 
@@ -103,7 +108,7 @@ Dual-licensed under [Apache-2.0](LICENSE-APACHE) or [MIT](LICENSE-MIT).
 Lexicon attributions are in [NOTICE.md](NOTICE.md).
 
 The code license does not cover downloaded model weights: the
-`rishe-embed-fa-300` vectors are released under CC BY-SA 4.0, and each optional
-task pack carries its own terms. See [NOTICE.md](NOTICE.md).
+`rishe-embed-fa-300-v2` vectors are released under CC BY-SA 4.0, and each
+optional task pack carries its own terms. See [NOTICE.md](NOTICE.md).
 
 Built by Mahdi Alikhah.

@@ -4,14 +4,184 @@ use rayon::prelude::*;
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 use std::fs::File;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read, Seek, Write};
 use std::path::Path;
 
-/// Static word embeddings loaded from a fastText/word2vec `.vec` text file.
+/// Magic prefix of the compact binary embedding format.
+const MAGIC: &[u8; 4] = b"RVEC";
+/// Binary format version written by this crate.
+const VERSION: u16 = 1;
+const DTYPE_F32: u8 = 0;
+const DTYPE_F16: u8 = 1;
+/// `RVEC` magic, version, dtype tag, `u32` dim and `u32` vocab size.
+const HEADER_LEN: usize = 15;
+
+/// Storage width of an embedding file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DType {
+    F32,
+    F16,
+}
+
+impl DType {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::F32 => "f32",
+            Self::F16 => "f16",
+        }
+    }
+
+    /// Parse the name accepted on the command line.
+    pub fn parse(name: &str) -> Option<Self> {
+        match name.trim().to_ascii_lowercase().as_str() {
+            "f32" | "float32" => Some(Self::F32),
+            "f16" | "float16" | "half" => Some(Self::F16),
+            _ => None,
+        }
+    }
+
+    fn tag(self) -> u8 {
+        match self {
+            Self::F32 => DTYPE_F32,
+            Self::F16 => DTYPE_F16,
+        }
+    }
+
+    /// Bytes per stored value.
+    fn width(self) -> usize {
+        match self {
+            Self::F32 => 4,
+            Self::F16 => 2,
+        }
+    }
+}
+
+/// Encode a `.rvec` header, vocabulary blob and vector payload into `writer`.
+fn write_binary<W: Write>(
+    writer: &mut W,
+    dim: usize,
+    words: &[Box<str>],
+    vectors: &[f32],
+    dtype: DType,
+) -> Result<(), String> {
+    let dim = u32::try_from(dim).map_err(|_| "embedding dimension is too large".to_string())?;
+    let vocab = u32::try_from(words.len()).map_err(|_| "vocabulary is too large".to_string())?;
+    let mut header = Vec::with_capacity(HEADER_LEN);
+    header.extend_from_slice(MAGIC);
+    header.extend_from_slice(&VERSION.to_le_bytes());
+    header.push(dtype.tag());
+    header.extend_from_slice(&dim.to_le_bytes());
+    header.extend_from_slice(&vocab.to_le_bytes());
+    writer
+        .write_all(&header)
+        .map_err(|error| format!("write error: {error}"))?;
+
+    for word in words {
+        let length = u16::try_from(word.len()).map_err(|_| {
+            format!(
+                "word {word:?} is longer than {} bytes and cannot be stored",
+                u16::MAX
+            )
+        })?;
+        writer
+            .write_all(&length.to_le_bytes())
+            .and_then(|()| writer.write_all(word.as_bytes()))
+            .map_err(|error| format!("write error: {error}"))?;
+    }
+
+    let width = dtype.width();
+    let mut buffer = Vec::with_capacity((1 << 16) * width);
+    for value in vectors {
+        match dtype {
+            DType::F32 => buffer.extend_from_slice(&value.to_le_bytes()),
+            DType::F16 => buffer.extend_from_slice(&f32_to_f16(*value).to_le_bytes()),
+        }
+        if buffer.len() >= (1 << 20) {
+            writer
+                .write_all(&buffer)
+                .map_err(|error| format!("write error: {error}"))?;
+            buffer.clear();
+        }
+    }
+    writer
+        .write_all(&buffer)
+        .map_err(|error| format!("write error: {error}"))
+}
+
+/// Convert an IEEE 754 binary16 bit pattern to `f32`.
+fn f16_to_f32(bits: u16) -> f32 {
+    let sign = u32::from(bits >> 15) << 31;
+    let exponent = u32::from((bits >> 10) & 0x1f);
+    let mantissa = u32::from(bits & 0x03ff);
+    let decoded = if exponent == 0 {
+        if mantissa == 0 {
+            sign
+        } else {
+            // Subnormal half: renormalize into a normal f32.
+            let mut mantissa = mantissa;
+            let mut shift = 0_u32;
+            while mantissa & 0x0400 == 0 {
+                mantissa <<= 1;
+                shift += 1;
+            }
+            mantissa &= 0x03ff;
+            let exponent = 127 - 15 - shift + 1;
+            sign | (exponent << 23) | (mantissa << 13)
+        }
+    } else if exponent == 0x1f {
+        // Inf or NaN.
+        sign | (0xff << 23) | (mantissa << 13)
+    } else {
+        sign | ((exponent + 127 - 15) << 23) | (mantissa << 13)
+    };
+    f32::from_bits(decoded)
+}
+
+/// Convert `f32` to an IEEE 754 binary16 bit pattern, rounding half to even and
+/// saturating to infinity like a hardware conversion.
+fn f32_to_f16(value: f32) -> u16 {
+    let bits = value.to_bits();
+    let sign = ((bits >> 16) & 0x8000) as u16;
+    let exponent = ((bits >> 23) & 0xff) as i32;
+    let mantissa = bits & 0x7f_ffff;
+    if exponent == 0xff {
+        // Preserve infinity and collapse NaN payloads into a quiet NaN.
+        let nan = if mantissa == 0 {
+            0
+        } else {
+            0x200 | ((mantissa >> 13) as u16)
+        };
+        return sign | 0x7c00 | nan;
+    }
+    let half_exponent = exponent - 127 + 15;
+    if half_exponent >= 0x1f {
+        return sign | 0x7c00;
+    }
+    if half_exponent <= 0 {
+        let shift = (14 - half_exponent) as u32;
+        if shift > 24 {
+            return sign;
+        }
+        let significand = mantissa | 0x80_0000;
+        let half = significand >> shift;
+        let remainder = significand & ((1 << shift) - 1);
+        let halfway = 1_u32 << (shift - 1);
+        let rounds_up = remainder > halfway || (remainder == halfway && half & 1 == 1);
+        return sign | (half as u16 + u16::from(rounds_up));
+    }
+    let half = ((half_exponent as u32) << 10) | (mantissa >> 13);
+    let remainder = mantissa & 0x1fff;
+    let rounds_up = remainder > 0x1000 || (remainder == 0x1000 && half & 1 == 1);
+    sign | (half as u16 + u16::from(rounds_up))
+}
+
+/// Static word embeddings loaded from a fastText/word2vec `.vec` text file or a
+/// compact binary `.rvec` file.
 ///
 /// The vocabulary is an FST mapping word -> row index; vectors live in one flat
-/// row-major buffer. Lookups are O(word length) and the whole model is shared
-/// read-only across threads.
+/// row-major `f32` buffer, so lookups are O(word length) and the model is shared
+/// read-only across threads. Binary files are decoded to `f32` on load; storing
+/// them in `f16` only shrinks the file on disk.
 #[cfg_attr(feature = "python", pyo3::pyclass(frozen))]
 pub struct Embeddings {
     dim: usize,
@@ -19,13 +189,51 @@ pub struct Embeddings {
     norms: Vec<f32>,
     words: Vec<Box<str>>,
     index: Map<Vec<u8>>,
+    dtype: DType,
 }
 
 impl Embeddings {
+    /// Load an embedding pack from a text `.vec` or binary `.rvec` file.
     pub fn load(path: impl AsRef<Path>) -> Result<Self, String> {
         let path = path.as_ref();
-        let file =
+        let mut file =
             File::open(path).map_err(|error| format!("cannot open {}: {error}", path.display()))?;
+        let mut magic = [0_u8; 4];
+        let read = file
+            .read(&mut magic)
+            .map_err(|error| format!("read error: {error}"))?;
+        if read == 4 && &magic == MAGIC {
+            file.rewind()
+                .map_err(|error| format!("read error: {error}"))?;
+            Self::load_binary(file)
+        } else {
+            let file = File::open(path)
+                .map_err(|error| format!("cannot open {}: {error}", path.display()))?;
+            Self::load_text(file)
+        }
+    }
+
+    /// Write this model as a compact binary `.rvec` file in the given storage
+    /// width. The vocabulary order and row order are preserved, so an `f16`
+    /// file decodes to values very close to the original `f32` ones.
+    pub fn save(&self, path: impl AsRef<Path>, dtype: DType) -> Result<(), String> {
+        let path = path.as_ref();
+        let file = File::create(path)
+            .map_err(|error| format!("cannot create {}: {error}", path.display()))?;
+        let mut writer = std::io::BufWriter::with_capacity(1 << 20, file);
+        write_binary(&mut writer, self.dim, &self.words, &self.vectors, dtype).and_then(|()| {
+            writer
+                .flush()
+                .map_err(|error| format!("write error: {error}"))
+        })
+    }
+
+    /// Storage width of the file this model was loaded from.
+    pub fn dtype(&self) -> DType {
+        self.dtype
+    }
+
+    fn load_text(file: File) -> Result<Self, String> {
         let reader = BufReader::with_capacity(1 << 20, file);
         let mut lines = reader.lines();
 
@@ -119,6 +327,123 @@ impl Embeddings {
             norms,
             words,
             index,
+            dtype: DType::F32,
+        })
+    }
+
+    /// Read a compact binary `.rvec` file produced by [`Embeddings::save`].
+    fn load_binary(mut file: File) -> Result<Self, String> {
+        let mut header = [0_u8; HEADER_LEN];
+        file.read_exact(&mut header)
+            .map_err(|error| format!("read error: {error}"))?;
+        if &header[..4] != MAGIC {
+            return Err("not an .rvec file (missing RVEC magic)".to_string());
+        }
+        let version = u16::from_le_bytes([header[4], header[5]]);
+        if version != VERSION {
+            return Err(format!(
+                "unsupported .rvec version {version}, this build reads version {VERSION}"
+            ));
+        }
+        let dtype = match header[6] {
+            DTYPE_F32 => DType::F32,
+            DTYPE_F16 => DType::F16,
+            other => return Err(format!("unknown .rvec dtype tag {other}")),
+        };
+        let dim = u32::from_le_bytes([header[7], header[8], header[9], header[10]]) as usize;
+        let vocab = u32::from_le_bytes([header[11], header[12], header[13], header[14]]) as usize;
+        if dim == 0 {
+            return Err("embedding dimension must be positive".to_string());
+        }
+        if vocab == 0 {
+            return Err("embedding file contains no vectors".to_string());
+        }
+        let count = vocab
+            .checked_mul(dim)
+            .ok_or_else(|| "embedding file is too large for available memory".to_string())?;
+
+        let mut words: Vec<Box<str>> = Vec::with_capacity(vocab);
+        let mut scratch = vec![0_u8; u16::MAX as usize + 1];
+        for _ in 0..vocab {
+            let mut length = [0_u8; 2];
+            file.read_exact(&mut length)
+                .map_err(|error| format!("read error: {error}"))?;
+            let length = u16::from_le_bytes(length) as usize;
+            file.read_exact(&mut scratch[..length])
+                .map_err(|error| format!("read error: {error}"))?;
+            let word = std::str::from_utf8(&scratch[..length]).map_err(|_| {
+                "embedding file contains a word that is not valid UTF-8".to_string()
+            })?;
+            words.push(word.into());
+        }
+
+        let mut vectors: Vec<f32> = Vec::new();
+        vectors
+            .try_reserve(count)
+            .map_err(|_| "embedding file is too large for available memory".to_string())?;
+        let width = match dtype {
+            DType::F32 => 4,
+            DType::F16 => 2,
+        };
+        // Decode in chunks so the raw bytes never sit in memory next to the
+        // fully decoded buffer.
+        let mut bytes = vec![0_u8; (1 << 20) * width];
+        let mut remaining = count;
+        while remaining > 0 {
+            let take = remaining.min(bytes.len() / width);
+            let chunk = &mut bytes[..take * width];
+            file.read_exact(chunk)
+                .map_err(|error| format!("read error: {error}"))?;
+            match dtype {
+                DType::F32 => vectors.extend(
+                    chunk
+                        .chunks_exact(4)
+                        .map(|raw| f32::from_le_bytes([raw[0], raw[1], raw[2], raw[3]])),
+                ),
+                DType::F16 => vectors.extend(
+                    chunk
+                        .chunks_exact(2)
+                        .map(|raw| f16_to_f32(u16::from_le_bytes([raw[0], raw[1]]))),
+                ),
+            }
+            remaining -= take;
+        }
+
+        let mut order: Vec<u32> = (0..words.len() as u32).collect();
+        order.sort_unstable_by(|&a, &b| words[a as usize].cmp(&words[b as usize]));
+
+        let mut builder = MapBuilder::new(Vec::<u8>::with_capacity(words.len() * 16))
+            .map_err(|error| format!("fst error: {error}"))?;
+        let mut previous: Option<&str> = None;
+        for &index in &order {
+            let word = &*words[index as usize];
+            if previous == Some(word) {
+                continue;
+            }
+            builder
+                .insert(word.as_bytes(), index as u64)
+                .map_err(|error| format!("fst error: {error}"))?;
+            previous = Some(word);
+        }
+        let index = Map::new(
+            builder
+                .into_inner()
+                .map_err(|error| format!("fst error: {error}"))?,
+        )
+        .map_err(|error| format!("fst error: {error}"))?;
+
+        let norms = vectors
+            .chunks_exact(dim)
+            .map(|row| dot(row, row).sqrt())
+            .collect();
+
+        Ok(Self {
+            dim,
+            vectors,
+            norms,
+            words,
+            index,
+            dtype,
         })
     }
 
@@ -335,6 +660,109 @@ mod tests {
         std::fs::write(&path, "1 3\nکتاب 1 0\n").unwrap();
         assert!(Embeddings::load(&path).is_err());
         std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn test_binary_round_trip() {
+        let text = scratch("embeddings_round.vec");
+        std::fs::write(&text, TINY).unwrap();
+        let embeddings = Embeddings::load(&text).unwrap();
+        assert_eq!(embeddings.dtype(), DType::F32);
+
+        let binary = scratch("embeddings_round.rvec");
+        embeddings.save(&binary, DType::F32).unwrap();
+        let reloaded = Embeddings::load(&binary).unwrap();
+        assert_eq!(reloaded.dtype(), DType::F32);
+        assert_eq!(reloaded.dim(), embeddings.dim());
+        assert_eq!(reloaded.len(), embeddings.len());
+        for word in ["کتاب", "خانه", "مدرسه", "سلام", "دنیا", "مردم"] {
+            assert_eq!(reloaded.vector(word), embeddings.vector(word));
+        }
+        assert_eq!(
+            reloaded.most_similar("کتاب", 8).len(),
+            embeddings.most_similar("کتاب", 8).len()
+        );
+
+        let half_path = scratch("embeddings_round_half.rvec");
+        embeddings.save(&half_path, DType::F16).unwrap();
+        let half_bytes = std::fs::metadata(&half_path).unwrap().len();
+        let full_bytes = std::fs::metadata(&binary).unwrap().len();
+        assert!(
+            half_bytes < full_bytes,
+            "f16 file {half_bytes} vs f32 {full_bytes}"
+        );
+
+        let half = Embeddings::load(&half_path).unwrap();
+        assert_eq!(half.dtype(), DType::F16);
+        assert_eq!(half.len(), embeddings.len());
+        for word in ["کتاب", "خانه", "مدرسه", "سلام", "دنیا", "مردم"] {
+            let original = embeddings.vector(word).unwrap();
+            let decoded = half.vector(word).unwrap();
+            assert_eq!(decoded.len(), original.len());
+            for (left, right) in original.iter().zip(decoded) {
+                assert!(
+                    (left - right).abs() <= 1e-3 * left.abs().max(1.0),
+                    "{word}: {left} vs {right}"
+                );
+            }
+        }
+        let original = embeddings.similarity("کتاب", "خانه").unwrap();
+        let decoded = half.similarity("کتاب", "خانه").unwrap();
+        assert!((original - decoded).abs() < 1e-3);
+        std::fs::remove_file(&text).ok();
+        std::fs::remove_file(&binary).ok();
+        std::fs::remove_file(&half_path).ok();
+    }
+
+    #[test]
+    fn test_rejects_malformed_binaries() {
+        fn header(version: u16, dtype: u8, dim: u32, vocab: u32) -> Vec<u8> {
+            let mut bytes = Vec::new();
+            bytes.extend_from_slice(MAGIC);
+            bytes.extend_from_slice(&version.to_le_bytes());
+            bytes.push(dtype);
+            bytes.extend_from_slice(&dim.to_le_bytes());
+            bytes.extend_from_slice(&vocab.to_le_bytes());
+            bytes
+        }
+
+        let path = scratch("embeddings_bad.rvec");
+        let rejected = |bytes: &[u8]| {
+            std::fs::write(&path, bytes).unwrap();
+            Embeddings::load(&path).is_err()
+        };
+
+        assert!(rejected(b"RVEC\x02\x00\x00"));
+        assert!(rejected(&header(VERSION + 1, DTYPE_F16, 4, 2)));
+        assert!(rejected(&header(VERSION, 7, 4, 2)));
+        assert!(rejected(&header(VERSION, DTYPE_F16, 0, 2)));
+        assert!(rejected(&header(VERSION, DTYPE_F16, 4, 0)));
+        // A well-formed header with a truncated payload must fail cleanly.
+        assert!(rejected(&header(VERSION, DTYPE_F16, 4, 2)));
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn test_half_precision_conversion() {
+        assert_eq!(f16_to_f32(f32_to_f16(0.0)), 0.0);
+        assert_eq!(f16_to_f32(f32_to_f16(-0.0)).to_bits(), (-0.0_f32).to_bits());
+        assert_eq!(f16_to_f32(f32_to_f16(1.0)), 1.0);
+        assert_eq!(f16_to_f32(f32_to_f16(-2.0)), -2.0);
+        assert_eq!(f16_to_f32(f32_to_f16(65_504.0)), 65_504.0);
+        assert!(f16_to_f32(f32_to_f16(1.0e9)).is_infinite());
+        assert!(f16_to_f32(f32_to_f16(f32::NAN)).is_nan());
+        assert!(f16_to_f32(f32_to_f16(f32::INFINITY)).is_infinite());
+        for value in [0.1_f32, 0.6, -0.8, std::f32::consts::PI, 1.0e-5, 1.0e-8] {
+            let round_trip = f16_to_f32(f32_to_f16(value));
+            assert!(
+                (value - round_trip).abs() <= 1e-3 * value.abs() + 6.0e-8,
+                "{value} -> {round_trip}"
+            );
+        }
+        // Subnormals must survive the trip instead of flushing to zero.
+        let tiny = f16_to_f32(0x0001);
+        assert!(tiny > 0.0 && tiny < 1.0e-6);
+        assert_eq!(f32_to_f16(tiny), 0x0001);
     }
 
     #[test]

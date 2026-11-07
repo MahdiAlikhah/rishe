@@ -322,11 +322,16 @@ def _hub(args) -> int:
 
 
 def _load_embeddings(name: Optional[str]) -> Embeddings:
-    value = name or "rishe-embed-fa-300"
+    value = name or "rishe-embed-fa-300-v2"
     direct = Path(value)
     if direct.is_file():
         return Embeddings(direct)
-    if value.endswith(".vec") or "/" in value or "\\" in value:
+    if (
+        value.endswith(".vec")
+        or value.endswith(".rvec")
+        or "/" in value
+        or "\\" in value
+    ):
         raise FileNotFoundError(f"embedding file not found: {value}")
     cached = hub.cached(value)
     if cached is None:

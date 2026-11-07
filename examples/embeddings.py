@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Static Persian embeddings with Rishe.
 
-    rishe hub pull rishe-embed-fa-300
+    rishe hub pull rishe-embed-fa-300-v2
     python examples/embeddings.py
 
-Pass a ``.vec`` path as the first argument (or set ``RISHE_EMBEDDINGS``) to use a
-model that is not in the hub cache. Loading never touches the network.
+Pass a ``.vec`` or ``.rvec`` path as the first argument (or set
+``RISHE_EMBEDDINGS``) to use a model that is not in the hub cache. Loading never
+touches the network.
 """
 
 import os
@@ -24,11 +25,11 @@ def main() -> int:
 
     path = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("RISHE_EMBEDDINGS")
     if not path:
-        path = hub.path("rishe-embed-fa-300")
+        path = hub.path("rishe-embed-fa-300-v2")
 
     vectors = Embeddings(path)
     print(f"model: {path}")
-    print(f"dim={vectors.dim} vocab={len(vectors)}")
+    print(f"dim={vectors.dim} vocab={len(vectors)} dtype={vectors.dtype}")
 
     for word in WORDS:
         if not vectors.contains(word):

@@ -9,6 +9,38 @@ in the pack manifest and on the model repository.
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-11-07
+
+### Added
+
+- `rishe-embed-fa-300-v2`, a second first-party embedding pack: Word2Vec
+  skip-gram, 300 dimensions, 68,144 words, trained on 150,000 Persian Wikipedia
+  articles (3,830,930 sentences, 57,661,561 tokens; minimum count 20, 15 epochs).
+  On ParsiNLU entailment it lifts token coverage from 82.6% to 97.2%, macro F1
+  from 0.2438 to 0.2985 and the random-baseline separation gap from 0.3250 to
+  0.3347.
+- Compact binary embedding format `.rvec` (version 1): an `RVEC` header records
+  the version, storage width, dimension and vocabulary size, then a
+  length-prefixed vocabulary and the vector payload. `Embeddings::load` detects
+  the format by its magic bytes and decodes both `f32` and `f16` files into the
+  same in-memory layout. The v2 pack ships an `f16` file of 41,849,368 bytes
+  next to the 236,068,629-byte text file.
+- `rishe convert <input> <output> [--dtype f16|f32]` to rewrite any word2vec
+  text file in the compact binary format.
+- `Embeddings::save` and `Embeddings::dtype` (with a `DType` enum) in Rust, and
+  a read-only `dtype` property on the Python `Embeddings` class.
+- Hub entry for `rishe-embed-fa-300-v2` with a pinned SHA-256.
+- `docs/MODEL_CARD_0.10.0.md` for the v2 pack.
+
+### Changed
+
+- `rishe-embed-fa-300-v2` is now the default model for `rishe embed`,
+  `rishe similar`, `rishe similarity` and `rishe serve --model`; the 0.9.x pack
+  remains available as `rishe-embed-fa-300`.
+- Benchmarks, READMEs, the CLI reference and the hub listing quote the v2
+  numbers and both pack formats.
+- `.vec` and `.rvec` paths are accepted wherever an embedding file is expected.
+
 ## [0.9.1] - 2026-11-06
 
 ### Added
@@ -222,7 +254,8 @@ in the pack manifest and on the model repository.
 - Python bindings (abi3) and a Rust core.
 - Benchmark suite and dual MIT/Apache-2.0 licensing.
 
-[Unreleased]: https://github.com/MahdiAlikhah/rishe/compare/v0.9.1...HEAD
+[Unreleased]: https://github.com/MahdiAlikhah/rishe/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/MahdiAlikhah/rishe/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/MahdiAlikhah/rishe/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/MahdiAlikhah/rishe/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/MahdiAlikhah/rishe/compare/v0.8.0...v0.8.1

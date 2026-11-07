@@ -20,12 +20,20 @@ pipe = Pipeline()
 doc = pipe("کتاب‌های خوب را به دوستانم می‌دهم.")
 print(doc.tokens, doc.lemmas)
 
-model = Embeddings(hub.path("rishe-embed-fa-300"))
-print(model.dim, len(model))
+model = Embeddings(hub.path("rishe-embed-fa-300-v2"))
+print(model.dim, len(model), model.dtype)
 print(model.similarity("کتاب", "خوب"))
 print(model.sentence_similarity("این کتاب خوب است", "کتاب خوبی بود"))
 print(model.most_similar("کتاب", 5))
 ```
+
+`Embeddings(path)` accepts a word2vec text `.vec` file, a fastText `.vec` file
+or Rishe's compact binary `.rvec` file; both stored widths (`f32`, `f16`) are
+detected from the file header and decoded into the same row-major `f32` buffer,
+so the storage width affects only the file on disk. `dtype` reports which width
+the file used. On the Rust side the same information comes from
+`Embeddings::dtype()`, and `Embeddings::save(path, DType::F16)` writes the
+compact format.
 
 The embedding model is a separate download (CC BY-SA 4.0). The base install does
 not bundle weights and importing `rishe` never touches the network.
