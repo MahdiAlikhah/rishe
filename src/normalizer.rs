@@ -149,7 +149,7 @@ impl Normalizer {
             let valid_before = text[..start]
                 .chars()
                 .next_back()
-                .map_or(true, |c| !c.is_alphabetic());
+                .is_none_or(|c| !c.is_alphabetic());
             let valid_after = text[end..]
                 .chars()
                 .next()
@@ -163,7 +163,7 @@ impl Normalizer {
             let valid_after = text[end..]
                 .chars()
                 .next()
-                .map_or(true, |c| !c.is_alphabetic());
+                .is_none_or(|c| !c.is_alphabetic());
             valid_before && valid_after
         }
     }

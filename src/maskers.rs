@@ -446,11 +446,11 @@ fn word_boundary(text: &str, start: usize, end: usize) -> bool {
     let before = text[..start]
         .chars()
         .next_back()
-        .map_or(true, |ch| !is_persian_letter(ch));
+        .is_none_or(|ch| !is_persian_letter(ch));
     let after = text[end..]
         .chars()
         .next()
-        .map_or(true, |ch| !is_persian_letter(ch));
+        .is_none_or(|ch| !is_persian_letter(ch));
     before && after
 }
 

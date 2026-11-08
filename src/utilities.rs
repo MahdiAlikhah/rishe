@@ -146,7 +146,7 @@ fn chunk_to_words(number: u32) -> String {
             parts.push(UNITS[remainder].to_string());
         } else {
             parts.push(TENS[remainder / 10].to_string());
-            if remainder % 10 > 0 {
+            if !remainder.is_multiple_of(10) {
                 parts.push(UNITS[remainder % 10].to_string());
             }
         }
@@ -271,11 +271,11 @@ fn word_boundary(text: &str, start: usize, end: usize) -> bool {
     let before = text[..start]
         .chars()
         .next_back()
-        .map_or(true, |ch| !is_word_char(ch));
+        .is_none_or(|ch| !is_word_char(ch));
     let after = text[end..]
         .chars()
         .next()
-        .map_or(true, |ch| !is_word_char(ch));
+        .is_none_or(|ch| !is_word_char(ch));
     before && after
 }
 

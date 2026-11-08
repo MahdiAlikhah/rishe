@@ -27,6 +27,24 @@ commands for the normalizing path:
 rishe normalize "مي كنم" | rishe tokenize    # می‌کنم  (one token)
 ```
 
+## Exit codes
+
+Both the console script and the Rust binary return the same statuses; the full
+contract, including error-message rules, lives in [errors.md](errors.md).
+
+| status | meaning |
+| --- | --- |
+| `0` | success, including `--help` and `--version` |
+| `2` | usage error: unknown command, unknown or missing option value, wrong argument count |
+| `1` | any failure after a valid command line |
+
+A valid command line that cannot do its work exits `1`: a missing or unreadable
+file, a corrupt embedding, an unparseable date, an out-of-vocabulary word, a
+pack or model that fails to load, a network or cache error, or a `serve` startup
+failure. Errors go to stderr and stdout carries only results. `serve` reports a
+bad request line in the response object (`{"ok": false, ...}`) and keeps
+running, so it exits `0` unless it fails to start.
+
 ## Date parsing
 
 `rishe date` accepts `۱۴۰۲/۰۵/۱۲`, `1402-5-12`, `12.5.1402` and
@@ -97,7 +115,8 @@ rishe embed "این کتاب خوب است" --json
 
 `similar` prints `word<TAB>score`, `similarity` prints one score, and `embed`
 prints the mean sentence vector (space-separated floats, or a JSON array with
-`--json`). Out-of-vocabulary words exit with status 2.
+`--json`). Out-of-vocabulary words exit with status 1; see
+[Exit codes](#exit-codes).
 
 `rishe convert` rewrites a word2vec text file in Rishe's compact binary format.
 The format is auto-detected on load, so both files behave identically; `f16`

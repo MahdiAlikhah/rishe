@@ -27,7 +27,7 @@ wheels and a Rust crate.
 
 - **Python** — `pip install rishe` (Python 3.9+, no Python dependencies).
   Read [README.pypi.md](README.pypi.md) or the [PyPI page](https://pypi.org/project/rishe/).
-- **Rust** — `cargo add rishe` (Rust 1.75+; model packs need 1.91), or
+- **Rust** — `cargo add rishe` (Rust 1.88+; model packs need 1.91), or
   `cargo install rishe` for the CLI. Read [README.crates.md](README.crates.md)
   or the [crates.io page](https://crates.io/crates/rishe).
 
@@ -104,6 +104,7 @@ The core, feature and model-pack benchmarks live in the docs:
 ## Docs
 
 - [API](docs/api.md) · [CLI](docs/cli.md) · [Drop-in classes](docs/compat.md)
+- [Exit codes](docs/errors.md) · [Serve protocol](docs/serve-schema.md) · [Stability](docs/STABILITY.md)
 
 ## License
 

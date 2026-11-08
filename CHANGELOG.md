@@ -7,10 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Model packs are versioned separately from the crate; their versions are recorded
 in the pack manifest and on the model repository.
 
-## [Unreleased]
+## [0.11.1] - 2026-11-08
+
+### Added
+
+- `serve` protocol 1: a `{"command":"version"}` handshake returning
+  `{"name","protocol","version"}`, and a `date` command in both the Rust binary
+  and the Python console script. The whole protocol is documented in
+  `docs/serve-schema.md`.
+- `docs/STABILITY.md`: which surfaces a version number covers, what a minor and
+  a major release may change, the deprecation rule, and what is explicitly not
+  covered (model quality, benchmark ranking, defaults, future schedules).
+- `docs/errors.md`: the error contract for both CLIs (exit codes, stdout/stderr
+  split, `serve` error envelope) and the exception types the Python API raises
+  per failure mode.
+- `.rvec` version 1 reader-forever fixture (`tests/fixtures/rvec-v1-f16.rvec`)
+  with tests that load it and reject truncated or corrupt copies, in Rust and
+  Python.
+- Hub manifest schema versioning: the manifest reader accepts `"schema": 1`,
+  treats an absent field as version 1, and refuses an unknown major version
+  (Rust and Python readers agree).
+- CI gates: MSRV 1.88 job, Python 3.9/3.12/3.13 matrix, offline `examples` smoke
+  job, rustdoc with `-D warnings`, and a feature-combination matrix; the publish
+  jobs now depend on them.
 
 ### Changed
 
+- CLI error contract, in both the Rust binary and the Python console script:
+  `0` success, `2` command line rejected by the parser, `1` failure after the
+  command line parsed (missing file, bad data, out-of-vocabulary word, network,
+  pack or model error). `-V`/`--version` prints `rishe <version>`.
+- The Python console script's `serve` now speaks the same protocol as the Rust
+  binary (version handshake, `date`, same error envelope), and `depparse`
+  without `--pack` is a runtime failure (exit 1) in both.
+- MSRV is now Rust 1.88. The locked dependency graph already requires it
+  (`ureq` → `url` → `idna` → `icu` declare `rust-version = 1.88`), so the
+  previously documented 1.75 was not buildable; `Cargo.toml`, both READMEs and
+  `STABILITY.md` now say 1.88, and CI checks it.
+- Clippy suggestions that became active with the MSRV bump are fixed in
+  `embeddings`, `maskers`, `normalizer`, `sbd` and `utilities` with no behaviour
+  change.
 - Documentation: `docs/hazm.md` is now `docs/compat.md` and presents the
   `rishe.compat` classes as a feature ("drop-in preprocessing classes") rather
   than as a migration guide. The three per-release model cards are merged into

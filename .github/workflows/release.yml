@@ -41,20 +41,89 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --locked --features models
 
+  # MSRV gate: the default feature set must build on the highest `rust-version`
+  # declared by anything in that feature graph (currently 1.88, via
+  # ureq -> url -> idna -> icu_normalizer). The `models` feature needs a much
+  # newer toolchain, so it is deliberately not part of this job.
+  #
+  # The gate also pins the toolchain: raise the pin only together with
+  # `rust-version` in Cargo.toml and the MSRV statement in the READMEs and
+  # docs/STABILITY.md.
+  msrv:
+    name: msrv (1.88.0)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.88.0
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --locked
+
+  # Every declared feature combination must compile on its own.
+  features:
+    name: features
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --locked --no-default-features
+      - run: cargo check --locked --features python
+      - run: cargo check --locked --features models
+      - run: cargo check --locked --features python,models
+
+  # Public docs must be warning-free: rustdoc warnings are errors here.
+  docs:
+    name: docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo doc --locked --no-deps --features python,models
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+
   python-tests:
     name: python tests
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.9", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python }}
       - uses: dtolnay/rust-toolchain@stable
       - run: python -m pip install maturin
       - run: maturin build --release --out dist
       - run: python -m pip install --no-deps dist/*.whl
       - run: python -m unittest discover -s python/tests -v
       - run: python scripts/benchmark_golden.py
+
+  # Examples that need neither a model pack nor the network. The list is
+  # explicit on purpose: examples/embeddings.py loads rishe-embed-fa-300-v2 from
+  # the hub cache, so it must not be picked up by a glob here.
+  examples:
+    name: examples
+    runs-on: ubuntu-latest
+    env:
+      # The examples print Persian text; pin stdout to UTF-8 instead of relying
+      # on the runner's locale.
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: python -m pip install maturin
+      - run: maturin build --release --out dist
+      - run: python -m pip install --no-deps dist/*.whl
+      - run: python examples/basic.py
+      - run: python examples/masking_keywords.py
 
   wheels:
     name: wheel (${{ matrix.target }})
@@ -101,7 +170,7 @@ jobs:
   # Tag-triggered releases. PyPI uses trusted publishing (OIDC): register this
   # repo + workflow "release.yml" as a trusted publisher on pypi.org first.
   publish-pypi:
-    needs: [rust, wheels, sdist, python-tests]
+    needs: [rust, python-tests, examples, wheels, sdist]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
@@ -116,7 +185,7 @@ jobs:
           skip-existing: true
 
   publish-crate:
-    needs: [rust, rust-models, wheels, sdist]
+    needs: [rust, rust-models, msrv, features, docs, examples, wheels, sdist]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:

@@ -14,7 +14,7 @@ Fast Persian NLP and morphology for Rust.
 cargo add rishe
 ```
 
-The default crate has no model downloads and builds on Rust 1.75. The optional
+The default crate has no model downloads and builds on Rust 1.88. The optional
 `models` feature adds POS, NER and ezafe pack inference and needs Rust 1.91.
 
 ```bash
@@ -183,6 +183,9 @@ println!("{}", embeddings.sentence_similarity("این کتاب خوب است", "
 - [Benchmarks](https://github.com/MahdiAlikhah/rishe/blob/main/docs/BENCHMARKS.md)
 - [Model-pack benchmarks](https://github.com/MahdiAlikhah/rishe/blob/main/docs/MODEL_BENCHMARKS.md)
 - [Model cards](https://github.com/MahdiAlikhah/rishe/blob/main/docs/MODEL_CARDS.md)
+- [Exit codes](https://github.com/MahdiAlikhah/rishe/blob/main/docs/errors.md)
+- [Serve protocol](https://github.com/MahdiAlikhah/rishe/blob/main/docs/serve-schema.md)
+- [Stability](https://github.com/MahdiAlikhah/rishe/blob/main/docs/STABILITY.md)
 - [GitHub repository](https://github.com/MahdiAlikhah/rishe)
 
 ## License

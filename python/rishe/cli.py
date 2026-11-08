@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from importlib.metadata import PackageNotFoundError, version as _distribution_version
 from pathlib import Path
 from typing import List, Optional
 
@@ -24,11 +25,35 @@ def _configure_stdio() -> None:
             reconfigure(encoding="utf-8")
 
 
+def _version() -> str:
+    """Return the installed package version (``unknown`` for an uninstalled tree)."""
+    try:
+        return _distribution_version("rishe")
+    except PackageNotFoundError:  # pragma: no cover - running from a bare source tree
+        return "unknown"
+
+
 def main(argv: Optional[List[str]] = None) -> int:
+    """Run the CLI and return the process exit status.
+
+    The statuses match the Rust binary; see ``docs/errors.md`` for the contract:
+    ``0`` for success (including ``--help`` and ``--version``), ``2`` for usage
+    errors that argparse rejects (unknown command, unknown or missing option
+    value, wrong argument count), and ``1`` for every failure after a valid
+    command line (missing/corrupt input, out-of-vocabulary word, pack or model
+    load failure, network/cache error, ``serve`` startup failure).
+    """
     _configure_stdio()
     parser = argparse.ArgumentParser(
         prog="rishe",
         description="Fast Persian NLP and morphology.",
+    )
+    parser.add_argument(
+        "-V",
+        "--version",
+        action="version",
+        version=f"%(prog)s {_version()}",
+        help="show the version and exit",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -62,7 +87,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         "depparse", help="Dependency parsing with a model pack."
     )
     depparse.add_argument("text", nargs="?", help="text; reads stdin when omitted")
-    depparse.add_argument("--pack", required=True, help="depparse pack directory")
+    depparse.add_argument(
+        "--pack", default=None, help="depparse pack directory (required at run time)"
+    )
     depparse.add_argument("--json", action="store_true", help="emit JSON")
 
     for name, description in (
@@ -147,25 +174,36 @@ def main(argv: Optional[List[str]] = None) -> int:
         try:
             pipe = Pipeline(**packs)
             embeddings = _load_embeddings(args.model) if args.model else None
-        except (OSError, ValueError) as error:
+        except (OSError, ValueError, RuntimeError) as error:
             print(error, file=sys.stderr)
-            return 2
-        return _serve(pipe, args.maskers, args.mask_token, embeddings)
+            return 1
+        # Serve accepts both `--maskers url,email` (the Rust binary's form, and
+        # the one documented in docs/serve-schema.md) and `--maskers url email`.
+        maskers = [
+            masker for value in args.maskers for masker in value.split(",") if masker
+        ]
+        return _serve(pipe, maskers, args.mask_token, embeddings)
 
     pipe = Pipeline()
 
     text = _read_text(args.text)
-    if args.command == "normalize":
-        result = pipe.normalize(text)
-    elif args.command == "tokenize":
-        result = pipe.tokenize(text)
-    elif args.command == "lemmatize":
-        result = pipe(text).lemmas
-    elif args.command == "mask":
-        result = pipe.mask(text, args.maskers, args.mask_token)
-    else:
-        parser.error(f"unknown command: {args.command}")
-        return 2
+    try:
+        if args.command == "normalize":
+            result = pipe.normalize(text)
+        elif args.command == "tokenize":
+            result = pipe.tokenize(text)
+        elif args.command == "lemmatize":
+            result = pipe(text).lemmas
+        elif args.command == "mask":
+            result = pipe.mask(text, args.maskers, args.mask_token)
+        else:
+            # Unreachable: the required subparser rejects unknown commands with
+            # SystemExit(2). Kept as a usage-error guard should the dispatch and
+            # the parser ever drift apart.
+            parser.error(f"unknown command: {args.command}")
+    except (OSError, ValueError, RuntimeError) as error:
+        print(error, file=sys.stderr)
+        return 1
 
     if args.json:
         print(json.dumps(result, ensure_ascii=False))
@@ -189,48 +227,58 @@ def _tag_rows(items, task):
     ]
 
 
-def _date(args) -> int:
-    text = _read_text(args.text)
+def _date_payload(text: str) -> dict:
+    """Return the Jalali/gregorian/ISO payload shared by the CLI and ``serve``.
+
+    Raises ``ValueError`` when the text holds no usable Jalali date, so both
+    entry points report the failure instead of drifting apart.
+    """
     date = parse_date(text)
     if date is None:
-        print(f"cannot parse a Jalali date from {text!r}", file=sys.stderr)
-        return 2
+        raise ValueError(f"cannot parse a Jalali date from {text!r}")
     gregorian = date.to_gregorian()
     iso = date.iso
     if iso is None or gregorian is None:
-        print(f"invalid Jalali date: {date!r}", file=sys.stderr)
-        return 2
+        raise ValueError(f"invalid Jalali date: {date!r}")
+    return {
+        "jalali": {
+            "year": date.year,
+            "month": date.month,
+            "day": date.day,
+        },
+        "gregorian": {
+            "year": gregorian[0],
+            "month": gregorian[1],
+            "day": gregorian[2],
+        },
+        "iso": iso,
+    }
+
+
+def _date(args) -> int:
+    text = _read_text(args.text)
+    try:
+        payload = _date_payload(text)
+    except ValueError as error:
+        print(error, file=sys.stderr)
+        return 1
     if args.json:
-        print(
-            json.dumps(
-                {
-                    "jalali": {
-                        "year": date.year,
-                        "month": date.month,
-                        "day": date.day,
-                    },
-                    "gregorian": {
-                        "year": gregorian[0],
-                        "month": gregorian[1],
-                        "day": gregorian[2],
-                    },
-                    "iso": iso,
-                },
-                ensure_ascii=False,
-            )
-        )
+        print(json.dumps(payload, ensure_ascii=False))
     else:
-        print(iso)
+        print(payload["iso"])
     return 0
 
 
 def _depparse(args) -> int:
+    if not args.pack:
+        print("depparse needs --pack <dir>", file=sys.stderr)
+        return 1
     try:
         pipe = Pipeline(depparse_pack=args.pack)
         items = pipe.depparse(_read_text(args.text))
-    except (OSError, ValueError) as error:
+    except (OSError, ValueError, RuntimeError) as error:
         print(error, file=sys.stderr)
-        return 2
+        return 1
 
     if args.json:
         rows = [
@@ -255,15 +303,15 @@ def _pack(args) -> int:
     task = args.command
     try:
         path = args.pack or hub.path(f"{task}-compact")
-    except FileNotFoundError as error:
+    except (OSError, ValueError) as error:
         print(error, file=sys.stderr)
-        return 2
+        return 1
     try:
         pipe = Pipeline(**{f"{task}_pack": path})
         items = getattr(pipe, task)(_read_text(args.text))
-    except (OSError, ValueError) as error:
+    except (OSError, ValueError, RuntimeError) as error:
         print(error, file=sys.stderr)
-        return 2
+        return 1
 
     if args.json:
         print(json.dumps(_tag_rows(items, task), ensure_ascii=False))
@@ -276,22 +324,26 @@ def _pack(args) -> int:
 
 def _hub(args) -> int:
     if args.hub_command == "pull":
-        if args.name in hub.PACKS:
-            print(hub.pull(args.name, force=args.force))
-        else:
-            print(hub.pull(args.name, sha256=args.sha256, force=args.force))
+        try:
+            if args.name in hub.PACKS:
+                print(hub.pull(args.name, force=args.force))
+            else:
+                print(hub.pull(args.name, sha256=args.sha256, force=args.force))
+        except (OSError, ValueError, RuntimeError) as error:
+            print(error, file=sys.stderr)
+            return 1
     elif args.hub_command == "path":
         try:
             print(hub.path(args.name))
-        except (FileNotFoundError, ValueError) as error:
+        except (OSError, ValueError) as error:
             print(error, file=sys.stderr)
-            return 2
+            return 1
     elif args.hub_command == "info":
         try:
             info = hub.info(args.name)
         except ValueError as error:
             print(error, file=sys.stderr)
-            return 2
+            return 1
         if info is None:
             print(f"{args.name}\tmissing")
         else:
@@ -299,16 +351,16 @@ def _hub(args) -> int:
     elif args.hub_command == "remove":
         try:
             removed = hub.remove(args.name)
-        except ValueError as error:
+        except (OSError, ValueError) as error:
             print(error, file=sys.stderr)
-            return 2
+            return 1
         print("removed" if removed else "not cached")
     elif args.hub_command == "verify":
         try:
             valid = hub.verify(args.name)
-        except ValueError as error:
+        except (OSError, ValueError) as error:
             print(error, file=sys.stderr)
-            return 2
+            return 1
         print("verified" if valid else "missing or corrupt")
         return 0 if valid else 1
     else:
@@ -346,7 +398,7 @@ def _embedding(args) -> int:
         vectors = _load_embeddings(args.model)
     except (OSError, ValueError) as error:
         print(error, file=sys.stderr)
-        return 2
+        return 1
 
     if args.command == "embed":
         vector = vectors.sentence_vector(_read_text(args.text))
@@ -359,11 +411,11 @@ def _embedding(args) -> int:
     if args.command == "similar":
         if args.top < 1:
             print("--top must be at least 1", file=sys.stderr)
-            return 2
+            return 1
         neighbours = vectors.most_similar(args.word, args.top)
         if not neighbours:
             print(f"{args.word!r} is not in the vocabulary", file=sys.stderr)
-            return 2
+            return 1
         if args.json:
             rows = [{"word": word, "score": score} for word, score in neighbours]
             print(json.dumps(rows, ensure_ascii=False))
@@ -378,7 +430,7 @@ def _embedding(args) -> int:
             f"out of vocabulary: {args.first!r} or {args.second!r}",
             file=sys.stderr,
         )
-        return 2
+        return 1
     if args.json:
         print(json.dumps({"score": score}))
     else:
@@ -392,20 +444,34 @@ def _serve(
     mask_token: Optional[str],
     embeddings: Optional[Embeddings] = None,
 ) -> int:
+    """Answer protocol-1 JSON lines (`docs/serve-schema.md`) until stdin ends."""
     for line in sys.stdin:
         line = line.strip()
         if not line:
             continue
         try:
-            request = json.loads(line)
+            try:
+                request = json.loads(line)
+            except ValueError as error:
+                raise ValueError(f"invalid JSON: {error}") from error
+            if not isinstance(request, dict):
+                raise ValueError("request has no command")
             command = request.get("command")
-            text = request.get("text", "")
-            if command == "normalize":
+            if not isinstance(command, str):
+                raise ValueError("request has no command")
+            text = request.get("text")
+            if not isinstance(text, str):
+                text = ""
+            if command == "version":
+                result = {"name": "rishe", "protocol": 1, "version": _version()}
+            elif command == "normalize":
                 result = pipe.normalize(text)
             elif command == "tokenize":
                 result = pipe.tokenize(text)
             elif command == "lemmatize":
                 result = pipe(text).lemmas
+            elif command == "date":
+                result = _date_payload(text)
             elif command == "mask":
                 result = pipe.mask(
                     text,
@@ -440,8 +506,12 @@ def _serve(
                         )
                     ]
                 else:
-                    first = request.get("a", text)
-                    second = request["b"]
+                    first = request.get("a")
+                    if not isinstance(first, str):
+                        first = text
+                    second = request.get("b")
+                    if not isinstance(second, str):
+                        raise ValueError("similarity needs `a` and `b`")
                     score = embeddings.similarity(first, second)
                     if score is None:
                         raise ValueError(
@@ -449,7 +519,7 @@ def _serve(
                         )
                     result = {"score": score}
             else:
-                raise ValueError(f"unknown command: {command!r}")
+                raise ValueError(f"unknown command: {command}")
             response = {"ok": True, "result": result}
         except Exception as error:  # keep the server alive on bad requests
             response = {"ok": False, "error": str(error)}

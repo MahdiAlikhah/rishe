@@ -35,10 +35,46 @@ cargo fmt --all -- --check
 cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked
 cargo test --locked --features models
+
+# MSRV: the default feature set must build on the highest `rust-version`
+# declared anywhere in that feature graph (currently 1.88).
+rustup toolchain install 1.88.0 --profile minimal
+cargo +1.88.0 check --locked
+
+# Every declared feature combination must compile on its own.
+cargo check --locked --no-default-features
+cargo check --locked --features python
+cargo check --locked --features models
+cargo check --locked --features python,models
+
+# Public docs must be warning-free.
 RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps --features python,models
+
 python -m unittest discover -s python/tests -p "test_*.py" -v
 python scripts/benchmark_golden.py
+
+# The examples CI runs are the ones that need no model pack and no network.
+PYTHONIOENCODING=utf-8 python examples/basic.py
+PYTHONIOENCODING=utf-8 python examples/masking_keywords.py
 ```
+
+CI runs the Python suite on CPython 3.9, 3.12 and 3.13, so check the oldest
+interpreter you have (`py -3.9` on Windows, `python3.9` elsewhere) before
+tagging:
+
+```bash
+py -3.9 -m unittest discover -s python/tests -p "test_*.py" -v
+```
+
+The MSRV gate is a real `cargo check --locked` on Rust 1.88: that is the highest
+`rust-version` declared by anything in the default-feature dependency graph
+today (`ureq` → `url` → `idna` → `icu_normalizer`). `Cargo.lock` is in lockfile
+format 4, which no cargo older than 1.78 can even read, so a lower `--locked`
+gate cannot work without rewriting the lock. Raising the gate means bumping
+`Cargo.toml` `rust-version` together with `README.md`, `README.crates.md` and
+`docs/STABILITY.md` in the same commit. `examples/embeddings.py` loads the
+`rishe-embed-fa-300-v2` pack from the hub cache, so it is deliberately not part
+of the offline gate — run it by hand once the cache is populated.
 
 If the optional model packs are available locally, run the gated tests too:
 
@@ -89,7 +125,10 @@ python -m unittest discover -s python/tests -p "test_*.py" -v
    git push origin vx.y.z
    ```
 
-6. **Watch CI** until every job is green:
+6. **Watch CI** until every job is green: `rust` (three OSes), `rust models`,
+   `msrv`, `features`, `docs`, `examples`, `python tests` (3.9, 3.12, 3.13), and
+   the wheel and sdist artifacts. The two publish jobs are tag-gated and run
+   after all of the gates above:
 
    ```bash
    gh run list --limit 2
@@ -147,6 +186,20 @@ When publishing or refreshing a pack:
    (card, license, manifest, checksums) can be revised without a crate release;
    payload changes require a version bump plus a code release for the pin.
 
+### Hub manifest schema
+
+The registry manifest (`manifest.json`, pinned by `PACK_MANIFEST_SHA256` in
+`src/hub.rs` and `python/rishe/hub.py`) is versioned independently of the pack
+files. Both readers treat a missing `"schema"` field as schema 1 (the only
+published version so far) and refuse another major version, or a non-integer,
+with an error that names the found and the supported version. Write
+`"schema": 1` when publishing a pack. The field is optional, so clients older
+than the reader that introduced it keep working.
+
+Bump the schema only for a breaking layout change, and in the same release update
+both readers, their schema tests and the pinned manifest hash. Adding optional
+fields inside schema 1 is backward compatible and needs no version bump.
+
 Network tip: the system proxy may throttle uploads. Bypassing it for HF
 (`NO_PROXY=huggingface.co,.huggingface.co,hf.co,.hf.co`) and disabling Xet
 (`HF_HUB_DISABLE_XET=1`) is faster and more reliable on this machine.
@@ -168,6 +221,11 @@ Network tip: the system proxy may throttle uploads. Bypassing it for HF
 - [ ] version bumped in `Cargo.toml` and `Cargo.lock`
 - [ ] `CHANGELOG.md` entry added
 - [ ] fmt, clippy, tests (default + models), Python suite, golden benchmark green
+- [ ] MSRV gate green (`cargo +1.88.0 check --locked`)
+- [ ] feature matrix green (`--no-default-features`, `python`, `models`, `python,models`)
+- [ ] `cargo doc` warning-free under `RUSTDOCFLAGS="-D warnings"`
+- [ ] offline examples (`basic.py`, `masking_keywords.py`) run
+- [ ] Python suite green on 3.9, 3.12 and 3.13
 - [ ] working tree contains only intended files
 - [ ] commit and tag authored solely by Mahdi Alikhah
 - [ ] CI green on the tag

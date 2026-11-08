@@ -70,17 +70,71 @@ struct Options {
     text: Vec<String>,
 }
 
-fn main() -> ExitCode {
-    match run() {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(error) => {
-            eprintln!("{error}");
-            ExitCode::from(2)
+/// A CLI failure, classified by the exit code it maps to.
+///
+/// The classification is the contract: the message text stays close to the
+/// underlying operation, while the variant decides between a usage error and a
+/// runtime failure. See `docs/errors.md`.
+#[derive(Debug)]
+enum CliError {
+    /// The command line was malformed; exits with status 2.
+    Usage(String),
+    /// The command line parsed but the command failed; exits with status 1.
+    Runtime(String),
+}
+
+impl CliError {
+    /// Exit status for this failure: `2` for usage, `1` for runtime.
+    fn exit_code(&self) -> u8 {
+        match self {
+            Self::Usage(_) => 2,
+            Self::Runtime(_) => 1,
         }
     }
 }
 
-fn run() -> Result<(), String> {
+impl std::fmt::Display for CliError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Usage(message) | Self::Runtime(message) => formatter.write_str(message),
+        }
+    }
+}
+
+/// A plain `String` from the engine is a runtime failure.
+impl From<String> for CliError {
+    fn from(message: String) -> Self {
+        Self::Runtime(message)
+    }
+}
+
+impl From<rishe::hub::HubError> for CliError {
+    /// Hub errors arrive already classified; keep the variant.
+    fn from(error: rishe::hub::HubError) -> Self {
+        match error {
+            rishe::hub::HubError::Usage(message) => Self::Usage(message),
+            rishe::hub::HubError::Runtime(message) => Self::Runtime(message),
+        }
+    }
+}
+
+fn main() -> ExitCode {
+    match run() {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            // A command may report its failure on stdout (`hub verify` prints
+            // `invalid`) and still exit 1: an empty message means nothing more
+            // to print.
+            let message = error.to_string();
+            if !message.is_empty() {
+                eprintln!("{message}");
+            }
+            ExitCode::from(error.exit_code())
+        }
+    }
+}
+
+fn run() -> Result<(), CliError> {
     let mut args = std::env::args().skip(1);
     let Some(command) = args.next() else {
         print!("{USAGE}");
@@ -92,14 +146,14 @@ fn run() -> Result<(), String> {
             return Ok(());
         }
         "-V" | "--version" => {
-            println!("{}", env!("CARGO_PKG_VERSION"));
+            println!("rishe {}", env!("CARGO_PKG_VERSION"));
             return Ok(());
         }
         _ => {}
     }
 
     if command == "hub" {
-        return rishe::hub::run(&args.collect::<Vec<_>>());
+        return rishe::hub::run_classified(&args.collect::<Vec<_>>()).map_err(CliError::from);
     }
     if command == "convert" {
         return convert(&args.collect::<Vec<_>>());
@@ -122,7 +176,9 @@ fn run() -> Result<(), String> {
         match arg.as_str() {
             "--json" => options.json = true,
             "--maskers" | "--stages" => {
-                let value = args.next().ok_or("--maskers needs a value")?;
+                let value = args
+                    .next()
+                    .ok_or_else(|| CliError::Usage("--maskers needs a value".to_string()))?;
                 options.maskers = value
                     .split(',')
                     .filter(|stage| !stage.is_empty())
@@ -130,23 +186,36 @@ fn run() -> Result<(), String> {
                     .collect();
             }
             "--mask-token" => {
-                options.mask_token = Some(args.next().ok_or("--mask-token needs a value")?);
+                options.mask_token =
+                    Some(args.next().ok_or_else(|| {
+                        CliError::Usage("--mask-token needs a value".to_string())
+                    })?);
             }
-            "--pack" => options.pack = Some(args.next().ok_or("--pack needs a value")?),
-            "--model" => options.model = Some(args.next().ok_or("--model needs a value")?),
+            "--pack" => {
+                options.pack = Some(
+                    args.next()
+                        .ok_or_else(|| CliError::Usage("--pack needs a value".to_string()))?,
+                );
+            }
+            "--model" => {
+                options.model = Some(
+                    args.next()
+                        .ok_or_else(|| CliError::Usage("--model needs a value".to_string()))?,
+                );
+            }
             "--top" => {
                 options.top = args
                     .next()
-                    .ok_or("--top needs a value")?
+                    .ok_or_else(|| CliError::Usage("--top needs a value".to_string()))?
                     .parse::<usize>()
-                    .map_err(|_| "--top must be a positive integer")?;
+                    .map_err(|_| CliError::Usage("--top must be a positive integer".to_string()))?;
             }
             "-h" | "--help" => {
                 print!("{USAGE}");
                 return Ok(());
             }
             flag if flag.starts_with('-') && flag != "-" => {
-                return Err(format!("unknown option: {flag}"));
+                return Err(CliError::Usage(format!("unknown option: {flag}")));
             }
             text => options.text.push(text.to_owned()),
         }
@@ -179,12 +248,31 @@ fn run() -> Result<(), String> {
         "pos" | "ner" | "ezafe" | "depparse" => {
             pack_tag(&command, options.pack.as_deref(), &text, options.json)?
         }
-        other => return Err(format!("unknown command: {other}\n\n{USAGE}")),
+        other => {
+            return Err(CliError::Usage(format!(
+                "unknown command: {other}\n\n{USAGE}"
+            )))
+        }
     }
     Ok(())
 }
 
-fn embedding_command(command: &str, options: &Options) -> Result<(), String> {
+fn embedding_command(command: &str, options: &Options) -> Result<(), CliError> {
+    // The positional word count is part of the command's grammar: reject a
+    // wrong count before touching the model file, so it stays a usage error.
+    match command {
+        "similar" if options.text.len() != 1 => {
+            return Err(CliError::Usage(
+                "similar needs exactly one word".to_string(),
+            ));
+        }
+        "similarity" if options.text.len() != 2 => {
+            return Err(CliError::Usage(
+                "similarity needs exactly two words".to_string(),
+            ));
+        }
+        _ => {}
+    }
     let embeddings = load_embeddings(options.model.as_deref())?;
     match command {
         "embed" => {
@@ -200,16 +288,15 @@ fn embedding_command(command: &str, options: &Options) -> Result<(), String> {
             }
         }
         "similar" => {
-            if options.text.len() != 1 {
-                return Err("similar needs exactly one word".to_string());
-            }
             if options.top == 0 {
-                return Err("--top must be at least 1".to_string());
+                return Err(CliError::Runtime("--top must be at least 1".to_string()));
             }
             let word = options.text[0].as_str();
             let neighbours = embeddings.most_similar(word, options.top);
             if neighbours.is_empty() {
-                return Err(format!("{word:?} is not in the vocabulary"));
+                return Err(CliError::Runtime(format!(
+                    "{word:?} is not in the vocabulary"
+                )));
             }
             if options.json {
                 let rows: Vec<String> = neighbours
@@ -226,9 +313,6 @@ fn embedding_command(command: &str, options: &Options) -> Result<(), String> {
             }
         }
         "similarity" => {
-            if options.text.len() != 2 {
-                return Err("similarity needs exactly two words".to_string());
-            }
             let first = options.text[0].as_str();
             let second = options.text[1].as_str();
             let score = embeddings.similarity(first, second).ok_or_else(|| {
@@ -237,7 +321,7 @@ fn embedding_command(command: &str, options: &Options) -> Result<(), String> {
                 } else {
                     first
                 };
-                format!("{missing:?} is not in the vocabulary")
+                CliError::Runtime(format!("{missing:?} is not in the vocabulary"))
             })?;
             if options.json {
                 println!("{{\"score\":{score}}}");
@@ -245,13 +329,15 @@ fn embedding_command(command: &str, options: &Options) -> Result<(), String> {
                 println!("{score:.6}");
             }
         }
-        other => return Err(format!("unknown command: {other}")),
+        other => {
+            return Err(CliError::Usage(format!("unknown command: {other}")));
+        }
     }
     Ok(())
 }
 
 /// `rishe convert <input> <output.rvec> [--dtype f16|f32]`
-fn convert(args: &[String]) -> Result<(), String> {
+fn convert(args: &[String]) -> Result<(), CliError> {
     let mut dtype = DType::F16;
     let mut paths: Vec<&str> = Vec::new();
     let mut index = 0;
@@ -259,26 +345,33 @@ fn convert(args: &[String]) -> Result<(), String> {
         match args[index].as_str() {
             "--dtype" => {
                 index += 1;
-                let value = args.get(index).ok_or("--dtype needs a value")?;
-                dtype = DType::parse(value)
-                    .ok_or_else(|| format!("unknown dtype {value:?}; use f16 or f32"))?;
+                let value = args
+                    .get(index)
+                    .ok_or_else(|| CliError::Usage("--dtype needs a value".to_string()))?;
+                dtype = DType::parse(value).ok_or_else(|| {
+                    CliError::Usage(format!("unknown dtype {value:?}; use f16 or f32"))
+                })?;
             }
             "-h" | "--help" => {
                 print!("{USAGE}");
                 return Ok(());
             }
             other if other.starts_with('-') => {
-                return Err(format!("unknown convert option: {other}"));
+                return Err(CliError::Usage(format!("unknown convert option: {other}")));
             }
             other => paths.push(other),
         }
         index += 1;
     }
     let (Some(input), Some(output)) = (paths.first(), paths.get(1)) else {
-        return Err("convert needs an input and an output path".to_string());
+        return Err(CliError::Usage(
+            "convert needs an input and an output path".to_string(),
+        ));
     };
     if paths.len() > 2 {
-        return Err("convert takes exactly one input and one output path".to_string());
+        return Err(CliError::Usage(
+            "convert takes exactly one input and one output path".to_string(),
+        ));
     }
 
     let embeddings = Embeddings::load(input)?;
@@ -314,7 +407,7 @@ fn load_embeddings(model: Option<&str>) -> Result<Embeddings, String> {
     Embeddings::load(path)
 }
 
-fn serve(args: &[String]) -> Result<(), String> {
+fn serve(args: &[String]) -> Result<(), CliError> {
     let mut maskers = DEFAULT_MASKERS
         .iter()
         .map(|stage| stage.to_string())
@@ -332,7 +425,7 @@ fn serve(args: &[String]) -> Result<(), String> {
                 index += 1;
                 maskers = args
                     .get(index)
-                    .ok_or("--maskers needs a value")?
+                    .ok_or_else(|| CliError::Usage("--maskers needs a value".to_string()))?
                     .split(',')
                     .filter(|stage| !stage.is_empty())
                     .map(str::to_owned)
@@ -340,37 +433,61 @@ fn serve(args: &[String]) -> Result<(), String> {
             }
             "--mask-token" => {
                 index += 1;
-                mask_token = Some(args.get(index).ok_or("--mask-token needs a value")?.clone());
+                mask_token = Some(
+                    args.get(index)
+                        .ok_or_else(|| CliError::Usage("--mask-token needs a value".to_string()))?
+                        .clone(),
+                );
             }
             "--pos-pack" => {
                 index += 1;
-                pos_pack = Some(args.get(index).ok_or("--pos-pack needs a value")?.clone());
+                pos_pack = Some(
+                    args.get(index)
+                        .ok_or_else(|| CliError::Usage("--pos-pack needs a value".to_string()))?
+                        .clone(),
+                );
             }
             "--ner-pack" => {
                 index += 1;
-                ner_pack = Some(args.get(index).ok_or("--ner-pack needs a value")?.clone());
+                ner_pack = Some(
+                    args.get(index)
+                        .ok_or_else(|| CliError::Usage("--ner-pack needs a value".to_string()))?
+                        .clone(),
+                );
             }
             "--ezafe-pack" => {
                 index += 1;
-                ezafe_pack = Some(args.get(index).ok_or("--ezafe-pack needs a value")?.clone());
+                ezafe_pack = Some(
+                    args.get(index)
+                        .ok_or_else(|| CliError::Usage("--ezafe-pack needs a value".to_string()))?
+                        .clone(),
+                );
             }
             "--depparse-pack" => {
                 index += 1;
                 depparse_pack = Some(
                     args.get(index)
-                        .ok_or("--depparse-pack needs a value")?
+                        .ok_or_else(|| {
+                            CliError::Usage("--depparse-pack needs a value".to_string())
+                        })?
                         .clone(),
                 );
             }
             "--model" => {
                 index += 1;
-                model = Some(args.get(index).ok_or("--model needs a value")?.clone());
+                model = Some(
+                    args.get(index)
+                        .ok_or_else(|| CliError::Usage("--model needs a value".to_string()))?
+                        .clone(),
+                );
             }
             "-h" | "--help" => {
                 print!("{USAGE}");
                 return Ok(());
             }
-            other => return Err(format!("unknown serve option: {other}")),
+            other => {
+                return Err(CliError::Usage(format!("unknown serve option: {other}")));
+            }
         }
         index += 1;
     }
@@ -390,7 +507,9 @@ fn serve(args: &[String]) -> Result<(), String> {
     }
     #[cfg(not(feature = "models"))]
     if pos_pack.is_some() || ner_pack.is_some() || ezafe_pack.is_some() || depparse_pack.is_some() {
-        return Err("model packs require the `models` feature".to_string());
+        return Err(CliError::Runtime(
+            "model packs require the `models` feature".to_string(),
+        ));
     }
 
     let embeddings = match model.as_deref() {
@@ -444,6 +563,11 @@ fn handle_request(
             &rishe::word_tokenizer::WordTokenizerOptions::default()
         )),
         "lemmatize" => json!(pipe.process(text).lemmas),
+        "version" => json!({
+            "name": "rishe",
+            "version": env!("CARGO_PKG_VERSION"),
+            "protocol": 1,
+        }),
         "mask" => {
             let maskers = request
                 .get("maskers")
@@ -613,8 +737,8 @@ fn emit_date(text: &str, json: bool) -> Result<(), String> {
 }
 
 #[cfg(feature = "models")]
-fn pack_tag(task: &str, pack: Option<&str>, text: &str, json: bool) -> Result<(), String> {
-    let path = pack.ok_or_else(|| format!("{task} needs --pack <dir>"))?;
+fn pack_tag(task: &str, pack: Option<&str>, text: &str, json: bool) -> Result<(), CliError> {
+    let path = pack.ok_or_else(|| CliError::Runtime(format!("{task} needs --pack <dir>")))?;
     let mut pipe = Pipeline::create(true, true, true);
     pipe.load_pack(task, path)?;
     match task {
@@ -697,18 +821,20 @@ fn pack_tag(task: &str, pack: Option<&str>, text: &str, json: bool) -> Result<()
                 }
             }
         }
-        other => return Err(format!("unknown pack task: {other}")),
+        other => {
+            return Err(CliError::Runtime(format!("unknown pack task: {other}")));
+        }
     }
     Ok(())
 }
 
 #[cfg(not(feature = "models"))]
-fn pack_tag(_task: &str, _pack: Option<&str>, _text: &str, _json: bool) -> Result<(), String> {
-    Err(
+fn pack_tag(_task: &str, _pack: Option<&str>, _text: &str, _json: bool) -> Result<(), CliError> {
+    Err(CliError::Runtime(
         "this rishe binary was built without the `models` feature; install with \
          `cargo install rishe --features models`"
             .to_owned(),
-    )
+    ))
 }
 
 fn json_string(value: &str) -> String {

@@ -397,13 +397,17 @@ impl Embeddings {
             match dtype {
                 DType::F32 => vectors.extend(
                     chunk
-                        .chunks_exact(4)
-                        .map(|raw| f32::from_le_bytes([raw[0], raw[1], raw[2], raw[3]])),
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
+                        .map(|&raw| f32::from_le_bytes(raw)),
                 ),
                 DType::F16 => vectors.extend(
                     chunk
-                        .chunks_exact(2)
-                        .map(|raw| f16_to_f32(u16::from_le_bytes([raw[0], raw[1]]))),
+                        .as_chunks::<2>()
+                        .0
+                        .iter()
+                        .map(|&raw| f16_to_f32(u16::from_le_bytes(raw))),
                 ),
             }
             remaining -= take;
@@ -712,6 +716,75 @@ mod tests {
         std::fs::remove_file(&text).ok();
         std::fs::remove_file(&binary).ok();
         std::fs::remove_file(&half_path).ok();
+    }
+
+    /// DO NOT EDIT this fixture: it pins `.rvec` version 1; the writer may
+    /// evolve, this reader must always load it.
+    const RVEC_V1_FIXTURE: &str = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/rvec-v1-f16.rvec"
+    );
+
+    #[test]
+    fn rvec_v1_fixture_loads_forever() {
+        let embeddings = Embeddings::load(RVEC_V1_FIXTURE).expect("load pinned .rvec v1 fixture");
+
+        assert_eq!(embeddings.dim(), 3);
+        assert_eq!(embeddings.len(), 5);
+        assert_eq!(embeddings.dtype(), DType::F16);
+
+        // Vocabulary order is the order stored in the file, so this pins the
+        // u16-length-prefixed UTF-8 word encoding.
+        let expected_words = ["کتاب", "خانه", "مدرسه", "سلام", "دنیا"];
+        let words: Vec<&str> = embeddings.words.iter().map(|word| &**word).collect();
+        assert_eq!(words, expected_words.to_vec());
+
+        // Rows are pinned to the f16 encoding of the original f32 values.
+        let expected_rows: [[f32; 3]; 5] = [
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.6, 0.8, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.0, 0.0, 0.5],
+        ];
+        for (word, expected) in expected_words.iter().zip(expected_rows) {
+            let row = embeddings.vector(word).expect("fixture word is present");
+            assert_eq!(row.len(), 3);
+            for (actual, expected) in row.iter().zip(expected) {
+                assert!(
+                    (actual - expected).abs() <= 1e-3 * expected.abs().max(1.0),
+                    "{word}: expected {expected}, decoded {actual}"
+                );
+            }
+        }
+        assert!(embeddings.contains("مدرسه"));
+        assert!(embeddings.vector("ناموجود").is_none());
+    }
+
+    #[test]
+    fn rvec_v1_fixture_corruption_is_rejected() {
+        let fixture = std::fs::read(RVEC_V1_FIXTURE).expect("read pinned .rvec v1 fixture");
+        assert_eq!(&fixture[..4], MAGIC);
+        let path = scratch("rvec_v1_corrupt.rvec");
+        let load_bytes = |bytes: &[u8]| {
+            std::fs::write(&path, bytes).unwrap();
+            Embeddings::load(&path)
+        };
+
+        // Truncated header, vocabulary and payload must return Err, never panic.
+        assert!(load_bytes(&fixture[..10]).is_err());
+        assert!(load_bytes(&fixture[..20]).is_err());
+        assert!(load_bytes(&fixture[..fixture.len() - 1]).is_err());
+
+        let mut wrong_version = fixture.clone();
+        wrong_version[4] = 2;
+        assert!(load_bytes(&wrong_version).is_err());
+
+        let mut wrong_magic = fixture.clone();
+        wrong_magic[0] = b'X';
+        assert!(load_bytes(&wrong_magic).is_err());
+
+        std::fs::remove_file(&path).ok();
     }
 
     #[test]

@@ -93,6 +93,59 @@ class PackCacheTest(unittest.TestCase):
                     self.assertFalse(hub.verify("pos-compact"))
 
 
+class ManifestSchemaTest(unittest.TestCase):
+    def test_absent_schema_means_one(self):
+        self.assertEqual(hub._manifest_schema({}), 1)
+        self.assertEqual(hub._manifest_schema({"tasks": {}}), 1)
+
+    def test_schema_one_is_accepted(self):
+        self.assertEqual(hub._manifest_schema({"schema": 1}), hub.MANIFEST_SCHEMA)
+
+    def test_newer_schema_is_refused(self):
+        with self.assertRaises(ValueError) as caught:
+            hub._manifest_schema({"schema": 2})
+        message = str(caught.exception)
+        self.assertIn("schema 2", message)
+        self.assertIn("reads schema 1", message)
+
+    def test_non_integer_schema_is_refused(self):
+        for schema in ("1", 1.5, True, None):
+            with self.subTest(schema=schema), self.assertRaises(ValueError):
+                hub._manifest_schema({"schema": schema})
+
+    def test_verify_refuses_a_newer_manifest_schema(self):
+        with tempfile.TemporaryDirectory() as root:
+            with patch.dict(os.environ, {"RISHE_HOME": root}):
+                target = Path(root) / "models" / "pos-compact"
+                target.mkdir(parents=True)
+                for name in hub.PACK_REQUIRED:
+                    (target / name).write_bytes(b"x")
+                manifest_path = Path(root) / "models" / "rishe-models-manifest.json"
+                manifest_path.write_text(
+                    json.dumps({"schema": 2, "tasks": {}}), encoding="utf-8"
+                )
+                digest = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+                with patch.object(hub, "PACK_MANIFEST_SHA256", digest):
+                    with self.assertRaisesRegex(ValueError, "schema 2"):
+                        hub.verify("pos-compact")
+
+    def test_pull_pack_refuses_a_newer_manifest_schema(self):
+        with tempfile.TemporaryDirectory() as root:
+            with patch.dict(os.environ, {"RISHE_HOME": root}):
+
+                def fake_download(url, target, sha256, *, force=False):
+                    path = Path(target)
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text(
+                        json.dumps({"schema": 2, "tasks": {}}), encoding="utf-8"
+                    )
+                    return path
+
+                with patch.object(hub, "_download", side_effect=fake_download):
+                    with self.assertRaisesRegex(ValueError, "schema 2"):
+                        hub._pull_pack("pos-compact")
+
+
 @unittest.skipUnless(
     DEPPARSE_PACK is not None and DEPPARSE_PACK.is_dir(),
     "RISHE_TEST_DEPPARSE_PACK is not set",

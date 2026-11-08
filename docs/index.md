@@ -26,3 +26,7 @@ list, the [CLI](cli.md) for command-line usage, the [API](api.md) reference, the
 [drop-in classes](compat.md) for the classic class API, and the
 [benchmarks](BENCHMARKS.md) for comparisons with Hazm and Shekar. Model cards for
 every published pack are in [MODEL_CARDS.md](MODEL_CARDS.md).
+
+The error and exit-code contract is in [errors.md](errors.md), the `serve`
+JSON-lines protocol in [serve-schema.md](serve-schema.md), and what the version
+number means in [STABILITY.md](STABILITY.md).

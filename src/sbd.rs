@@ -67,7 +67,7 @@ impl SentenceSplitter {
 
                 if chars
                     .peek()
-                    .map_or(true, |&(_, next_ch)| next_ch.is_whitespace())
+                    .is_none_or(|&(_, next_ch)| next_ch.is_whitespace())
                 {
                     let slice = text[sent_start..end_punct_idx].trim();
                     if !slice.is_empty() {

@@ -75,6 +75,32 @@ PACK_BASE = "https://huggingface.co/MahdiAlikhah/rishe-models/resolve/main"
 PACK_MANIFEST_SHA256 = "60885efc0680a47a3f7efbd3bc699c19766dc33c6b072b44c31086811d43f12e"
 PACK_REQUIRED = ("model.onnx", "tokenizer.json", "labels.json")
 
+# The registry manifest (`manifest.json`) is versioned independently of the pack
+# files. A missing "schema" field means MANIFEST_SCHEMA (the only version
+# published so far); `_manifest_schema` refuses any other major version so an
+# older client never misreads a newer index. Adding optional fields does not
+# bump the version; a breaking layout change does, and both readers are updated
+# together.
+MANIFEST_SCHEMA = 1
+
+
+def _manifest_schema(manifest: dict) -> int:
+    """Validate the manifest ``schema`` field and return the version.
+
+    A missing field means :data:`MANIFEST_SCHEMA`. Only that version is
+    accepted; any other integer or a non-integer value is refused with a
+    message naming the found value and the supported version.
+    """
+    if "schema" not in manifest:
+        return MANIFEST_SCHEMA
+    value = manifest["schema"]
+    if isinstance(value, bool) or not isinstance(value, int) or value != MANIFEST_SCHEMA:
+        raise ValueError(
+            f"unsupported manifest schema {value!r}; "
+            f"this build reads schema {MANIFEST_SCHEMA}"
+        )
+    return MANIFEST_SCHEMA
+
 
 def cache_dir() -> Path:
     """Directory where downloaded models live."""
@@ -294,6 +320,7 @@ def verify(name: str) -> bool:
         if _sha256(manifest_path) != PACK_MANIFEST_SHA256:
             return False
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        _manifest_schema(manifest)
         files = manifest.get("tasks", {}).get(PACKS[name], {}).get("files", {})
         for filename, metadata in files.items():
             path = target / Path(filename).name
@@ -321,6 +348,7 @@ def _pull_pack(name: str, *, force: bool = False) -> Path:
         force=True,
     )
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    _manifest_schema(manifest)
     files = manifest.get("tasks", {}).get(task, {}).get("files", {})
     if not files:
         raise ValueError(f"manifest has no files for task {task!r}")

@@ -21,6 +21,12 @@ EMBEDDINGS_PACK = (
     else None
 )
 
+# DO NOT EDIT this fixture: it pins .rvec version 1; the writer may evolve,
+# this reader must always load it.
+RVEC_V1_FIXTURE = (
+    Path(__file__).resolve().parent.parent.parent / "tests" / "fixtures" / "rvec-v1-f16.rvec"
+)
+
 
 class EmbeddingsTest(unittest.TestCase):
     @classmethod
@@ -75,6 +81,29 @@ class EmbeddingsTest(unittest.TestCase):
                 Embeddings(path)
         finally:
             os.unlink(path)
+
+    def test_rvec_v1_fixture_loads_forever(self):
+        self.assertTrue(RVEC_V1_FIXTURE.is_file(), RVEC_V1_FIXTURE)
+        embeddings = Embeddings(str(RVEC_V1_FIXTURE))
+        self.assertEqual(embeddings.dim, 3)
+        self.assertEqual(len(embeddings), 5)
+        self.assertEqual(embeddings.dtype, "f16")
+        # Values that are exact in f16 must come back bit-for-bit.
+        self.assertEqual(embeddings.vector("کتاب"), [1.0, 0.0, 0.0])
+        # Values rounded to f16 must stay within half-precision tolerance.
+        expected = {
+            "کتاب": [1.0, 0.0, 0.0],
+            "خانه": [0.0, 1.0, 0.0],
+            "مدرسه": [0.6, 0.8, 0.0],
+            "سلام": [0.0, 0.0, 1.0],
+            "دنیا": [0.0, 0.0, 0.5],
+        }
+        for word, row in expected.items():
+            vector = embeddings.vector(word)
+            self.assertIsNotNone(vector, word)
+            for actual, wanted in zip(vector, row):
+                self.assertAlmostEqual(actual, wanted, delta=1e-3)
+        self.assertIsNone(embeddings.vector("ناموجود"))
 
 
 class HubTest(unittest.TestCase):

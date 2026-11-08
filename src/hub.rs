@@ -37,39 +37,94 @@ const PACK_MANIFEST_SHA256: &str =
     "60885efc0680a47a3f7efbd3bc699c19766dc33c6b072b44c31086811d43f12e";
 const PACK_REQUIRED: [&str; 3] = ["model.onnx", "tokenizer.json", "labels.json"];
 
+/// Major schema version of the Hub registry manifest read by this build.
+///
+/// The shared `manifest.json` index is versioned independently of the pack
+/// files. A missing `"schema"` field means [`MANIFEST_SCHEMA`] — the only
+/// version published so far — and [`manifest_schema`] refuses every other
+/// version or a non-integer value, so an older client never misreads a newer
+/// index. Adding optional fields does not bump the version; a breaking layout
+/// change does, and both readers are updated together.
+const MANIFEST_SCHEMA: u64 = 1;
+
+/// Run a `rishe hub` invocation, returning the error message on failure.
+///
+/// This keeps the original public signature. Use [`run_classified`] when the
+/// caller needs to tell a malformed invocation from a failed operation; the
+/// message text is identical. An empty message means the failure was already
+/// reported on stdout by `hub verify` printing `invalid`.
 pub fn run(args: &[String]) -> Result<(), String> {
-    let Some(command) = args.first().map(String::as_str) else {
-        return Err("usage: rishe hub <pull|list|info|path|remove|verify> ...".to_string());
-    };
-    match command {
-        "list" => list(),
-        "info" => info(
-            args.get(1)
-                .map(String::as_str)
-                .ok_or("hub info needs a name")?,
-        ),
-        "path" => path(
-            args.get(1)
-                .map(String::as_str)
-                .ok_or("hub path needs a name")?,
-        ),
-        "remove" => remove(
-            args.get(1)
-                .map(String::as_str)
-                .ok_or("hub remove needs a name")?,
-        ),
-        "verify" => verify(
-            args.get(1)
-                .map(String::as_str)
-                .ok_or("hub verify needs a name")?,
-        ),
-        "pull" => pull(&args[1..]),
-        other => Err(format!("unknown hub command: {other}")),
+    run_classified(args).map_err(|error| error.to_string())
+}
+
+/// A Hub failure, classified by the exit code the CLI should use.
+///
+/// Argument and option errors are [`HubError::Usage`]; failures that happen
+/// once the arguments are understood — a name that does not resolve, a cache
+/// miss, a download, a checksum or an I/O error — are [`HubError::Runtime`].
+/// The message text is the same whichever variant carries it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HubError {
+    /// The Hub invocation was malformed; the CLI exits with status 2.
+    Usage(String),
+    /// The invocation was valid but the operation failed; the CLI exits with
+    /// status 1.
+    Runtime(String),
+}
+
+impl std::fmt::Display for HubError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Usage(message) | Self::Runtime(message) => formatter.write_str(message),
+        }
     }
 }
 
-fn pull(args: &[String]) -> Result<(), String> {
-    let name = args.first().ok_or("hub pull needs a name")?;
+/// Run a `rishe hub` invocation, keeping the error classification.
+///
+/// [`run`] is the compatibility wrapper that flattens the result to a `String`;
+/// this function is what the CLI uses so that usage errors and runtime failures
+/// can exit with different statuses. See `docs/errors.md`.
+pub fn run_classified(args: &[String]) -> Result<(), HubError> {
+    let Some(command) = args.first().map(String::as_str) else {
+        return Err(HubError::Usage(
+            "usage: rishe hub <pull|list|info|path|remove|verify> ...".to_string(),
+        ));
+    };
+    match command {
+        "list" => list().map_err(HubError::Runtime),
+        "info" => info(require_name(args, "hub info needs a name")?).map_err(HubError::Runtime),
+        "path" => path(require_name(args, "hub path needs a name")?).map_err(HubError::Runtime),
+        "remove" => {
+            remove(require_name(args, "hub remove needs a name")?).map_err(HubError::Runtime)
+        }
+        "verify" => {
+            let name = require_name(args, "hub verify needs a name")?;
+            let valid = verify(name).map_err(HubError::Runtime)?;
+            if valid {
+                Ok(())
+            } else {
+                // `invalid` is already on stdout; exit 1 without a second line.
+                Err(HubError::Runtime(String::new()))
+            }
+        }
+        "pull" => pull(&args[1..]),
+        other => Err(HubError::Usage(format!("unknown hub command: {other}"))),
+    }
+}
+
+/// The name argument that every `hub` subcommand except `list` and `pull`
+/// takes as its second word.
+fn require_name<'a>(args: &'a [String], message: &str) -> Result<&'a str, HubError> {
+    args.get(1)
+        .map(String::as_str)
+        .ok_or_else(|| HubError::Usage(message.to_string()))
+}
+
+fn pull(args: &[String]) -> Result<(), HubError> {
+    let name = args
+        .first()
+        .ok_or_else(|| HubError::Usage("hub pull needs a name".to_string()))?;
     let mut sha256 = None;
     let mut force = false;
     let mut index = 1;
@@ -77,16 +132,22 @@ fn pull(args: &[String]) -> Result<(), String> {
         match args[index].as_str() {
             "--sha256" => {
                 index += 1;
-                sha256 = Some(args.get(index).ok_or("--sha256 needs a value")?.clone());
+                sha256 = Some(
+                    args.get(index)
+                        .ok_or_else(|| HubError::Usage("--sha256 needs a value".to_string()))?
+                        .clone(),
+                );
             }
             "--force" => force = true,
-            other => return Err(format!("unknown hub pull option: {other}")),
+            other => {
+                return Err(HubError::Usage(format!("unknown hub pull option: {other}")));
+            }
         }
         index += 1;
     }
 
     if let Some((_, task)) = PACKS.iter().find(|(pack, _)| pack == name) {
-        let path = pull_pack(name, task, force)?;
+        let path = pull_pack(name, task, force).map_err(HubError::Runtime)?;
         println!("{}", path.display());
         return Ok(());
     }
@@ -101,22 +162,26 @@ fn pull(args: &[String]) -> Result<(), String> {
         )
     } else {
         let sha = sha256.ok_or_else(|| {
-            format!(
+            HubError::Runtime(format!(
                 "unknown model {name:?}; known models: {}. Pass --sha256 for a custom URL.",
                 model_names()
-            )
+            ))
         })?;
         if sha.len() != 64 {
-            return Err("--sha256 must be a 64-character hex digest".to_string());
+            return Err(HubError::Runtime(
+                "--sha256 must be a 64-character hex digest".to_string(),
+            ));
         }
         let filename = name.rsplit('/').next().unwrap_or(name);
         if filename.is_empty() || filename == "." || filename == ".." {
-            return Err("cannot infer a filename from the URL".to_string());
+            return Err(HubError::Runtime(
+                "cannot infer a filename from the URL".to_string(),
+            ));
         }
         (name.clone(), sha.to_ascii_lowercase(), filename.to_string())
     };
-    let target = cache_dir()?.join(&filename);
-    download(&url, &target, &expected, force)?;
+    let target = cache_dir().map_err(HubError::Runtime)?.join(&filename);
+    download(&url, &target, &expected, force).map_err(HubError::Runtime)?;
     println!("{}", target.display());
     Ok(())
 }
@@ -197,7 +262,12 @@ fn remove(name: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn verify(name: &str) -> Result<(), String> {
+/// Verify a cached model or pack, printing `verified` or `invalid`.
+///
+/// Returns whether the cached files matched. The caller turns `false` into a
+/// runtime exit status: a known name whose files are missing or corrupt is a
+/// failed operation, not a malformed invocation.
+fn verify(name: &str) -> Result<bool, String> {
     let valid = if let Some((_, _, sha, filename)) = MODELS.iter().find(|item| item.0 == name) {
         let path = cache_dir()?.join(filename);
         path.is_file() && sha256_file(&path)? == *sha
@@ -207,7 +277,7 @@ fn verify(name: &str) -> Result<(), String> {
         return Err(format!("unknown model or pack {name:?}"));
     };
     println!("{}", if valid { "verified" } else { "invalid" });
-    Ok(())
+    Ok(valid)
 }
 
 fn pull_pack(name: &str, task: &str, force: bool) -> Result<PathBuf, String> {
@@ -247,6 +317,31 @@ fn pull_pack(name: &str, task: &str, force: bool) -> Result<PathBuf, String> {
     Ok(target)
 }
 
+/// Validate the `schema` field of a parsed manifest and return the version.
+///
+/// Absent means [`MANIFEST_SCHEMA`]. Only [`MANIFEST_SCHEMA`] is accepted; any
+/// other integer or a non-integer value is refused with a message naming the
+/// found value and the supported version.
+fn manifest_schema(manifest: &Value) -> Result<u64, String> {
+    let Some(field) = manifest.get("schema") else {
+        return Ok(MANIFEST_SCHEMA);
+    };
+    if field.as_u64() == Some(MANIFEST_SCHEMA) {
+        return Ok(MANIFEST_SCHEMA);
+    }
+    Err(format!(
+        "unsupported manifest schema {field}, this build reads schema {MANIFEST_SCHEMA}"
+    ))
+}
+
+/// Parse manifest text and validate the schema version it declares.
+fn parse_manifest(text: &str) -> Result<Value, String> {
+    let manifest: Value =
+        serde_json::from_str(text).map_err(|error| format!("invalid manifest: {error}"))?;
+    manifest_schema(&manifest)?;
+    Ok(manifest)
+}
+
 fn load_manifest() -> Result<Value, String> {
     let path = cache_dir()?.join("rishe-models-manifest.json");
     download(
@@ -256,7 +351,7 @@ fn load_manifest() -> Result<Value, String> {
         true,
     )?;
     let text = fs::read_to_string(&path).map_err(|error| error.to_string())?;
-    serde_json::from_str(&text).map_err(|error| format!("invalid manifest: {error}"))
+    parse_manifest(&text)
 }
 
 fn verify_pack(name: &str, task: &str) -> Result<bool, String> {
@@ -269,8 +364,7 @@ fn verify_pack(name: &str, task: &str) -> Result<bool, String> {
         return Ok(false);
     }
     let text = fs::read_to_string(&manifest_path).map_err(|error| error.to_string())?;
-    let manifest: Value =
-        serde_json::from_str(&text).map_err(|error| format!("invalid manifest: {error}"))?;
+    let manifest = parse_manifest(&text)?;
     let Some(files) = manifest
         .get("tasks")
         .and_then(|tasks| tasks.get(task))
@@ -418,4 +512,51 @@ fn model_names() -> String {
         .map(|(name, _, _, _)| *name)
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn manifest(text: &str) -> Value {
+        serde_json::from_str(text).expect("test manifest is valid JSON")
+    }
+
+    #[test]
+    fn absent_schema_means_version_one() {
+        assert_eq!(manifest_schema(&manifest(r#"{"tasks":{}}"#)), Ok(1));
+    }
+
+    #[test]
+    fn schema_one_is_accepted() {
+        assert_eq!(manifest_schema(&manifest(r#"{"schema":1}"#)), Ok(1));
+    }
+
+    #[test]
+    fn newer_schema_is_refused() {
+        let error = manifest_schema(&manifest(r#"{"schema":2}"#)).unwrap_err();
+        assert!(error.contains("schema 2"), "{error}");
+        assert!(error.contains("reads schema 1"), "{error}");
+    }
+
+    #[test]
+    fn non_integer_schema_is_refused() {
+        for text in [
+            r#"{"schema":"1"}"#,
+            r#"{"schema":1.5}"#,
+            r#"{"schema":true}"#,
+            r#"{"schema":null}"#,
+        ] {
+            let error = manifest_schema(&manifest(text)).unwrap_err();
+            assert!(error.contains("reads schema 1"), "{text}: {error}");
+        }
+    }
+
+    #[test]
+    fn parse_manifest_applies_the_schema_check() {
+        assert!(parse_manifest(r#"{"tasks":{}}"#).is_ok());
+        assert!(parse_manifest(r#"{"schema":1}"#).is_ok());
+        assert!(parse_manifest(r#"{"schema":2}"#).is_err());
+        assert!(parse_manifest("not json").is_err());
+    }
 }
