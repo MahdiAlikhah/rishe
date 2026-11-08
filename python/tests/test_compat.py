@@ -11,7 +11,7 @@ from rishe import (
 from rishe.compat import sent_tokenize, word_tokenize
 
 
-class HazmCompatTest(unittest.TestCase):
+class CompatTest(unittest.TestCase):
     def test_normalizer(self):
         self.assertEqual(Normalizer().normalize("مي كنم"), "می‌کنم")
         self.assertEqual(Normalizer(correct_spacing=True).normalize("سلام   دنیا"), "سلام دنیا")
@@ -20,7 +20,7 @@ class HazmCompatTest(unittest.TestCase):
             "کجا نشان",
         )
 
-    def test_word_tokenizer_matches_hazm_defaults(self):
+    def test_word_tokenizer_joins_verb_parts(self):
         self.assertEqual(WordTokenizer().tokenize("رفته است"), ["رفته_است"])
         self.assertEqual(
             WordTokenizer(join_verb_parts=False).tokenize("رفته است"),
@@ -32,7 +32,7 @@ class HazmCompatTest(unittest.TestCase):
             ["سلام", "😊", "دنیا"],
         )
 
-    def test_lemmatizer_returns_hazm_style_output(self):
+    def test_lemmatizer_returns_both_stems(self):
         self.assertEqual(Lemmatizer().lemmatize("می‌روم"), "رفت#رو")
         self.assertEqual(Lemmatizer().lemmatize("کتاب"), "کتاب")
 

@@ -2,8 +2,8 @@
 
 The rules the public surface follows from `0.11.0` onward, and therefore the set
 of decisions that become permanent at `1.0.0`. Each rule lists what it replaces,
-so `0.11.0` can be reviewed against this file. See `ROADMAP.md` for the release
-that applies them and `STABILITY.md` (0.11.1) for the promise.
+so `0.11.0` can be reviewed against this file. If a name is not covered here, the
+default is that the current name stays.
 
 The goal is one thing: **a user should never have to guess which name to call.**
 Every rule below is judged by that, not by internal tidiness.

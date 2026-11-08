@@ -60,7 +60,8 @@ rishe.keywords(text, n=5)         # RAKE key phrases
 
 ## Class-based API
 
-The Hazm-compatible class façade lives in `rishe.compat`:
+The drop-in class API lives in `rishe.compat` (the same classes are exported
+from the package root):
 
 ```python
 from rishe.compat import (
@@ -96,6 +97,8 @@ No lexicon paths are needed: the classes use Rishe's compiled-in lexicons.
   stopwords and ezafe detection.
 - Jalali date parsing, formatting and Gregorian conversion.
 - Static fastText/word2vec embeddings with sentence pooling.
+- Drop-in class API (`rishe.compat`): `Normalizer`, `WordTokenizer`,
+  `SentenceTokenizer`, `Lemmatizer`, `Stemmer` and `TokenSplitter`.
 - Optional POS, NER, learned ezafe and dependency-parsing model packs.
 
 ## Feature tour
@@ -284,8 +287,10 @@ rishe hub remove pos-compact
 
 - [API](https://github.com/MahdiAlikhah/rishe/blob/main/docs/api.md)
 - [CLI](https://github.com/MahdiAlikhah/rishe/blob/main/docs/cli.md)
+- [Drop-in classes](https://github.com/MahdiAlikhah/rishe/blob/main/docs/compat.md)
 - [Benchmarks](https://github.com/MahdiAlikhah/rishe/blob/main/docs/BENCHMARKS.md)
 - [Model-pack benchmarks](https://github.com/MahdiAlikhah/rishe/blob/main/docs/MODEL_BENCHMARKS.md)
+- [Model cards](https://github.com/MahdiAlikhah/rishe/blob/main/docs/MODEL_CARDS.md)
 - [GitHub repository](https://github.com/MahdiAlikhah/rishe)
 
 ## License

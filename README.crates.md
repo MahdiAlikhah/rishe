@@ -182,6 +182,7 @@ println!("{}", embeddings.sentence_similarity("این کتاب خوب است", "
 - [docs.rs](https://docs.rs/rishe)
 - [Benchmarks](https://github.com/MahdiAlikhah/rishe/blob/main/docs/BENCHMARKS.md)
 - [Model-pack benchmarks](https://github.com/MahdiAlikhah/rishe/blob/main/docs/MODEL_BENCHMARKS.md)
+- [Model cards](https://github.com/MahdiAlikhah/rishe/blob/main/docs/MODEL_CARDS.md)
 - [GitHub repository](https://github.com/MahdiAlikhah/rishe)
 
 ## License

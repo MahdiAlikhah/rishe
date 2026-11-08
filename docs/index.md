@@ -22,8 +22,7 @@ doc.formal_text  # 'آن گفت فردا می‌رود کتابخانه و یک 
 ```
 
 See the [README](https://github.com/MahdiAlikhah/rishe) for the full feature
-list, the [CLI](cli.md) for command-line usage, the [API](api.md) reference, and
-the [benchmarks](BENCHMARKS.md) for comparisons with Hazm and Shekar. Model
-cards: [0.10.0 embeddings](MODEL_CARD_0.10.0.md),
-[0.9.0 embeddings](MODEL_CARD_0.9.0.md),
-[0.8.0 parser](MODEL_CARD_0.8.0.md).
+list, the [CLI](cli.md) for command-line usage, the [API](api.md) reference, the
+[drop-in classes](compat.md) for the classic class API, and the
+[benchmarks](BENCHMARKS.md) for comparisons with Hazm and Shekar. Model cards for
+every published pack are in [MODEL_CARDS.md](MODEL_CARDS.md).

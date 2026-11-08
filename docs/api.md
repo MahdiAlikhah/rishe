@@ -68,9 +68,9 @@ rishe.process("مي كنم").tokens             # ['می\u200cکنم']
 Tokenization options are keyword arguments (`join_verb_parts=`,
 `replace_links=`, `replace_emails=`, …), not separate methods.
 
-Hazm-style defaults live in `rishe.compat` (`word_tokenize` there joins verb
-parts, matching Hazm); the `rishe`-level names follow the conventions in
-[`API_CONVENTIONS.md`](API_CONVENTIONS.md).
+The classic class API, and its defaults (such as `word_tokenize` joining verb
+parts), lives in `rishe.compat`; see [compat.md](compat.md). The `rishe`-level
+names follow the conventions in [`API_CONVENTIONS.md`](API_CONVENTIONS.md).
 
 ### Hub
 

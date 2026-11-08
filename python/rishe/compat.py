@@ -1,15 +1,14 @@
-"""Hazm-compatible wrappers.
+"""Classic Persian-NLP preprocessing classes.
 
-These classes let code written against Hazm migrate with an import change:
+These are the class names, option names and return shapes that existing Persian
+NLP code is written against, implemented as thin wrappers over
+:class:`rishe.Pipeline`:
 
-    from hazm import Lemmatizer, Normalizer, WordTokenizer
-    ->
     from rishe import Lemmatizer, Normalizer, WordTokenizer
 
-The wrappers delegate to a shared :class:`rishe.Pipeline`. They are a migration
-aid, not a byte-for-byte clone: Rishe compiles its lexicons in, so Hazm's
-``words_file``/``verbs_file`` constructor arguments are rejected rather than
-silently ignored.
+They are a drop-in surface, not a byte-for-byte clone: Rishe compiles its
+lexicons in, so the classic ``words_file``/``verbs_file`` constructor arguments
+are rejected rather than silently ignored.
 """
 
 from __future__ import annotations
@@ -38,7 +37,7 @@ def _pipe() -> Pipeline:
 
 
 class Normalizer:
-    """Hazm-style normalizer backed by Rishe's normalizer operators."""
+    """Normalizer with the classic option flags, backed by Rishe's operators."""
 
     def __init__(
         self,
@@ -117,7 +116,7 @@ class Normalizer:
 
 
 class WordTokenizer:
-    """Hazm-style word tokenizer with the same option names."""
+    """Word tokenizer with the classic option names."""
 
     def __init__(
         self,
@@ -148,8 +147,8 @@ class WordTokenizer:
         self._pipe = _pipe()
 
     def tokenize(self, text: str) -> List[str]:
-        # Hazm's helper normalizes before tokenizing; keep that here so the
-        # compatibility façade stays Hazm-shaped.
+        # The classic helper normalizes before tokenizing; keep that here so the
+        # compatibility surface keeps its documented behaviour.
         return self._pipe.tokenize(
             self._pipe.normalize(text),
             join_verb_parts=self.join_verb_parts,

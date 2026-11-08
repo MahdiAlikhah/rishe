@@ -92,7 +92,9 @@ for entity in pipe.ner("سرلشگر فیروزآبادی به پادشاه عر
 - [راهنمای Rust](https://github.com/MahdiAlikhah/rishe/blob/main/README.crates.md)
 - [API راهنمای](https://github.com/MahdiAlikhah/rishe/blob/main/docs/api.md)
 - [CLI راهنمای](https://github.com/MahdiAlikhah/rishe/blob/main/docs/cli.md)
+- [کلاس‌های سازگار](https://github.com/MahdiAlikhah/rishe/blob/main/docs/compat.md)
 - [بنچمارک‌ها](https://github.com/MahdiAlikhah/rishe/blob/main/docs/BENCHMARKS.md)
+- [کارت‌های مدل](https://github.com/MahdiAlikhah/rishe/blob/main/docs/MODEL_CARDS.md)
 - [README انگلیسی](https://github.com/MahdiAlikhah/rishe/blob/main/README.md)
 
 ## مجوز

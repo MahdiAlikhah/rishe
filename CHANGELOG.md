@@ -9,6 +9,20 @@ in the pack manifest and on the model repository.
 
 ## [Unreleased]
 
+### Changed
+
+- Documentation: `docs/hazm.md` is now `docs/compat.md` and presents the
+  `rishe.compat` classes as a feature ("drop-in preprocessing classes") rather
+  than as a migration guide. The three per-release model cards are merged into
+  one `docs/MODEL_CARDS.md`, linked from the README, `docs/index.md` and
+  `docs/MODEL_BENCHMARKS.md`.
+
+### Removed
+
+- `docs/ROADMAP.md`. The project does not publish a roadmap and makes no
+  promises about future releases; what is published describes what already
+  shipped.
+
 ## [0.11.0] - 2026-11-08
 
 ### Added

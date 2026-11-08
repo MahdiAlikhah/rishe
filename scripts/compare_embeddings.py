@@ -2,7 +2,7 @@
 """Compare Rishe embedding packs with each other and with Hazm.
 
 This is the harness behind the static-embedding tables in
-``docs/MODEL_BENCHMARKS.md`` and ``docs/MODEL_CARD_0.10.0.md``. It uses eight
+``docs/MODEL_BENCHMARKS.md`` and ``docs/MODEL_CARDS.md``. It uses eight
 hand-picked Persian pairs plus two random baselines.
 
 - **own vocabulary** (the primary baseline, also stored in ``metrics.json``):

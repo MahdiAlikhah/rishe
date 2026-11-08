@@ -60,6 +60,9 @@ More Python usage is in [README.pypi.md](README.pypi.md); the Rust API is in
 - Static fastText/word2vec embeddings, loaded and pooled in-process.
 - Optional POS, NER, learned ezafe and dependency-parsing packs, downloaded
   separately and run without ONNX Runtime or a Python ML stack.
+- Drop-in class API (`rishe.compat`): `Normalizer`, `WordTokenizer`,
+  `SentenceTokenizer`, `Lemmatizer`, `Stemmer` and `TokenSplitter`, no lexicon
+  files and no Python dependencies.
 
 ## Embeddings
 
@@ -96,11 +99,11 @@ without extra options. The 0.9.x 30,000-article pack stays available as
 
 The core, feature and model-pack benchmarks live in the docs:
 
-[Core engine](docs/BENCHMARKS.md) · [Feature comparisons](docs/FEATURE_BENCHMARKS.md) · [Model packs](docs/MODEL_BENCHMARKS.md)
+[Core engine](docs/BENCHMARKS.md) · [Feature comparisons](docs/FEATURE_BENCHMARKS.md) · [Model packs](docs/MODEL_BENCHMARKS.md) · [Model cards](docs/MODEL_CARDS.md)
 
 ## Docs
 
-- [API](docs/api.md) · [CLI](docs/cli.md)
+- [API](docs/api.md) · [CLI](docs/cli.md) · [Drop-in classes](docs/compat.md)
 
 ## License
 

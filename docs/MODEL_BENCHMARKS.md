@@ -137,7 +137,7 @@ precision (fp32) and accuracy, not install size.
 The compact parser is an ALBERT backbone with a biaffine arc scorer and a
 head-conditioned relation classifier, decoded with single-root MST. It is
 48.1 MB and runs through the same tract pack runtime. Full card:
-[`MODEL_CARD_0.8.0.md`](MODEL_CARD_0.8.0.md).
+[`rishe-depparse-compact`](MODEL_CARDS.md#rishe-depparse-compact).
 
 | test treebank | UAS | LAS | LAS no punct |
 |---|---:|---:|---:|
@@ -155,8 +155,8 @@ The first-party embedding pack is Word2Vec skip-gram over Persian Wikipedia.
 articles, published both as a word2vec text `.vec` file and as a compact `f16`
 binary `.rvec` file. It loads directly into `rishe.Embeddings`; there is no ONNX
 or Python ML stack involved. Full cards:
-[`MODEL_CARD_0.10.0.md`](MODEL_CARD_0.10.0.md) for v2 and
-[`MODEL_CARD_0.9.0.md`](MODEL_CARD_0.9.0.md) for the previous pack.
+[`rishe-embed-fa-300-v2`](MODEL_CARDS.md#rishe-embed-fa-300-v2) and
+[`rishe-embed-fa-300`](MODEL_CARDS.md#rishe-embed-fa-300) for the previous pack.
 
 Same eight hand-picked pairs; the random baseline samples each model's own
 vocabulary (100 pairs, seed 42).
