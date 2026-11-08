@@ -35,6 +35,7 @@ cargo fmt --all -- --check
 cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked
 cargo test --locked --features models
+RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps --features python,models
 python -m unittest discover -s python/tests -p "test_*.py" -v
 python scripts/benchmark_golden.py
 ```
@@ -152,6 +153,10 @@ Network tip: the system proxy may throttle uploads. Bypassing it for HF
 
 ## If a release fails
 
+- Windows, `LNK1114: cannot overwrite the original file …rishe.dll.lib` (error
+  code 5) when building the extension: a stale or partially linked artifact is
+  locked in `target\debug\deps\`. Delete `rishe.dll`, `rishe.dll.exp` and
+  `rishe.dll.lib` there and rebuild. It is a file-lock, not a code problem.
 - Before the registry publish succeeds: fix the problem, amend or add a commit,
   then move the tag (`git tag -d`, delete the remote tag, re-tag) and push
   again.

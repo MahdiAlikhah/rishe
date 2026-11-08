@@ -35,7 +35,7 @@ Commands:
 
 Options:
   --json              Emit JSON.
-  --stages a,b        Maskers to apply, in order.
+  --maskers a,b       Maskers to apply, in order (`--stages` is a deprecated alias).
   --mask-token TEXT   Override every mask default.
   --pack DIR          Model-pack directory.
   --model PATH|NAME   Embedding `.vec`/`.rvec` file or hub model name.
@@ -47,7 +47,7 @@ Options:
 Text is read from stdin when omitted or when it is `-`.
 ";
 
-const DEFAULT_MASK_STAGES: [&str; 10] = [
+const DEFAULT_MASKERS: [&str; 10] = [
     "url",
     "email",
     "mention",
@@ -62,7 +62,7 @@ const DEFAULT_MASK_STAGES: [&str; 10] = [
 
 struct Options {
     json: bool,
-    stages: Vec<String>,
+    maskers: Vec<String>,
     mask_token: Option<String>,
     pack: Option<String>,
     model: Option<String>,
@@ -110,7 +110,7 @@ fn run() -> Result<(), String> {
 
     let mut options = Options {
         json: false,
-        stages: DEFAULT_MASK_STAGES.iter().map(|s| s.to_string()).collect(),
+        maskers: DEFAULT_MASKERS.iter().map(|s| s.to_string()).collect(),
         mask_token: None,
         pack: None,
         model: None,
@@ -121,9 +121,9 @@ fn run() -> Result<(), String> {
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--json" => options.json = true,
-            "--stages" => {
-                let value = args.next().ok_or("--stages needs a value")?;
-                options.stages = value
+            "--maskers" | "--stages" => {
+                let value = args.next().ok_or("--maskers needs a value")?;
+                options.maskers = value
                     .split(',')
                     .filter(|stage| !stage.is_empty())
                     .map(str::to_owned)
@@ -160,13 +160,19 @@ fn run() -> Result<(), String> {
     let pipe = Pipeline::create(true, true, true);
     match command.as_str() {
         "normalize" => {
-            let normalized = pipe.normalize_stages(&text, &[])?;
+            let normalized = pipe.normalize_with(&text, &[])?;
             emit(&normalized, options.json);
         }
-        "tokenize" => emit_list(&pipe.word_tokenize(&text), options.json),
+        "tokenize" => emit_list(
+            &pipe.tokenize(
+                &text,
+                &rishe::word_tokenizer::WordTokenizerOptions::default(),
+            ),
+            options.json,
+        ),
         "lemmatize" => emit_list(&pipe.process(&text).lemmas, options.json),
         "mask" => {
-            let masked = pipe.mask_stages(&text, &options.stages, options.mask_token.as_deref())?;
+            let masked = pipe.mask(&text, &options.maskers, options.mask_token.as_deref())?;
             emit(&masked, options.json);
         }
         "date" => emit_date(&text, options.json)?,
@@ -309,7 +315,7 @@ fn load_embeddings(model: Option<&str>) -> Result<Embeddings, String> {
 }
 
 fn serve(args: &[String]) -> Result<(), String> {
-    let mut stages = DEFAULT_MASK_STAGES
+    let mut maskers = DEFAULT_MASKERS
         .iter()
         .map(|stage| stage.to_string())
         .collect::<Vec<_>>();
@@ -322,11 +328,11 @@ fn serve(args: &[String]) -> Result<(), String> {
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
-            "--stages" => {
+            "--maskers" | "--stages" => {
                 index += 1;
-                stages = args
+                maskers = args
                     .get(index)
-                    .ok_or("--stages needs a value")?
+                    .ok_or("--maskers needs a value")?
                     .split(',')
                     .filter(|stage| !stage.is_empty())
                     .map(str::to_owned)
@@ -403,7 +409,7 @@ fn serve(args: &[String]) -> Result<(), String> {
             &pipe,
             embeddings.as_ref(),
             line,
-            &stages,
+            &maskers,
             mask_token.as_deref(),
         ) {
             Ok(result) => json!({"ok": true, "result": result}),
@@ -421,7 +427,7 @@ fn handle_request(
     pipe: &Pipeline,
     embeddings: Option<&Embeddings>,
     line: &str,
-    default_stages: &[String],
+    default_maskers: &[String],
     default_mask_token: Option<&str>,
 ) -> Result<Value, String> {
     let request: Value =
@@ -432,12 +438,16 @@ fn handle_request(
         .ok_or("request has no command")?;
     let text = request.get("text").and_then(Value::as_str).unwrap_or("");
     let result = match command {
-        "normalize" => json!(pipe.normalize_stages(text, &[])?),
-        "tokenize" => json!(pipe.word_tokenize(text)),
+        "normalize" => json!(pipe.normalize_with(text, &[])?),
+        "tokenize" => json!(pipe.tokenize(
+            text,
+            &rishe::word_tokenizer::WordTokenizerOptions::default()
+        )),
         "lemmatize" => json!(pipe.process(text).lemmas),
         "mask" => {
-            let stages = request
-                .get("stages")
+            let maskers = request
+                .get("maskers")
+                .or_else(|| request.get("stages"))
                 .and_then(Value::as_array)
                 .map(|values| {
                     values
@@ -446,12 +456,12 @@ fn handle_request(
                         .map(str::to_owned)
                         .collect::<Vec<_>>()
                 })
-                .unwrap_or_else(|| default_stages.to_vec());
+                .unwrap_or_else(|| default_maskers.to_vec());
             let token = request
                 .get("mask_token")
                 .and_then(Value::as_str)
                 .or(default_mask_token);
-            json!(pipe.mask_stages(text, &stages, token)?)
+            json!(pipe.mask(text, &maskers, token)?)
         }
         "date" => {
             let date =

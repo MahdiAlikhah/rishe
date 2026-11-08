@@ -11,8 +11,8 @@ class CoreRegressionTest(unittest.TestCase):
         self.assertEqual(self.pipe.normalize("مي‌كنم 2"), "می‌کنم ۲")
 
     def test_zwnj_stays_one_token(self):
-        self.assertEqual(self.pipe.word_tokenize("کتاب‌ها"), ["کتاب‌ها"])
-        self.assertEqual(self.pipe.word_tokenize("می‌روم"), ["می‌روم"])
+        self.assertEqual(self.pipe.tokenize("کتاب‌ها"), ["کتاب‌ها"])
+        self.assertEqual(self.pipe.tokenize("می‌روم"), ["می‌روم"])
 
     def test_sentence_punctuation(self):
         self.assertEqual(self.pipe.sent_tokenize("یک. دو! سه؟"), ["یک.", "دو!", "سه؟"])

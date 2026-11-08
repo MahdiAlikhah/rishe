@@ -39,17 +39,31 @@ print(doc.formal_text)
 # 'آن گفت فردا می‌رود کتابخانه و یک کتاب خوب می‌خواند.'
 ```
 
-`pipe.normalize`, `word_tokenize`, `sent_tokenize`, `lemmatize`, `stem`,
-`conjugate`, `spell_correct` and the rest are methods on the same object.
-`pipe(text)` rewrites colloquial forms; `word_tokenize` tokenizes the surface
-text without rewriting.
+`pipe.normalize`, `pipe.tokenize`, `pipe.sent_tokenize`, `pipe.lemmatize`,
+`pipe.stem`, `pipe.conjugate`, `pipe.spell_correct` and the rest are methods on
+the same object. `pipe(text)` runs the whole pipeline. `pipe.tokenize(text)` is
+the tokenizer alone: it returns surface tokens and does not normalize — call
+`pipe.normalize` first, or use `pipe(text).tokens`, for normalized tokens.
+
+Most of them are also module-level functions, so the common cases need no
+object at all:
+
+```python
+import rishe
+
+rishe.normalize("مي كنم")        # 'می‌کنم'
+rishe.tokenize("سلام دنیا")       # ['سلام', 'دنیا']
+rishe.sent_tokenize("یک. دو.")    # ['یک.', 'دو.']
+rishe.mask(text, maskers=["url", "email"])
+rishe.keywords(text, n=5)         # RAKE key phrases
+```
 
 ## Class-based API
 
-The same engine is available as small, reusable classes:
+The Hazm-compatible class façade lives in `rishe.compat`:
 
 ```python
-from rishe import (
+from rishe.compat import (
     Lemmatizer,
     Normalizer,
     SentenceTokenizer,
@@ -102,16 +116,17 @@ pipe.tokenize_spans("سلام دنیا")          # [('سلام', 0, 4), ('دن�
 
 ### Normalization and masking
 
-`normalize_stages` applies individual operators in the order you list them;
-`mask_stages` removes or masks URLs, emails, mentions, hashtags, HTML, digits,
-diacritics, punctuation, stopwords, offensive words and non-Persian text.
+`normalize(text, stages=[...])` applies individual operators in the order you
+list them; `mask(text, maskers=[...])` removes or masks URLs, emails, mentions,
+hashtags, HTML, digits, diacritics, punctuation, stopwords, offensive words and
+non-Persian text.
 
 ```python
-pipe.normalize_stages("﷽ 1𝟮3٤٥⓺", ["arabic_unicode", "digits"])
+pipe.normalize("﷽ 1𝟮3٤٥⓺", stages=["arabic_unicode", "digits"])
 # 'بسم الله الرحمن الرحیم ۱۲۳۴۵۶'
 
-pipe.mask_stages("سلام @user، به https://rishe.dev یا info@rishe.dev بنویس.",
-                 ["url", "email", "mention"])
+pipe.mask("سلام @user، به https://rishe.dev یا info@rishe.dev بنویس.",
+          maskers=["url", "email", "mention"])
 # 'سلام   به <URL> یا <EMAIL> بنویس.'
 ```
 
@@ -121,8 +136,8 @@ pipe.mask_stages("سلام @user، به https://rishe.dev یا info@rishe.dev ب
 pipe.number_to_words(1404)                 # 'یک هزار و چهارصد و چهار'
 pipe.ngrams("این یک متن", 1, 2)             # ['این', 'یک', 'متن', 'این یک', 'یک متن']
 pipe.persianize("فایل را با کامپیوتر باز کن")  # 'پرونده را با رایانه باز کن'
-pipe.rake(text, top_n=5)
-pipe.textrank(text, top_n=5)
+pipe.rake(text, n=5)
+pipe.textrank(text, n=5)
 pipe.to_tajik("خانه")                      # 'хона'
 pipe.to_persian("хона")                    # 'خانه'
 ```
@@ -146,8 +161,8 @@ JalaliDate.from_gregorian(2023, 8, 3)      # JalaliDate(1402, 5, 12)
 ### Tokenizer options
 
 ```python
-pipe.word_tokenize_with("رفته است", join_verb_parts=True)   # ['رفته_است']
-pipe.word_tokenize_with("info@a.co", replace_emails=True)   # ['EMAIL']
+pipe.tokenize("رفته است", join_verb_parts=True)   # ['رفته_است']
+pipe.tokenize("info@a.co", replace_emails=True)   # ['EMAIL']
 ```
 
 Options include `join_verb_parts`, `join_abbreviations`, `separate_emoji`,
@@ -184,9 +199,9 @@ rishe hub pull depparse-compact
 from rishe import Pipeline, hub
 
 pipe = Pipeline(
-    pos_pack=hub.path_pack("pos-compact"),
-    ner_pack=hub.path_pack("ner-compact"),
-    ezafe_pack=hub.path_pack("ezafe-compact"),
+    pos_pack=hub.path("pos-compact"),
+    ner_pack=hub.path("ner-compact"),
+    ezafe_pack=hub.path("ezafe-compact"),
 )
 
 for token in pipe.pos("کتاب‌های خوب را به دوستانم می‌دهم."):
@@ -198,7 +213,7 @@ for entity in pipe.ner("سرلشگر فیروزآبادی به پادشاه عر
 for token in pipe.ezafe("کتابخانه مرکزی دانشگاه شریف"):
     print(token.text, token.tag, token.start, token.end)
 
-parser = Pipeline(depparse_pack=hub.path_pack("depparse-compact"))
+parser = Pipeline(depparse_pack=hub.path("depparse-compact"))
 for item in parser.depparse("کتاب‌های خوب را به دوستانم می‌دهم."):
     print(item.text, item.head, item.relation)
 
@@ -216,9 +231,9 @@ pipe.ezafe_batch(["کتابخانه مرکزی", "دانشگاه شریف"])
 ```python
 from rishe import ModelPack, hub
 
-pack = ModelPack(hub.path_pack("pos-compact"))
-pack.tag_tokens("کتاب‌های خوب")   # typed TaggedToken list
-pack.tag_words(["کتاب‌های", "خوب"])  # tuple output
+pack = ModelPack(hub.path("pos-compact"))
+pack.tags("کتاب‌های خوب")   # typed TaggedToken list
+pack.tags_from_words(["کتاب‌های", "خوب"])  # tuple output
 ```
 
 ## Embeddings

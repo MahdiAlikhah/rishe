@@ -76,16 +76,16 @@ class Normalizer:
         if self._seperate_mi:
             stages.append("verbal_spacing")
         if stages:
-            text = self._pipe.normalize_stages(text, stages)
+            text = self._pipe.normalize(text, stages)
         if self._remove_specials_chars:
             text = self.remove_specials_chars(text)
         return text
 
     def correct_spacing(self, text: str) -> str:
-        return self._pipe.normalize_stages(text, ["spacing"])
+        return self._pipe.normalize(text, ["spacing"])
 
     def remove_diacritics(self, text: str) -> str:
-        return self._pipe.mask_stages(text, ["diacritics"])
+        return self._pipe.mask(text, ["diacritics"])
 
     def remove_specials_chars(self, text: str) -> str:
         return "".join(
@@ -95,22 +95,22 @@ class Normalizer:
         )
 
     def decrease_repeated_chars(self, text: str) -> str:
-        return self._pipe.normalize_stages(text, ["repeated_letters"])
+        return self._pipe.normalize(text, ["repeated_letters"])
 
     def persian_style(self, text: str) -> str:
-        return self._pipe.normalize_stages(text, ["punctuation"])
+        return self._pipe.normalize(text, ["punctuation"])
 
     def persian_number(self, text: str) -> str:
-        return self._pipe.normalize_stages(text, ["digits"])
+        return self._pipe.normalize(text, ["digits"])
 
     def unicodes_replacement(self, text: str) -> str:
-        return self._pipe.normalize_stages(text, ["alphabet", "arabic_unicode"])
+        return self._pipe.normalize(text, ["alphabet", "arabic_unicode"])
 
     def seperate_mi(self, text: str) -> str:
-        return self._pipe.normalize_stages(text, ["verbal_spacing"])
+        return self._pipe.normalize(text, ["verbal_spacing"])
 
     def token_spacing(self, tokens: List[str]) -> List[str]:
-        joined = self._pipe.normalize_stages(
+        joined = self._pipe.normalize(
             " ".join(tokens), ["word_spacing", "verbal_spacing"]
         )
         return joined.split()
@@ -148,8 +148,10 @@ class WordTokenizer:
         self._pipe = _pipe()
 
     def tokenize(self, text: str) -> List[str]:
-        return self._pipe.word_tokenize_with(
-            text,
+        # Hazm's helper normalizes before tokenizing; keep that here so the
+        # compatibility façade stays Hazm-shaped.
+        return self._pipe.tokenize(
+            self._pipe.normalize(text),
             join_verb_parts=self.join_verb_parts,
             join_abbreviations=self.join_abbreviations,
             separate_emoji=self.separate_emoji,
@@ -190,7 +192,7 @@ class Lemmatizer:
         self._pipe = _pipe()
 
     def lemmatize(self, word: str, pos: str = "") -> str:
-        lemma, present = self._pipe.lemma_full(word)
+        lemma, present = self._pipe.lemmatize_verb(word)
         return f"{lemma}#{present}" if present else lemma
 
 

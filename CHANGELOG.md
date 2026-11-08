@@ -9,6 +9,72 @@ in the pack manifest and on the model repository.
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-11-08
+
+### Added
+
+- Module-level front door: `rishe.normalize`, `rishe.tokenize`,
+  `rishe.tokenize_spans`, `rishe.sent_tokenize`, `rishe.process`,
+  `rishe.process_batch`, `rishe.lemmatize`, `rishe.stem`, `rishe.mask`,
+  `rishe.keywords` and `rishe.pipeline()`, all backed by one shared default
+  pipeline created on first use.
+- Canonical pipeline names: `Pipeline.process(text, stages=None)`,
+  `process_batch(texts)`, `normalize(text, stages=None)`,
+  `mask(text, maskers=..., mask_token=...)` and
+  `tokenize(text, normalize=True, **options)`, plus
+  `Pipeline.lemmatize_verb(word)`.
+- `ModelPack.tags(text)`, `tags_batch(texts)` and `tags_from_words(words)`.
+- `label` on every result span: `TaggedToken.label` and `Dependency.label`
+  join the existing `Entity.label`, so one loop reads POS, NER and dependency
+  output the same way.
+- `rishe.hub.pull`, `cached` and `path` now accept task packs as well as
+  single-file models; `hub.is_pack` reports which one a name is.
+- `docs/API_CONVENTIONS.md`, the naming rules the public surface follows up to
+  `1.0.0`, and `docs/ROADMAP.md`, the release-ordered backlog to it.
+- `rishe._deprecation` helper so renamed names warn once and disappear at
+  `1.0.0`.
+
+### Changed
+
+- Rust surface follows the same conventions as Python: `Pipeline::tokenize`
+  takes a `word_tokenizer::WordTokenizerOptions` and returns surface tokens,
+  `Pipeline::mask` replaces `mask_stages`,
+  `Pipeline::normalize_with` replaces `normalize_stages`,
+  `Pipeline::lemmatize_verb` replaces `lemma_full`, and `ModelPack::tags`,
+  `tags_batch`, `tags_from_words` replace the `tag_text*` / `tag_words` names.
+  `TaggedToken::label()` and `Dependency::label()` join `Entity.label`.
+- `rishe mask` takes `--maskers`; `--stages` still works as a deprecated alias
+  (same for `serve`). The masker list is defined once, in `rishe.api`.
+- `tokenize` is now pure tokenization: it returns surface tokens and does not
+  normalize. `normalize` normalizes, and `process` (or `pipe(text)`) runs the
+  sequence; `word_tokenize*` keep their old normalize-then-tokenize behaviour as
+  deprecated aliases. This applies to `Pipeline`, the module-level `rishe.tokenize`
+  and `rishe tokenize` on the command line.
+- Hazm-style defaults stay available from `rishe.compat` only; the compat
+  façade now calls the canonical methods.
+- Python test suites gained a naming ratchet (`python/tests/test_surface.py`)
+  that pins the remaining deprecated aliases and may only shrink.
+
+### Deprecated
+
+Removed in `1.0.0`; each emits `DeprecationWarning` today.
+
+- `Pipeline.word_tokenize` and `Pipeline.word_tokenize_with` → `tokenize`
+- `Pipeline.process_stages` and `Pipeline.pipe` → `process` / `process_batch`
+- `Pipeline.normalize_stages` → `normalize(stages=...)`
+- `Pipeline.mask_stages` → `mask(maskers=...)`
+- `Pipeline.lemma_full` → `lemmatize_verb`
+- `ModelPack.tag`, `tag_tokens`, `tag_batch`, `tag_words` → `tags`,
+  `tags_batch`, `tags_from_words`
+- Rust: `ModelPack::tag_text`, `tag_text_items`, `tag_text_batch`, `tag_words`
+  → `tags`, `tags_batch`, `tags_from_words`
+- Rust: `Pipeline::word_tokenize`, `word_tokenize_with` → `tokenize`
+- Rust: `Pipeline::mask_stages` → `mask`; `normalize_stages` →
+  `normalize_with`; `lemma_full` → `lemmatize_verb`
+- `hub.pull_pack`, `hub.cached_pack`, `hub.path_pack` → `hub.pull`, `cached`,
+  `path`
+- `rishe.word_tokenize` → `rishe.tokenize`
+
 ## [0.10.0] - 2026-11-07
 
 ### Added
@@ -254,7 +320,8 @@ in the pack manifest and on the model repository.
 - Python bindings (abi3) and a Rust core.
 - Benchmark suite and dual MIT/Apache-2.0 licensing.
 
-[Unreleased]: https://github.com/MahdiAlikhah/rishe/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/MahdiAlikhah/rishe/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/MahdiAlikhah/rishe/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/MahdiAlikhah/rishe/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/MahdiAlikhah/rishe/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/MahdiAlikhah/rishe/compare/v0.8.1...v0.9.0

@@ -22,6 +22,8 @@ from pathlib import Path
 from typing import Dict, NamedTuple, Optional
 from urllib.parse import urlparse
 
+from ._deprecation import deprecated
+
 __all__ = [
     "MODELS",
     "PACKS",
@@ -29,6 +31,7 @@ __all__ = [
     "cached",
     "cached_pack",
     "info",
+    "is_pack",
     "path",
     "path_pack",
     "pull",
@@ -80,17 +83,35 @@ def cache_dir() -> Path:
     return base / "models"
 
 
+def _unknown(name: str) -> str:
+    return (
+        f"unknown model or pack {name!r}; "
+        f"models: {', '.join(MODELS)}; packs: {', '.join(PACKS)}"
+    )
+
+
+def is_pack(name: str) -> bool:
+    """Whether ``name`` refers to a task pack rather than a single model file."""
+    return name in PACKS
+
+
 def cached(name: str) -> Optional[Path]:
-    """Return the local path of a cached model, or ``None``."""
+    """Return the cached path of a model or pack, or ``None`` when missing.
+
+    Models resolve to a file, task packs to a directory.
+    """
+    if name in PACKS:
+        target = cache_dir() / name
+        return target if all((target / file).is_file() for file in PACK_REQUIRED) else None
     model = MODELS.get(name)
     if model is None:
-        raise ValueError(f"unknown model {name!r}; known models: {', '.join(MODELS)}")
+        raise ValueError(_unknown(name))
     target = cache_dir() / Path(model.filename).name
     return target if target.exists() else None
 
 
 def path(name: str) -> Path:
-    """Return the local path of a cached model, raising when it was not pulled."""
+    """Return the cached path of a model or pack, raising when it was not pulled."""
     target = cached(name)
     if target is None:
         raise FileNotFoundError(
@@ -107,17 +128,21 @@ def pull(
     filename: Optional[str] = None,
     force: bool = False,
 ) -> Path:
-    """Download a known model (or a custom URL) into the cache and return its path.
+    """Download a known model or task pack (or a custom URL) and return its path.
 
     Custom URLs must pass ``sha256``; the checksum is verified before the file
     is moved into place, so an interrupted or tampered download is never used.
     """
+    if name_or_url in PACKS:
+        if sha256 or filename:
+            raise ValueError("task packs do not accept sha256= or filename=")
+        return _pull_pack(name_or_url, force=force)
+
     model = MODELS.get(name_or_url)
     if model is None:
         if not sha256:
             raise ValueError(
-                f"unknown model {name_or_url!r}; known models: {', '.join(MODELS)}. "
-                "Pass sha256= to pull a custom URL."
+                f"{_unknown(name_or_url)}. Pass sha256= to pull a custom URL."
             )
         source = name_or_url
         inferred = filename or Path(urlparse(source).path).name
@@ -211,51 +236,43 @@ def _pack_base() -> str:
     return os.environ.get("RISHE_MODEL_BASE", PACK_BASE).rstrip("/")
 
 
+@deprecated("rishe.hub.cached_pack", "rishe.hub.cached")
 def cached_pack(name: str) -> Optional[Path]:
-    """Return the local directory of a cached task pack, or ``None``."""
-    if name not in PACKS:
-        raise ValueError(f"unknown pack {name!r}; known packs: {', '.join(PACKS)}")
-    target = cache_dir() / name
-    return target if all((target / file).is_file() for file in PACK_REQUIRED) else None
+    """Deprecated alias of :func:`cached` for task packs."""
+    return cached(name)
 
 
+@deprecated("rishe.hub.path_pack", "rishe.hub.path")
 def path_pack(name: str) -> Path:
-    """Return the local directory of a cached task pack, raising when it was not pulled."""
-    target = cached_pack(name)
-    if target is None:
-        raise FileNotFoundError(
-            f"{name!r} is not cached; run: rishe hub pull {name} "
-            f"(or rishe.hub.pull_pack({name!r}))"
-        )
-    return target
+    """Deprecated alias of :func:`path` for task packs."""
+    return path(name)
 
 
 def info(name: str) -> Optional[dict]:
     """Return cache information for a model or pack, or ``None`` when missing."""
-    if name in PACKS:
-        target = cached_pack(name)
-    elif name in MODELS:
-        target = cached(name)
-    else:
-        raise ValueError(f"unknown model or pack {name!r}")
+    if name not in PACKS and name not in MODELS:
+        raise ValueError(_unknown(name))
+    target = cached(name)
     if target is None:
         return None
     if target.is_dir():
         size = sum(file.stat().st_size for file in target.rglob("*") if file.is_file())
     else:
         size = target.stat().st_size
-    return {"name": name, "path": str(target), "bytes": size}
+    return {"name": name, "kind": "pack" if name in PACKS else "model", "path": str(target), "bytes": size}
 
 
 def remove(name: str) -> bool:
     """Remove a cached model or pack. Returns whether anything was removed."""
-    if name in PACKS:
-        target = cache_dir() / name
-    elif name in MODELS:
-        target = cache_dir() / Path(MODELS[name].filename).name
-    else:
-        raise ValueError(f"unknown model or pack {name!r}")
-    if not target.exists():
+    if name not in PACKS and name not in MODELS:
+        raise ValueError(_unknown(name))
+    target = cached(name)
+    if target is None:
+        # Clean up a partial pack directory as well.
+        partial = cache_dir() / name
+        if name in PACKS and partial.is_dir():
+            shutil.rmtree(partial)
+            return True
         return False
     if target.is_dir():
         shutil.rmtree(target)
@@ -286,7 +303,7 @@ def verify(name: str) -> bool:
     raise ValueError(f"unknown model or pack {name!r}")
 
 
-def pull_pack(name: str, *, force: bool = False) -> Path:
+def _pull_pack(name: str, *, force: bool = False) -> Path:
     """Download a task pack (model, tokenizer and labels) and return its directory."""
     task = PACKS.get(name)
     if task is None:
@@ -320,3 +337,9 @@ def pull_pack(name: str, *, force: bool = False) -> Path:
     if missing:
         raise RuntimeError(f"pack {name!r} is incomplete; missing: {', '.join(missing)}")
     return target
+
+
+@deprecated("rishe.hub.pull_pack", "rishe.hub.pull")
+def pull_pack(name: str, *, force: bool = False) -> Path:
+    """Deprecated alias of :func:`pull` for task packs."""
+    return pull(name, force=force)

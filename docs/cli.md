@@ -11,13 +11,21 @@ rishe normalize "مي كنم"                 # می‌کنم
 rishe tokenize "سلام دنیا"               # سلام دنیا
 rishe tokenize "سلام دنیا" --json        # ["سلام", "دنیا"]
 rishe lemmatize "می‌روم" --json           # ["رفت"]
-rishe mask --stages url "به https://a.b برو"
+rishe mask --maskers url "به https://a.b برو"
 # به <URL> برو
 ```
 
-`mask` defaults to all maskers; pass `--stages` to choose, and `--mask-token` to
-override the per-stage default. The Rust binary takes comma-separated stages
-(`--stages url,email`).
+`mask` defaults to all maskers; pass `--maskers` to choose, and `--mask-token`
+to override the per-masker default. `--stages` is accepted as a deprecated alias
+for `--maskers`. The Rust binary takes comma-separated maskers
+(`--maskers url,email`) and accepts `--stages` the same way.
+
+`rishe tokenize` prints surface tokens and does not normalize; compose the
+commands for the normalizing path:
+
+```bash
+rishe normalize "مي كنم" | rishe tokenize    # می‌کنم  (one token)
+```
 
 ## Date parsing
 

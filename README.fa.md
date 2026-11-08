@@ -72,9 +72,9 @@ rishe hub pull ezafe-compact
 from rishe import Pipeline, hub
 
 pipe = Pipeline(
-    pos_pack=hub.path_pack("pos-compact"),
-    ner_pack=hub.path_pack("ner-compact"),
-    ezafe_pack=hub.path_pack("ezafe-compact"),
+    pos_pack=hub.path("pos-compact"),
+    ner_pack=hub.path("ner-compact"),
+    ezafe_pack=hub.path("ezafe-compact"),
 )
 
 for token in pipe.pos("کتاب‌های خوب را به دوستانم می‌دهم."):

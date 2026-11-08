@@ -71,7 +71,7 @@ def main():
     print("|---|---|---|---|---|")
     differences = []
     for name, shekar_op in operators:
-        rishe_fn = lambda text, name=name: pipe.normalize_stages(text, [name])
+        rishe_fn = lambda text, name=name: pipe.normalize(text, stages=[name])
         shekar_fn = lambda text, op=shekar_op: op(text)
         agree = 0
         first_diff = None
@@ -103,7 +103,7 @@ def main():
     shekar_norm = ShekarNormalizer()
     composites = {
         "Rishe `normalize`": pipe.normalize,
-        "Rishe `spacing`": lambda t: pipe.normalize_stages(t, ["spacing"]),
+        "Rishe `spacing`": lambda t: pipe.normalize(t, stages=["spacing"]),
         "Shekar Normalizer": shekar_norm,
         "Hazm Normalizer": hazm_norm.normalize,
     }

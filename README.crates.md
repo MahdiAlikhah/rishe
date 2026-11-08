@@ -55,12 +55,13 @@ println!("{}", pipe.stem("کتاب‌ها"));
 println!("{}", pipe.spell_correct("سسلام بر ششما"));
 ```
 
-The `Pipeline` exposes the same utilities directly: `normalize_stages`,
-`mask_stages`, `word_tokenize`, `lemma_full`, `stem`, `conjugate`,
-`comparative`, `superlative`, `plural`, `possessive`, `tokenize_spans`,
-`tokenize_char_spans`, `spell_suggest`, `spell_correct`, `split_token`, `rake`,
-`textrank`, `ngrams` and batch processing. Sentence splitting lives in
-`rishe::sbd::SentenceSplitter`.
+The `Pipeline` exposes the same utilities directly: `normalize_with`, `mask`,
+`tokenize` (surface tokens, configured by
+`word_tokenizer::WordTokenizerOptions`), `lemmatize_verb`,
+`stem`, `conjugate`, `comparative`, `superlative`, `plural`, `possessive`,
+`tokenize_spans`, `tokenize_char_spans`, `spell_suggest`, `spell_correct`,
+`split_token`, `rake`, `textrank`, `ngrams` and batch processing. Sentence
+splitting lives in `rishe::sbd::SentenceSplitter`.
 
 The Rust binary also has `hub` and `serve` commands, mirroring the Python CLI:
 
@@ -71,20 +72,28 @@ printf '%s\n' '{"command":"normalize","text":"مي كنم"}' | rishe serve
 
 ```rust
 use rishe::sbd::SentenceSplitter;
+use rishe::word_tokenizer::WordTokenizerOptions;
 use rishe::Pipeline;
 
 let pipe = Pipeline::create(true, true, true);
 let text = "کتاب‌های خوب را به دوستانم می‌دهم.";
 
 let normalized = pipe
-    .normalize_stages("سلام ۱۲۳", &["digits".to_string()])
+    .normalize_with("سلام ۱۲۳", &["digits".to_string()])
     .unwrap();
 let masked = pipe
-    .mask_stages("info@a.co", &["email".to_string()], None)
+    .mask("info@a.co", &["email".to_string()], None)
     .unwrap();
 
-let tokens: Vec<String> = pipe.word_tokenize(text);
-let (lemma, present) = pipe.lemma_full("می‌روم"); // ("رفت", Some("رو"))
+let tokens: Vec<String> = pipe.tokenize(text, &WordTokenizerOptions::default());
+let joined: Vec<String> = pipe.tokenize(
+    "رفته است",
+    &WordTokenizerOptions {
+        join_verb_parts: true,
+        ..Default::default()
+    },
+);
+let (lemma, present) = pipe.lemmatize_verb("می‌روم"); // ("رفت", Some("رو"))
 let stem = pipe.stem("کتاب‌ها");
 let conjugation = pipe.conjugate("رفت");           // Option<Conjugation>
 let comparative = pipe.comparative("بزرگ");

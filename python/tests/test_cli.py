@@ -38,6 +38,13 @@ class CliTest(unittest.TestCase):
 
     def test_mask(self):
         code, output = self.run_cli(
+            ["mask", "به https://a.b برو", "--maskers", "url"]
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(output, "به <URL> برو")
+
+    def test_mask_accepts_the_deprecated_stages_flag(self):
+        code, output = self.run_cli(
             ["mask", "به https://a.b برو", "--stages", "url"]
         )
         self.assertEqual(code, 0)

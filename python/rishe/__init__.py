@@ -15,6 +15,21 @@ from ._core import (
     ProcessedDoc,
     TaggedToken,
 )
+from .api import (
+    DEFAULT_MASKERS,
+    keywords,
+    lemmatize,
+    mask,
+    normalize,
+    pipeline,
+    process,
+    process_batch,
+    sent_tokenize,
+    stem,
+    tokenize,
+    tokenize_spans,
+    word_tokenize,
+)
 from .compat import (
     Lemmatizer,
     Normalizer,
@@ -22,8 +37,6 @@ from .compat import (
     Stemmer,
     TokenSplitter,
     WordTokenizer,
-    sent_tokenize,
-    word_tokenize,
 )
 from .corpora import ConlluReader, PeymaReader, PlainTextReader, Sentence, Token
 
@@ -49,8 +62,19 @@ __all__ = [
     "Lemmatizer",
     "Stemmer",
     "TokenSplitter",
-    "word_tokenize",
+    "pipeline",
+    "normalize",
+    "tokenize",
+    "tokenize_spans",
     "sent_tokenize",
+    "process",
+    "process_batch",
+    "lemmatize",
+    "stem",
+    "mask",
+    "keywords",
+    "DEFAULT_MASKERS",
+    "word_tokenize",
 ]
 
 

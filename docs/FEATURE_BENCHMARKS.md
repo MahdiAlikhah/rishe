@@ -211,10 +211,10 @@ agreement is exact stripped output equality with Shekar.
 - Stopwords and offensive words are 67–126× faster: Rishe runs one Aho-Corasick
   pass with word-boundary checks; Shekar applies one compiled regex per word.
 - The sub-1 µs no-op rows (`url`, `mention`, `hashtag`, `html`) are dominated by
-  the pyo3 call floor (0.78 µs for `mask_stages` with no stages), not masker
+  the pyo3 call floor (0.78 µs for `mask` with no maskers), not masker
   work. Shekar returns the original Python string when nothing matches.
 - Maskers strip their output like Shekar and do not collapse the spaces left
-  behind. Run `normalize_stages(..., ["spacing"])` afterwards if needed.
+  behind. Run `normalize(..., stages=["spacing"])` afterwards if needed.
 
 Reproduce: `python scripts/benchmark_maskers.py`.
 

@@ -24,8 +24,9 @@ class TinyPackTest(unittest.TestCase):
     def test_tiny_pack(self):
         pack = ModelPack(TINY_PACK)
         self.assertEqual(pack.task, "pos")
-        self.assertEqual(pack.tag("good bad"), [("good", "A"), ("bad", "B")])
-        self.assertEqual(pack.tag_tokens("good bad")[0].start, 0)
+        labels = [(item.text, item.label) for item in pack.tags("good bad")]
+        self.assertEqual(labels, [("good", "A"), ("bad", "B")])
+        self.assertEqual(pack.tags("good bad")[0].start, 0)
 
         pipe = Pipeline(pos_pack=TINY_PACK)
         self.assertEqual(pipe.pos("good bad")[1].tag, "B")
@@ -45,22 +46,22 @@ class PackCacheTest(unittest.TestCase):
     def test_pack_cache(self):
         with tempfile.TemporaryDirectory() as root:
             with patch.dict(os.environ, {"RISHE_HOME": root}):
-                self.assertIsNone(hub.cached_pack("pos-compact"))
+                self.assertIsNone(hub.cached("pos-compact"))
                 self.assertEqual(hub.PACKS["depparse-compact"], "depparse")
                 target = Path(root) / "models" / "pos-compact"
                 target.mkdir(parents=True)
                 for name in hub.PACK_REQUIRED:
                     (target / name).write_bytes(b"x")
-                self.assertEqual(hub.cached_pack("pos-compact"), target)
-                self.assertEqual(hub.path_pack("pos-compact"), target)
+                self.assertEqual(hub.cached("pos-compact"), target)
+                self.assertEqual(hub.path("pos-compact"), target)
                 self.assertEqual(hub.info("pos-compact")["path"], str(target))
                 self.assertTrue(hub.remove("pos-compact"))
                 self.assertFalse(hub.remove("pos-compact"))
-                self.assertIsNone(hub.cached_pack("pos-compact"))
+                self.assertIsNone(hub.cached("pos-compact"))
                 with self.assertRaises(ValueError):
-                    hub.cached_pack("unknown")
+                    hub.cached("unknown")
                 with self.assertRaises(FileNotFoundError):
-                    hub.path_pack("ner-compact")
+                    hub.path("ner-compact")
 
     def test_verify_pack(self):
         with tempfile.TemporaryDirectory() as root:
@@ -137,18 +138,18 @@ class ModelPackTest(unittest.TestCase):
         self.assertEqual(pack.max_len, 192)
         self.assertEqual(len(pack.labels()), 16)
         words = ["کتاب‌های", "خوب", "را", "به", "دوستانم", "می‌دهم"]
-        result = pack.tag_words(words)
+        result = pack.tags_from_words(words)
         self.assertEqual([word for word, _ in result], words)
         self.assertEqual(result[0][1], "NOUN")
         self.assertEqual(result[1][1], "ADJ")
         self.assertEqual(result[-1][1], "VERB")
-        self.assertTrue(pack.tag("کتاب‌های خوب"))
+        self.assertTrue(pack.tags("کتاب‌های خوب"))
 
     def test_ner(self):
         pack = ModelPack(str(PACK_ROOT / "ner"))
         self.assertEqual(pack.task, "ner")
         self.assertEqual(len(pack.labels()), 21)
-        result = pack.tag_words(["سرلشگر", "فیروزآبادی", "به", "پادشاه", "عربستان", "گفت"])
+        result = pack.tags_from_words(["سرلشگر", "فیروزآبادی", "به", "پادشاه", "عربستان", "گفت"])
         self.assertEqual(len(result), 6)
         self.assertTrue(all(label in pack.labels() for _, label in result))
         self.assertTrue(any(label != "O" for _, label in result))
@@ -157,7 +158,7 @@ class ModelPackTest(unittest.TestCase):
         pack = ModelPack(str(PACK_ROOT / "ezafe"))
         self.assertEqual(pack.task, "ezafe")
         self.assertEqual(pack.max_len, 128)
-        result = pack.tag_words(["کتابخانه", "مرکزی", "دانشگاه", "شریف"])
+        result = pack.tags_from_words(["کتابخانه", "مرکزی", "دانشگاه", "شریف"])
         self.assertEqual(len(result), 4)
         self.assertTrue(all(label in {"NO_EZAFE", "EZAFE"} for _, label in result))
 

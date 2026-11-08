@@ -50,6 +50,21 @@ pub struct Dependency {
     pub end: usize,
 }
 
+impl TaggedToken {
+    /// The label of this span. `tag` keeps the historical field name.
+    pub fn label(&self) -> &str {
+        &self.tag
+    }
+}
+
+impl Dependency {
+    /// The label of this dependency relation. `relation` keeps the historical
+    /// field name.
+    pub fn label(&self) -> &str {
+        &self.relation
+    }
+}
+
 #[derive(Clone, Copy)]
 struct ArcEdge {
     from: usize,
@@ -321,18 +336,12 @@ impl ModelPack {
         self.max_len
     }
 
-    pub fn tag_text(&self, text: &str) -> Result<Vec<(String, String)>, String> {
-        Ok(self
-            .tag_text_items(text)?
-            .into_iter()
-            .map(|token| (token.text, token.tag))
-            .collect())
-    }
-
-    pub fn tag_text_items(&self, text: &str) -> Result<Vec<TaggedToken>, String> {
+    /// Tag text into spans. Each span carries `text`, `tag`, `start` and `end`;
+    /// `label()` returns the tag under the name every result type shares.
+    pub fn tags(&self, text: &str) -> Result<Vec<TaggedToken>, String> {
         let tokens = WordTokenizer::tokenize(text);
         let words: Vec<&str> = tokens.iter().map(|token| token.text).collect();
-        let tagged = self.tag_words(&words)?;
+        let tagged = self.tags_from_words(&words)?;
         let mut cursor = 0;
         let mut result = Vec::with_capacity(tagged.len());
 
@@ -355,24 +364,49 @@ impl ModelPack {
         Ok(result)
     }
 
-    pub fn entities(&self, text: &str) -> Result<Vec<Entity>, String> {
-        Ok(merge_entities(&self.tag_text_items(text)?))
+    /// Deprecated alias of [`ModelPack::tags`].
+    #[deprecated(since = "0.11.0", note = "use `ModelPack::tags`")]
+    pub fn tag_text_items(&self, text: &str) -> Result<Vec<TaggedToken>, String> {
+        self.tags(text)
     }
 
-    // ponytail: parallel per-sentence; re-export with batch>1 if ONNX batching matters.
+    /// Deprecated alias of [`ModelPack::tags`] that returns word/tag tuples.
+    #[deprecated(since = "0.11.0", note = "use `ModelPack::tags`")]
+    pub fn tag_text(&self, text: &str) -> Result<Vec<(String, String)>, String> {
+        Ok(self
+            .tags(text)?
+            .into_iter()
+            .map(|token| (token.text, token.tag))
+            .collect())
+    }
+
+    /// Tag many texts, one result per input.
+    pub fn tags_batch(&self, texts: &[String]) -> Result<Vec<Vec<TaggedToken>>, String> {
+        texts.par_iter().map(|text| self.tags(text)).collect()
+    }
+
+    /// Deprecated alias of [`ModelPack::tags_batch`].
+    #[deprecated(since = "0.11.0", note = "use `ModelPack::tags_batch`")]
     pub fn tag_text_batch(&self, texts: &[String]) -> Result<Vec<Vec<TaggedToken>>, String> {
-        texts
-            .par_iter()
-            .map(|text| self.tag_text_items(text))
-            .collect()
+        self.tags_batch(texts)
+    }
+
+    pub fn entities(&self, text: &str) -> Result<Vec<Entity>, String> {
+        Ok(merge_entities(&self.tags(text)?))
     }
 
     pub fn entities_batch(&self, texts: &[String]) -> Result<Vec<Vec<Entity>>, String> {
         Ok(self
-            .tag_text_batch(texts)?
+            .tags_batch(texts)?
             .iter()
             .map(|tokens| merge_entities(tokens))
             .collect())
+    }
+
+    /// Deprecated alias of [`ModelPack::tags_from_words`].
+    #[deprecated(since = "0.11.0", note = "use `ModelPack::tags_from_words`")]
+    pub fn tag_words(&self, words: &[&str]) -> Result<Vec<(String, String)>, String> {
+        self.tags_from_words(words)
     }
 
     fn encode_words(&self, words: &[&str]) -> Result<Option<EncodedWords>, String> {
@@ -420,8 +454,8 @@ impl ModelPack {
         Ok(Some((ids, positions, kept)))
     }
 
-    /// Word-level single call.
-    pub fn tag_words(&self, words: &[&str]) -> Result<Vec<(String, String)>, String> {
+    /// Word-level single call: tag pre-tokenized words, returning `(word, tag)`.
+    pub fn tags_from_words(&self, words: &[&str]) -> Result<Vec<(String, String)>, String> {
         let Some((ids, positions, kept)) = self.encode_words(words)? else {
             return Ok(Vec::new());
         };
@@ -720,7 +754,11 @@ mod tests {
         let pack = ModelPack::load(&path).expect("load tiny pack");
         assert_eq!(pack.task(), "pos");
         assert_eq!(
-            pack.tag_text("good bad").unwrap(),
+            pack.tags("good bad")
+                .unwrap()
+                .into_iter()
+                .map(|token| (token.text, token.tag))
+                .collect::<Vec<_>>(),
             vec![
                 ("good".to_string(), "A".to_string()),
                 ("bad".to_string(), "B".to_string()),

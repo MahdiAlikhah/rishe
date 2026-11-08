@@ -7,9 +7,8 @@ from rishe import (
     Stemmer,
     TokenSplitter,
     WordTokenizer,
-    sent_tokenize,
-    word_tokenize,
 )
+from rishe.compat import sent_tokenize, word_tokenize
 
 
 class HazmCompatTest(unittest.TestCase):

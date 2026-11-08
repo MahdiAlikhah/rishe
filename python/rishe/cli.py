@@ -9,19 +9,11 @@ from pathlib import Path
 from typing import List, Optional
 
 from . import Embeddings, Pipeline, hub, parse_date
+from .api import DEFAULT_MASKERS
 
-DEFAULT_MASK_STAGES = [
-    "url",
-    "email",
-    "mention",
-    "hashtag",
-    "emoji",
-    "html",
-    "non_persian",
-    "digits",
-    "diacritics",
-    "punctuation",
-]
+# Kept for callers that imported the old name; the masker list itself lives in
+# ``rishe.api`` so the API and the CLI cannot drift apart.
+DEFAULT_MASK_STAGES = list(DEFAULT_MASKERS)
 
 
 def _configure_stdio() -> None:
@@ -52,10 +44,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     mask = subparsers.add_parser("mask", help="Mask or remove sensitive tokens.")
     mask.add_argument("text", nargs="?", help="text; reads stdin when omitted")
     mask.add_argument(
+        "--maskers",
         "--stages",
+        dest="maskers",
         nargs="+",
-        default=DEFAULT_MASK_STAGES,
-        help="maskers to apply, in order",
+        default=list(DEFAULT_MASKERS),
+        help="maskers to apply, in order (`--stages` is a deprecated alias)",
     )
     mask.add_argument("--mask-token", default=None, help="override every mask default")
     mask.add_argument("--json", action="store_true", help="emit JSON")
@@ -82,7 +76,13 @@ def main(argv: Optional[List[str]] = None) -> int:
         command.add_argument("--json", action="store_true", help="emit JSON")
 
     serve = subparsers.add_parser("serve", help="JSON-lines server on stdin/stdout.")
-    serve.add_argument("--stages", nargs="+", default=DEFAULT_MASK_STAGES)
+    serve.add_argument(
+        "--maskers",
+        "--stages",
+        dest="maskers",
+        nargs="+",
+        default=list(DEFAULT_MASKERS),
+    )
     serve.add_argument("--mask-token", default=None)
     serve.add_argument("--pos-pack", default=None)
     serve.add_argument("--ner-pack", default=None)
@@ -150,7 +150,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         except (OSError, ValueError) as error:
             print(error, file=sys.stderr)
             return 2
-        return _serve(pipe, args.stages, args.mask_token, embeddings)
+        return _serve(pipe, args.maskers, args.mask_token, embeddings)
 
     pipe = Pipeline()
 
@@ -158,11 +158,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.command == "normalize":
         result = pipe.normalize(text)
     elif args.command == "tokenize":
-        result = pipe.word_tokenize(text)
+        result = pipe.tokenize(text)
     elif args.command == "lemmatize":
         result = pipe(text).lemmas
     elif args.command == "mask":
-        result = pipe.mask_stages(text, args.stages, args.mask_token)
+        result = pipe.mask(text, args.maskers, args.mask_token)
     else:
         parser.error(f"unknown command: {args.command}")
         return 2
@@ -254,7 +254,7 @@ def _depparse(args) -> int:
 def _pack(args) -> int:
     task = args.command
     try:
-        path = args.pack or hub.path_pack(f"{task}-compact")
+        path = args.pack or hub.path(f"{task}-compact")
     except FileNotFoundError as error:
         print(error, file=sys.stderr)
         return 2
@@ -277,7 +277,7 @@ def _pack(args) -> int:
 def _hub(args) -> int:
     if args.hub_command == "pull":
         if args.name in hub.PACKS:
-            print(hub.pull_pack(args.name, force=args.force))
+            print(hub.pull(args.name, force=args.force))
         else:
             print(hub.pull(args.name, sha256=args.sha256, force=args.force))
     elif args.hub_command == "path":
@@ -316,7 +316,7 @@ def _hub(args) -> int:
             status = "cached" if hub.cached(name) else "missing"
             print(f"{name}\t{status}\t{model.filename}")
         for name in hub.PACKS:
-            status = "cached" if hub.cached_pack(name) else "missing"
+            status = "cached" if hub.cached(name) else "missing"
             print(f"{name}\t{status}\tpack")
     return 0
 
@@ -403,13 +403,13 @@ def _serve(
             if command == "normalize":
                 result = pipe.normalize(text)
             elif command == "tokenize":
-                result = pipe.word_tokenize(text)
+                result = pipe.tokenize(text)
             elif command == "lemmatize":
                 result = pipe(text).lemmas
             elif command == "mask":
-                result = pipe.mask_stages(
+                result = pipe.mask(
                     text,
-                    request.get("stages", stages),
+                    request.get("maskers", request.get("stages", stages)),
                     request.get("mask_token", mask_token),
                 )
             elif command == "depparse":

@@ -58,6 +58,14 @@ fn serves_json_lines() {
 }
 
 #[test]
+fn masks_with_the_current_and_legacy_flags() {
+    let current = stdout(rishe().args(["mask", "به https://a.b برو", "--maskers", "url"]));
+    let legacy = stdout(rishe().args(["mask", "به https://a.b برو", "--stages", "url"]));
+    assert_eq!(current, "به <URL> برو");
+    assert_eq!(legacy, current);
+}
+
+#[test]
 fn lists_hub_packs() {
     let output = stdout(rishe().args(["hub", "list"]));
     assert!(output.contains("depparse-compact\t"));

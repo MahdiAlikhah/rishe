@@ -53,7 +53,7 @@ def main():
     print("| masker | Rishe µs/sentence | Shekar µs/sentence | speedup | exact agreement |")
     print("|---|---|---|---|---|")
     for name, shekar in maskers:
-        rishe_fn = lambda text, name=name: pipe.mask_stages(text, [name])
+        rishe_fn = lambda text, name=name: pipe.mask(text, [name])
         shekar_fn = lambda text, op=shekar: op(text)
         agree = sum(rishe_fn(text) == shekar_fn(text) for text in sentences)
         rishe_us = timeit(rishe_fn, sentences, reps=3) * 1000
@@ -83,7 +83,7 @@ def main():
     print("|---|---|---|---|")
     for name, text in examples:
         print(
-            f"| {name} | {text} | {pipe.mask_stages(text, [name])} "
+            f"| {name} | {text} | {pipe.mask(text, [name])} "
             f"| {dict((n, m) for n, m in maskers)[name](text)} |"
         )
 

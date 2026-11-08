@@ -18,7 +18,7 @@ from rishe import Lemmatizer, Normalizer, WordTokenizer
 | `Lemmatizer` | `Lemmatizer` | `lemmatize(word)` returns Hazm's `past#present` form. |
 | `Stemmer` | `Stemmer` | `stem(word)`. |
 | `TokenSplitter` | `TokenSplitter` | `split_token_words(token)` returns a list of candidate tuples. |
-| `word_tokenize` | `word_tokenize` | Uses verb-part joining like Hazm's helper. |
+| `word_tokenize` | `tokenize` (also `rishe.compat.word_tokenize`) | `rishe.compat` joins verb parts like Hazm's helper; `Pipeline.tokenize` follows `join_verb_parts=`. |
 | `sent_tokenize` | `sent_tokenize` | Sentence splitting only. |
 
 ## Differences
@@ -31,8 +31,8 @@ from rishe import Lemmatizer, Normalizer, WordTokenizer
   tokenization, lemmatization, stemming, normalization, masking and morphology.
 - **Normalizer output is close, not byte-identical.** Hazm applies a larger set
   of spacing and style rules; Rishe exposes them as composable operators via
-  `normalize_stages`. If you need an exact Hazm output, keep Hazm for that step
+  `normalize(stages=...)`. If you need an exact Hazm output, keep Hazm for that step
   while migrating the rest.
 - **Lemmatizer output.** `Lemmatizer.lemmatize` joins the past and present stems
   with `#` for compatibility with Hazm. The plain `Pipeline.lemmatize` returns
-  only the UD-style past lemma; `Pipeline.lemma_full` returns both parts.
+  only the UD-style past lemma; `Pipeline.lemmatize_verb` returns both parts.

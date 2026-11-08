@@ -32,10 +32,10 @@ def main():
     pipe = Pipeline()
     cases = {
         "normalize": (lambda: pipe.normalize("مي كنم"), "می‌کنم"),
-        "tokenize": (lambda: pipe.word_tokenize("سلام دنیا"), ["سلام", "دنیا"]),
+        "tokenize": (lambda: pipe.tokenize("سلام دنیا"), ["سلام", "دنیا"]),
         "lemmatize": (lambda: pipe.lemmatize("می‌روم"), "رفت"),
         "mask": (
-            lambda: pipe.mask_stages("به https://a.b برو", ["url"]),
+            lambda: pipe.mask("به https://a.b برو", ["url"]),
             "به <URL> برو",
         ),
         "date": (lambda: parse_date("۱۲ مرداد ۱۴۰۲").iso, "2023-08-03"),
