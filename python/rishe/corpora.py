@@ -20,7 +20,7 @@ __all__ = [
 ]
 
 
-@dataclass(slots=True)
+@dataclass
 class Token:
     id: str
     form: str
@@ -33,7 +33,7 @@ class Token:
     misc: Dict[str, str] = field(default_factory=dict)
 
 
-@dataclass(slots=True)
+@dataclass
 class Sentence:
     text: str
     tokens: List[Token] = field(default_factory=list)

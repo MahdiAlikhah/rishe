@@ -78,6 +78,10 @@ in the pack manifest and on the model repository.
   traceback for it.
 - The Python console script with no arguments prints usage and exits 0, matching
   the Rust binary and `docs/errors.md`.
+- `import rishe` works on Python 3.9 again: `rishe.corpora` used
+  `dataclass(slots=True)`, which needs Python 3.10, so every 0.x wheel failed to
+  import on the oldest interpreter it claimed to support. The new Python 3.9 CI
+  job caught it.
 - `hub verify` prints the same word (`invalid`) in both CLIs, as documented.
 - `rishe::hub::run` keeps returning `Ok(())` for a failed `verify`, so Rust
   callers of the compatibility wrapper see no change in behaviour.
