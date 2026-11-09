@@ -84,12 +84,17 @@ jobs:
           RUSTDOCFLAGS: "-D warnings"
 
   python-tests:
-    name: python tests
-    runs-on: ubuntu-latest
+    name: python tests (${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.9", "3.12", "3.13"]
+        include:
+          # Python 3.9 is no longer in the ubuntu-latest image (Ubuntu 26 from
+          # late 2026), so the oldest supported interpreter runs on 22.04.
+          - { python: "3.9", os: ubuntu-22.04 }
+          - { python: "3.12", os: ubuntu-latest }
+          - { python: "3.13", os: ubuntu-latest }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
