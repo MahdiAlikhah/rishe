@@ -55,7 +55,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         version=f"%(prog)s {_version()}",
         help="show the version and exit",
     )
-    subparsers = parser.add_subparsers(dest="command", required=True)
+    subparsers = parser.add_subparsers(dest="command")
 
     for name, description in (
         ("normalize", "Normalize Persian text."),
@@ -153,6 +153,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     hub_verify.add_argument("name")
 
     args = parser.parse_args(argv)
+    if args.command is None:
+        parser.print_help()
+        return 0
     if args.command == "hub":
         return _hub(args)
     if args.command == "date":
@@ -361,7 +364,7 @@ def _hub(args) -> int:
         except (OSError, ValueError) as error:
             print(error, file=sys.stderr)
             return 1
-        print("verified" if valid else "missing or corrupt")
+        print("verified" if valid else "invalid")
         return 0 if valid else 1
     else:
         for name, model in hub.MODELS.items():
@@ -445,8 +448,22 @@ def _serve(
     embeddings: Optional[Embeddings] = None,
 ) -> int:
     """Answer protocol-1 JSON lines (`docs/serve-schema.md`) until stdin ends."""
-    for line in sys.stdin:
-        line = line.strip()
+    stream = getattr(sys.stdin, "buffer", sys.stdin)
+    for raw in stream:
+        if isinstance(raw, bytes):
+            try:
+                line = raw.decode("utf-8").strip()
+            except UnicodeDecodeError:
+                print(
+                    json.dumps(
+                        {"ok": False, "error": "request line is not valid UTF-8"},
+                        ensure_ascii=False,
+                    ),
+                    flush=True,
+                )
+                continue
+        else:
+            line = raw.strip()
         if not line:
             continue
         try:

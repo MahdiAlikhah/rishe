@@ -67,6 +67,9 @@ class FrontDoorTest(unittest.TestCase):
     def test_deprecated_word_tokenize(self):
         with self.assertWarns(DeprecationWarning):
             self.assertEqual(rishe.word_tokenize("سلام دنیا"), ["سلام", "دنیا"])
+        # 0.10 behaviour: normalize first and join verb parts, like the compat class.
+        with self.assertWarns(DeprecationWarning):
+            self.assertEqual(rishe.word_tokenize("رفته است"), ["رفته_است"])
 
 
 class DeprecatedSurfaceTest(unittest.TestCase):

@@ -54,7 +54,11 @@ const MANIFEST_SCHEMA: u64 = 1;
 /// message text is identical. An empty message means the failure was already
 /// reported on stdout by `hub verify` printing `invalid`.
 pub fn run(args: &[String]) -> Result<(), String> {
-    run_classified(args).map_err(|error| error.to_string())
+    match run_classified(args) {
+        // `hub verify` reports its failure on stdout; the message is empty.
+        Err(HubError::Runtime(message)) if message.is_empty() => Ok(()),
+        result => result.map_err(|error| error.to_string()),
+    }
 }
 
 /// A Hub failure, classified by the exit code the CLI should use.

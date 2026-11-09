@@ -362,7 +362,10 @@ impl Embeddings {
             .checked_mul(dim)
             .ok_or_else(|| "embedding file is too large for available memory".to_string())?;
 
-        let mut words: Vec<Box<str>> = Vec::with_capacity(vocab);
+        let mut words: Vec<Box<str>> = Vec::new();
+        words
+            .try_reserve(vocab)
+            .map_err(|_| "embedding file is too large for available memory".to_string())?;
         let mut scratch = vec![0_u8; u16::MAX as usize + 1];
         for _ in 0..vocab {
             let mut length = [0_u8; 2];
@@ -783,6 +786,16 @@ mod tests {
         let mut wrong_magic = fixture.clone();
         wrong_magic[0] = b'X';
         assert!(load_bytes(&wrong_magic).is_err());
+
+        // A header that claims a huge vocabulary must be refused, not abort the
+        // process while reserving memory for the word list.
+        let mut huge_vocab = Vec::new();
+        huge_vocab.extend_from_slice(MAGIC);
+        huge_vocab.extend_from_slice(&1_u16.to_le_bytes());
+        huge_vocab.push(DTYPE_F16);
+        huge_vocab.extend_from_slice(&1_u32.to_le_bytes());
+        huge_vocab.extend_from_slice(&u32::MAX.to_le_bytes());
+        assert!(load_bytes(&huge_vocab).is_err());
 
         std::fs::remove_file(&path).ok();
     }

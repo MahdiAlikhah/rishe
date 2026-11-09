@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Model packs are versioned separately from the crate; their versions are recorded
 in the pack manifest and on the model repository.
 
-## [0.11.1] - 2026-11-08
+## [0.11.1] - 2026-11-09
 
 ### Added
 
@@ -63,6 +63,24 @@ in the pack manifest and on the model repository.
 - `docs/ROADMAP.md`. The project does not publish a roadmap and makes no
   promises about future releases; what is published describes what already
   shipped.
+
+### Fixed
+
+- `rishe.word_tokenize` (the deprecated 0.10 alias) keeps its old behaviour:
+  it normalizes and joins verb parts again (`"رفته است"` → `["رفته_است"]`)
+  instead of returning surface tokens, as the 0.11.0 entry promised.
+- A corrupt `.rvec` header that declares an absurd vocabulary size is refused
+  with an error instead of aborting the process while reserving memory; the
+  reader-forever test now covers it.
+- `serve` no longer dies on a request line that is not valid UTF-8: both
+  implementations answer with an error envelope and keep serving, as the
+  protocol page says. The Python console script also no longer prints a
+  traceback for it.
+- The Python console script with no arguments prints usage and exits 0, matching
+  the Rust binary and `docs/errors.md`.
+- `hub verify` prints the same word (`invalid`) in both CLIs, as documented.
+- `rishe::hub::run` keeps returning `Ok(())` for a failed `verify`, so Rust
+  callers of the compatibility wrapper see no change in behaviour.
 
 ## [0.11.0] - 2026-11-08
 

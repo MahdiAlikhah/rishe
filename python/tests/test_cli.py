@@ -156,6 +156,10 @@ class ExitCodeContractTest(unittest.TestCase):
         result = self.assert_exit(0, "--help")
         self.assertIn("tokenize", result.stdout.decode("utf-8", "replace"))
 
+    def test_no_arguments_exits_0(self):
+        result = self.assert_exit(0)
+        self.assertIn("usage", result.stdout.decode("utf-8", "replace").lower())
+
     def test_version_exits_0(self):
         for flag in ("--version", "-V"):
             result = self.assert_exit(0, flag)
@@ -349,6 +353,26 @@ class ServeProtocolTest(unittest.TestCase):
                     '{"command":"mask","text":"info@a.co"}', "--maskers", value
                 )
                 self.assertEqual(response, {"ok": True, "result": "<EMAIL>"})
+
+    def test_non_utf8_line_is_answered_and_the_server_keeps_going(self):
+        request = b"\xff\xfe\n" + b'{"command":"version"}\n'
+        result = subprocess.run(
+            [sys.executable, "-m", "rishe.cli", "serve"],
+            input=request,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(
+            result.returncode, 0, result.stderr.decode("utf-8", "replace")
+        )
+        responses = result.stdout.decode("utf-8").splitlines()
+        self.assertEqual(len(responses), 2, responses)
+        first = json.loads(responses[0])
+        self.assertFalse(first["ok"])
+        self.assertIn("UTF-8", first["error"])
+        second = json.loads(responses[1])
+        self.assertTrue(second["ok"])
+        self.assertEqual(second["result"]["protocol"], 1)
 
     def test_errors_and_blank_lines_keep_the_stream_in_sync(self):
         result = self.serve(

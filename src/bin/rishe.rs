@@ -518,9 +518,29 @@ fn serve(args: &[String]) -> Result<(), CliError> {
     };
 
     let stdin = std::io::stdin();
-    for line in stdin.lock().lines() {
-        let line = line.map_err(|error| format!("cannot read stdin: {error}"))?;
-        let line = line.trim();
+    let mut reader = stdin.lock();
+    let mut raw = Vec::new();
+    loop {
+        raw.clear();
+        let read = reader
+            .read_until(b'\n', &mut raw)
+            .map_err(|error| format!("cannot read stdin: {error}"))?;
+        if read == 0 {
+            break;
+        }
+        let line = match std::str::from_utf8(&raw) {
+            Ok(line) => line.trim(),
+            Err(_) => {
+                // A line that is not valid UTF-8 is still one request line: answer
+                // it and keep serving, as `docs/serve-schema.md` promises.
+                let response = json!({"ok": false, "error": "request line is not valid UTF-8"});
+                println!(
+                    "{}",
+                    serde_json::to_string(&response).map_err(|error| error.to_string())?
+                );
+                continue;
+            }
+        };
         if line.is_empty() {
             continue;
         }

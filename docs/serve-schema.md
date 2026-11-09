@@ -19,7 +19,8 @@ part of it (see [Envelope](#envelope)).
   flushes after each response, so a client can pair lines one to one.
 - A malformed line or a failed command produces the error envelope for that line
   only. The server keeps reading and answering; per-request errors never change
-  the exit status.
+  the exit status. A line that is not valid UTF-8 is a malformed line: it gets
+  the error envelope and the server keeps serving.
 - On end of input (EOF) the server exits with status 0, including after lines
   that produced errors.
 
@@ -306,6 +307,7 @@ allows — match on the `ok`/`error` envelope, not on the text.
 | situation | response `error` |
 |---|---|
 | the line is not JSON | `invalid JSON: <parser message>` |
+| the line is not valid UTF-8 | `request line is not valid UTF-8` |
 | the object has no `command` | `request has no command` |
 | the command is not one above | `unknown command: <name>` |
 | embedding command and no `--model` | `serve has no embedding model; pass --model <path-or-name>` |

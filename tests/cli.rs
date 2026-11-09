@@ -102,11 +102,47 @@ fn serve_answers_the_version_handshake() {
         .expect("write stdin");
     let output = child.wait_with_output().expect("wait");
     assert_eq!(output.status.code(), Some(0));
-    let expected = format!(
-        "{{\"ok\":true,\"result\":{{\"name\":\"rishe\",\"protocol\":1,\"version\":\"{}\"}}}}",
-        env!("CARGO_PKG_VERSION")
-    );
-    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), expected);
+    // Parse the envelope: key order and whitespace are not part of protocol 1.
+    let response: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("one JSON object on stdout");
+    assert_eq!(response["ok"], true);
+    assert_eq!(response["result"]["name"], "rishe");
+    assert_eq!(response["result"]["protocol"], 1);
+    assert_eq!(response["result"]["version"], env!("CARGO_PKG_VERSION"));
+}
+
+#[test]
+fn serve_survives_a_non_utf8_line() {
+    use std::io::Write;
+    let mut child = rishe()
+        .arg("serve")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn rishe serve");
+    let mut stdin = child.stdin.take().expect("stdin");
+    stdin
+        .write_all(b"\xff\xfe\n{\"command\":\"version\"}\n")
+        .expect("write stdin");
+    drop(stdin);
+    let output = child.wait_with_output().expect("wait");
+    // A bad line is answered, not fatal: the server keeps serving and exits 0.
+    assert_eq!(output.status.code(), Some(0));
+    let lines: Vec<&[u8]> = output
+        .stdout
+        .split(|byte| *byte == b'\n')
+        .filter(|l| !l.is_empty())
+        .collect();
+    assert_eq!(lines.len(), 2, "one response per request line");
+    let first: serde_json::Value = serde_json::from_slice(lines[0]).expect("error envelope");
+    assert_eq!(first["ok"], false);
+    assert!(first["error"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("UTF-8"));
+    let second: serde_json::Value = serde_json::from_slice(lines[1]).expect("handshake");
+    assert_eq!(second["ok"], true);
+    assert_eq!(second["result"]["protocol"], 1);
 }
 
 #[test]
