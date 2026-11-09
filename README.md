@@ -34,10 +34,9 @@ wheels and a Rust crate.
 ## Quick start
 
 ```python
-from rishe import Pipeline
+import rishe
 
-pipe = Pipeline()
-doc = pipe("اون گفت فردا می‌ره کتابخونه و یه کتاب خوب می‌خونه.")
+doc = rishe.process("اون گفت فردا می‌ره کتابخونه و یه کتاب خوب می‌خونه.")
 
 print(doc.tokens)
 # ['آن', 'گفت', 'فردا', 'می‌رود', 'کتابخانه', 'و', 'یک', 'کتاب', 'خوب', 'می‌خواند', '.']
@@ -46,6 +45,14 @@ print(doc.lemmas)
 print(doc.formal_text)
 # 'آن گفت فردا می‌رود کتابخانه و یک کتاب خوب می‌خواند.'
 ```
+
+`rishe.process` runs the whole pipeline in one call: normalization, colloquial →
+formal rewriting, tokenization, lemmatization, sentence splitting and ezafe.
+Each step is also a module-level function — `rishe.normalize`, `rishe.tokenize`
+(surface tokens, no normalization), `rishe.lemmatize`, `rishe.sent_tokenize`,
+`rishe.mask`, `rishe.keywords`. `Pipeline(...)` is still there for configuration
+(model packs, normalizer flags) and for the methods that have no module-level
+function.
 
 More Python usage is in [README.pypi.md](README.pypi.md); the Rust API is in
 [README.crates.md](README.crates.md). Persian readers can start with

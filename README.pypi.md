@@ -26,10 +26,9 @@ Python 3.9+. Linux (glibc and musl), macOS and Windows wheels are published.
 ## Quickstart
 
 ```python
-from rishe import Pipeline
+import rishe
 
-pipe = Pipeline()
-doc = pipe("اون گفت فردا می‌ره کتابخونه و یه کتاب خوب می‌خونه.")
+doc = rishe.process("اون گفت فردا می‌ره کتابخونه و یه کتاب خوب می‌خونه.")
 
 print(doc.tokens)
 # ['آن', 'گفت', 'فردا', 'می‌رود', 'کتابخانه', 'و', 'یک', 'کتاب', 'خوب', 'می‌خواند', '.']
@@ -39,24 +38,27 @@ print(doc.formal_text)
 # 'آن گفت فردا می‌رود کتابخانه و یک کتاب خوب می‌خواند.'
 ```
 
-`pipe.normalize`, `pipe.tokenize`, `pipe.sent_tokenize`, `pipe.lemmatize`,
-`pipe.stem`, `pipe.conjugate`, `pipe.spell_correct` and the rest are methods on
-the same object. `pipe(text)` runs the whole pipeline. `pipe.tokenize(text)` is
-the tokenizer alone: it returns surface tokens and does not normalize — call
-`pipe.normalize` first, or use `pipe(text).tokens`, for normalized tokens.
-
-Most of them are also module-level functions, so the common cases need no
-object at all:
+`rishe.process` runs the whole pipeline in one call: normalization, colloquial →
+formal rewriting, tokenization, lemmatization, sentence splitting and ezafe.
+Every step is also a module-level function, so the common cases need no object
+at all:
 
 ```python
 import rishe
 
-rishe.normalize("مي كنم")        # 'می‌کنم'
-rishe.tokenize("سلام دنیا")       # ['سلام', 'دنیا']
-rishe.sent_tokenize("یک. دو.")    # ['یک.', 'دو.']
+rishe.normalize("مي كنم")                    # 'می‌کنم'
+rishe.tokenize("سلام دنیا")                   # ['سلام', 'دنیا'] — surface tokens
+rishe.tokenize(rishe.normalize("مي كنم"))     # ['می‌کنم']
+rishe.sent_tokenize("یک. دو.")                # ['یک.', 'دو.']
+rishe.lemmatize("می‌روم")                     # 'رفت'
 rishe.mask(text, maskers=["url", "email"])
-rishe.keywords(text, n=5)         # RAKE key phrases
+rishe.keywords(text, n=5)                     # RAKE key phrases
 ```
+
+All module-level calls share one default pipeline, created on first use.
+`Pipeline(...)` remains for configuration (model packs, normalizer flags) and for
+the methods that have no module-level function, such as `conjugate`, `rake`,
+`textrank` and `spell_correct`.
 
 ## Class-based API
 

@@ -52,6 +52,10 @@ in the pack manifest and on the model repository.
   than as a migration guide. The three per-release model cards are merged into
   one `docs/MODEL_CARDS.md`, linked from the README, `docs/index.md` and
   `docs/MODEL_BENCHMARKS.md`.
+- Documentation: the quick-start examples in both READMEs and `docs/index.md`
+  now use the module-level front door (`rishe.process`) instead of constructing
+  a `Pipeline`. `Pipeline` remains for configuration and for the methods that
+  have no module-level function.
 
 ### Removed
 
