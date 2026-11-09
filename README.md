@@ -36,21 +36,26 @@ wheels and a Rust crate.
 ```python
 import rishe
 
-doc = rishe.process("اون گفت فردا می‌ره کتابخونه و یه کتاب خوب می‌خونه.")
+rishe.normalize("مي كنم")                     # 'می‌کنم'
+rishe.tokenize("سلام دنیا")                    # ['سلام', 'دنیا']
+rishe.lemmatize("می‌روم")                      # 'رفت'
 
-print(doc.tokens)
-# ['آن', 'گفت', 'فردا', 'می‌رود', 'کتابخانه', 'و', 'یک', 'کتاب', 'خوب', 'می‌خواند', '.']
-print(doc.lemmas)
-# ['آن', 'گفت', 'فردا', 'رفت', 'کتابخانه', 'و', 'یک', 'کتاب', 'خوب', 'خواند', '.']
-print(doc.formal_text)
-# 'آن گفت فردا می‌رود کتابخانه و یک کتاب خوب می‌خواند.'
+text = "اون گفت فردا می‌ره کتابخونه و یه کتاب خوب می‌خونه."
+rishe.process(text).tokens                     # ['آن', 'گفت', 'فردا', 'می‌رود', 'کتابخانه', 'و', 'یک', 'کتاب', 'خوب', 'می‌خواند', '.']
+rishe.process(text).formal_text                # 'آن گفت فردا می‌رود کتابخانه و یک کتاب خوب می‌خواند.'
 ```
 
-`rishe.process` runs the whole pipeline in one call: normalization, colloquial →
-formal rewriting, tokenization, lemmatization, sentence splitting and ezafe.
-Each step is also a module-level function — `rishe.normalize`, `rishe.tokenize`
-(surface tokens, no normalization), `rishe.lemmatize`, `rishe.sent_tokenize`,
-`rishe.mask`, `rishe.keywords`. `Pipeline(...)` is still there for configuration
+`normalize`, `tokenize` and `lemmatize` are single steps: no object needed.
+`process` runs the whole pipeline in one call — normalization, colloquial →
+formal rewriting, tokenization, lemmatization, sentence splitting and ezafe —
+and returns a result object with all of those fields:
+
+```python
+doc = rishe.process(text)   # one run, every field
+doc.lemmas                  # ['آن', 'گفت', 'فردا', 'رفت', 'کتابخانه', 'و', 'یک', 'کتاب', 'خوب', 'خواند', '.']
+```
+
+`Pipeline(...)` is not required for any of this. It stays for configuration
 (model packs, normalizer flags) and for the methods that have no module-level
 function.
 

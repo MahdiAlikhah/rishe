@@ -53,7 +53,8 @@ in the pack manifest and on the model repository.
   one `docs/MODEL_CARDS.md`, linked from the README, `docs/index.md` and
   `docs/MODEL_BENCHMARKS.md`.
 - Documentation: the quick-start examples in both READMEs and `docs/index.md`
-  now use the module-level front door (`rishe.process`) instead of constructing
+  now show direct module-level calls (`rishe.normalize`, `rishe.tokenize`,
+  `rishe.lemmatize`, `rishe.process(text).formal_text`) instead of constructing
   a `Pipeline`. `Pipeline` remains for configuration and for the methods that
   have no module-level function.
 

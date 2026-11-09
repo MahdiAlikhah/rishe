@@ -28,37 +28,34 @@ Python 3.9+. Linux (glibc and musl), macOS and Windows wheels are published.
 ```python
 import rishe
 
-doc = rishe.process("اون گفت فردا می‌ره کتابخونه و یه کتاب خوب می‌خونه.")
+rishe.normalize("مي كنم")                     # 'می‌کنم'
+rishe.tokenize("سلام دنیا")                    # ['سلام', 'دنیا']
+rishe.lemmatize("می‌روم")                      # 'رفت'
 
-print(doc.tokens)
-# ['آن', 'گفت', 'فردا', 'می‌رود', 'کتابخانه', 'و', 'یک', 'کتاب', 'خوب', 'می‌خواند', '.']
-print(doc.lemmas)
-# ['آن', 'گفت', 'فردا', 'رفت', 'کتابخانه', 'و', 'یک', 'کتاب', 'خوب', 'خواند', '.']
-print(doc.formal_text)
-# 'آن گفت فردا می‌رود کتابخانه و یک کتاب خوب می‌خواند.'
+text = "اون گفت فردا می‌ره کتابخونه و یه کتاب خوب می‌خونه."
+rishe.process(text).tokens                     # normalized tokens, see below
+rishe.process(text).formal_text                # 'آن گفت فردا می‌رود کتابخانه و یک کتاب خوب می‌خواند.'
 ```
 
-`rishe.process` runs the whole pipeline in one call: normalization, colloquial →
-formal rewriting, tokenization, lemmatization, sentence splitting and ezafe.
-Every step is also a module-level function, so the common cases need no object
-at all:
+`normalize`, `tokenize` and `lemmatize` are single steps: no object needed.
+`process` runs the whole pipeline in one call — normalization, colloquial →
+formal rewriting, tokenization, lemmatization, sentence splitting and ezafe —
+and returns a result object with all of those fields. Bind it once when you need
+more than one field from the same run:
 
 ```python
-import rishe
-
-rishe.normalize("مي كنم")                    # 'می‌کنم'
-rishe.tokenize("سلام دنیا")                   # ['سلام', 'دنیا'] — surface tokens
-rishe.tokenize(rishe.normalize("مي كنم"))     # ['می‌کنم']
-rishe.sent_tokenize("یک. دو.")                # ['یک.', 'دو.']
-rishe.lemmatize("می‌روم")                     # 'رفت'
-rishe.mask(text, maskers=["url", "email"])
-rishe.keywords(text, n=5)                     # RAKE key phrases
+doc = rishe.process(text)
+doc.tokens        # ['آن', 'گفت', 'فردا', 'می‌رود', 'کتابخانه', 'و', 'یک', 'کتاب', 'خوب', 'می‌خواند', '.']
+doc.lemmas        # ['آن', 'گفت', 'فردا', 'رفت', 'کتابخانه', 'و', 'یک', 'کتاب', 'خوب', 'خواند', '.']
+doc.formal_text   # 'آن گفت فردا می‌رود کتابخانه و یک کتاب خوب می‌خواند.'
 ```
 
-All module-level calls share one default pipeline, created on first use.
-`Pipeline(...)` remains for configuration (model packs, normalizer flags) and for
-the methods that have no module-level function, such as `conjugate`, `rake`,
-`textrank` and `spell_correct`.
+Other single steps are module-level calls as well: `rishe.sent_tokenize`,
+`rishe.tokenize_spans`, `rishe.mask`, `rishe.keywords`, `rishe.stem`. All of
+them share one default pipeline, created on first use. `Pipeline(...)` remains
+for configuration (model packs, normalizer flags) and for the methods that have
+no module-level function, such as `conjugate`, `rake`, `textrank` and
+`spell_correct`.
 
 ## Class-based API
 

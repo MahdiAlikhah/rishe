@@ -13,11 +13,13 @@ pip install rishe
 ```python
 import rishe
 
-doc = rishe.process("اون گفت فردا می‌ره کتابخونه و یه کتاب خوب می‌خونه.")
+rishe.normalize("مي كنم")        # 'می‌کنم'
+rishe.tokenize("سلام دنیا")       # ['سلام', 'دنیا']
+rishe.lemmatize("می‌روم")         # 'رفت'
 
-doc.tokens       # ['آن', 'گفت', 'فردا', 'می‌رود', 'کتابخانه', 'و', 'یک', 'کتاب', 'خوب', 'می‌خواند', '.']
-doc.lemmas       # ['آن', 'گفت', 'فردا', 'رفت', 'کتابخانه', 'و', 'یک', 'کتاب', 'خوب', 'خواند', '.']
-doc.formal_text  # 'آن گفت فردا می‌رود کتابخانه و یک کتاب خوب می‌خواند.'
+text = "اون گفت فردا می‌ره کتابخونه و یه کتاب خوب می‌خونه."
+rishe.process(text).tokens       # ['آن', 'گفت', 'فردا', 'می‌رود', 'کتابخانه', 'و', 'یک', 'کتاب', 'خوب', 'می‌خواند', '.']
+rishe.process(text).formal_text  # 'آن گفت فردا می‌رود کتابخانه و یک کتاب خوب می‌خواند.'
 ```
 
 See the [README](https://github.com/MahdiAlikhah/rishe) for the full feature
