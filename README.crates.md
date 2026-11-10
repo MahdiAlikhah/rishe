@@ -14,8 +14,10 @@ Fast Persian NLP and morphology for Rust.
 cargo add rishe
 ```
 
-The default crate has no model downloads and builds on Rust 1.88. The optional
-`models` feature adds POS, NER and ezafe pack inference and needs Rust 1.91.
+The default crate and the `python` feature build on Rust 1.88: older toolchains
+stop at `icu_collections@2.4.0 requires rustc 1.88`. The optional `models`
+feature adds POS, NER and ezafe pack inference and needs Rust 1.91
+(`tract@0.23.9`). Newer stable toolchains work.
 
 ```bash
 cargo install rishe

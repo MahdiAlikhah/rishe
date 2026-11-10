@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Model packs are versioned separately from the crate; their versions are recorded
 in the pack manifest and on the model repository.
 
+## [Unreleased]
+
+### Added
+
+- `README.md` states the supported versions with measured numbers instead of a
+  guess: CPython 3.9 – 3.14 for the wheel, Rust 1.88 for the default and
+  `python` features, Rust 1.91 for `models` and for a source install of the
+  Python package, each with the exact message an older tool refuses with. The
+  PyPI, crates.io and Persian READMEs say the same, and
+  `docs/STABILITY.md` carries the matrix.
+- `Programming Language :: Python :: 3.14` and `Programming Language :: Python
+  :: Implementation :: CPython` classifiers.
+
+### Changed
+
+- CI builds and tests the Python package on every supported CPython version
+  (3.9, 3.10, 3.11, 3.12, 3.13, 3.14), and the MSRV job also compiles the
+  `python` feature on Rust 1.88.
+
 ## [0.11.1] - 2026-11-09
 
 ### Added

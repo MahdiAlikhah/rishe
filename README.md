@@ -25,11 +25,29 @@ wheels and a Rust crate.
 
 ## Choose your entry point
 
-- **Python** — `pip install rishe` (Python 3.9+, no Python dependencies).
+- **Python** — `pip install rishe` (CPython 3.9 – 3.14, no Python dependencies).
   Read [README.pypi.md](README.pypi.md) or the [PyPI page](https://pypi.org/project/rishe/).
 - **Rust** — `cargo add rishe` (Rust 1.88+; model packs need 1.91), or
   `cargo install rishe` for the CLI. Read [README.crates.md](README.crates.md)
   or the [crates.io page](https://crates.io/crates/rishe).
+
+## Supported versions
+
+Each row below was measured on the published artifacts, not assumed: the
+interpreters and toolchains were installed and run. CI rebuilds the Python
+package on every listed CPython version and enforces the Rust 1.88 gate on every
+push.
+
+| | works on | older than that |
+|---|---|---|
+| CPython wheel | 3.9 – 3.14 | `pip` refuses: `No matching distribution found` (the wheel is tagged 3.9+, `Requires-Python >=3.9`) |
+| Rust, default and `python` features | 1.88 and newer | `cargo` refuses: `icu_collections@2.4.0 requires rustc 1.88` |
+| Rust, `models` feature | 1.91 and newer | `cargo` refuses: `tract@0.23.9 requires rustc 1.91` |
+
+Free-threaded CPython (`3.13t`, `3.14t`) and PyPy have no wheel and are not
+supported. Building the Python package from source needs Rust 1.91, because the
+wheel enables the `models` feature. Platform and architecture support is in
+[docs/STABILITY.md](docs/STABILITY.md).
 
 ## Quick start
 

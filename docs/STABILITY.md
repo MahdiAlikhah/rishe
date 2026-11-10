@@ -65,12 +65,15 @@ returned before.
 
 | surface | supported |
 |---|---|
-| Python | CPython 3.9 – 3.13, abi3 wheel, no runtime dependencies |
-| Rust | MSRV 1.88 for the default feature set (driven by the locked dependency graph); the `models` feature needs Rust 1.91 |
+| Python | CPython 3.9 – 3.14, abi3 wheel, no runtime dependencies. Free-threaded builds (`3.13t`, `3.14t`) and PyPy are not supported |
+| Rust | MSRV 1.88 for the default feature set (driven by the locked dependency graph); the `models` feature, and therefore the Python package, needs Rust 1.91 |
 | Platforms | Linux x86_64/aarch64 (glibc and musl), macOS x86_64/arm64, Windows x86_64 |
 | Command line | the commands documented in [`cli.md`](cli.md) |
 
-Dropping a platform, a Python version or the MSRV is a major-version change.
+These rows are measured on the released artifacts, not assumed: CI builds the
+Python package on every listed CPython version and enforces the Rust 1.88 gate on
+every push. A version or platform not listed here is not supported. Dropping a
+platform, a Python version or the MSRV is a major-version change.
 
 ## Failure behaviour
 

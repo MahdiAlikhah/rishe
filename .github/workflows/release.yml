@@ -41,10 +41,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --locked --features models
 
-  # MSRV gate: the default feature set must build on the highest `rust-version`
-  # declared by anything in that feature graph (currently 1.88, via
-  # ureq -> url -> idna -> icu_normalizer). The `models` feature needs a much
-  # newer toolchain, so it is deliberately not part of this job.
+  # MSRV gate: the default feature set and the `python` feature must build on
+  # the highest `rust-version` declared by anything in that feature graph
+  # (currently 1.88, via ureq -> url -> idna -> icu_normalizer). `models` has a
+  # higher floor of its own (tract declares 1.91), so it is deliberately not
+  # part of this job.
   #
   # The gate also pins the toolchain: raise the pin only together with
   # `rust-version` in Cargo.toml and the MSRV statement in the READMEs and
@@ -57,6 +58,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.88.0
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --locked
+      - run: cargo check --locked --features python
 
   # Every declared feature combination must compile on its own.
   features:
@@ -89,12 +91,17 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # One job per supported CPython version: README.md and docs/STABILITY.md
+        # name 3.9 – 3.14, so every one of them is built and tested here.
         include:
           # Python 3.9 is no longer in the ubuntu-latest image (Ubuntu 26 from
           # late 2026), so the oldest supported interpreter runs on 22.04.
           - { python: "3.9", os: ubuntu-22.04 }
+          - { python: "3.10", os: ubuntu-latest }
+          - { python: "3.11", os: ubuntu-latest }
           - { python: "3.12", os: ubuntu-latest }
           - { python: "3.13", os: ubuntu-latest }
+          - { python: "3.14", os: ubuntu-latest }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

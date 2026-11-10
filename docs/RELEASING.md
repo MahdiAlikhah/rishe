@@ -40,6 +40,11 @@ cargo test --locked --features models
 # declared anywhere in that feature graph (currently 1.88).
 rustup toolchain install 1.88.0 --profile minimal
 cargo +1.88.0 check --locked
+cargo +1.88.0 check --locked --features python
+
+# `models` (and with it the Python wheel) needs 1.91: `tract` declares it.
+rustup toolchain install 1.91.0 --profile minimal
+cargo +1.91.0 check --locked --features python,models
 
 # Every declared feature combination must compile on its own.
 cargo check --locked --no-default-features
@@ -58,7 +63,7 @@ PYTHONIOENCODING=utf-8 python examples/basic.py
 PYTHONIOENCODING=utf-8 python examples/masking_keywords.py
 ```
 
-CI runs the Python suite on CPython 3.9, 3.12 and 3.13, so check the oldest
+CI runs the Python suite on CPython 3.9 through 3.14, so check the oldest
 interpreter you have (`py -3.9` on Windows, `python3.9` elsewhere) before
 tagging:
 
@@ -68,11 +73,14 @@ py -3.9 -m unittest discover -s python/tests -p "test_*.py" -v
 
 The MSRV gate is a real `cargo check --locked` on Rust 1.88: that is the highest
 `rust-version` declared by anything in the default-feature dependency graph
-today (`ureq` → `url` → `idna` → `icu_normalizer`). `Cargo.lock` is in lockfile
-format 4, which no cargo older than 1.78 can even read, so a lower `--locked`
-gate cannot work without rewriting the lock. Raising the gate means bumping
-`Cargo.toml` `rust-version` together with `README.md`, `README.crates.md` and
-`docs/STABILITY.md` in the same commit. `examples/embeddings.py` loads the
+today (`ureq` → `url` → `idna` → `icu_normalizer`). The `models` feature is a
+separate floor: `tract` declares 1.91, and the Python wheel enables it, so a
+source install of the Python package needs 1.91 even though the default crate
+does not. `Cargo.lock` is in lockfile format 4, which no cargo older than 1.78
+can even read, so a lower `--locked` gate cannot work without rewriting the
+lock. Raising a gate means bumping `Cargo.toml` `rust-version` together with
+`README.md`, `README.crates.md`, `README.pypi.md` and `docs/STABILITY.md` in the
+same commit. `examples/embeddings.py` loads the
 `rishe-embed-fa-300-v2` pack from the hub cache, so it is deliberately not part
 of the offline gate — run it by hand once the cache is populated.
 
@@ -126,7 +134,7 @@ python -m unittest discover -s python/tests -p "test_*.py" -v
    ```
 
 6. **Watch CI** until every job is green: `rust` (three OSes), `rust models`,
-   `msrv`, `features`, `docs`, `examples`, `python tests` (3.9, 3.12, 3.13), and
+   `msrv`, `features`, `docs`, `examples`, `python tests` (3.9 – 3.14), and
    the wheel and sdist artifacts. The two publish jobs are tag-gated and run
    after all of the gates above:
 
@@ -221,11 +229,12 @@ Network tip: the system proxy may throttle uploads. Bypassing it for HF
 - [ ] version bumped in `Cargo.toml` and `Cargo.lock`
 - [ ] `CHANGELOG.md` entry added
 - [ ] fmt, clippy, tests (default + models), Python suite, golden benchmark green
-- [ ] MSRV gate green (`cargo +1.88.0 check --locked`)
+- [ ] MSRV gate green (`cargo +1.88.0 check --locked`, `--features python`)
+- [ ] `models` gate green (`cargo +1.91.0 check --locked --features python,models`)
 - [ ] feature matrix green (`--no-default-features`, `python`, `models`, `python,models`)
 - [ ] `cargo doc` warning-free under `RUSTDOCFLAGS="-D warnings"`
 - [ ] offline examples (`basic.py`, `masking_keywords.py`) run
-- [ ] Python suite green on 3.9, 3.12 and 3.13
+- [ ] Python suite green on 3.9 – 3.14
 - [ ] working tree contains only intended files
 - [ ] commit and tag authored solely by Mahdi Alikhah
 - [ ] CI green on the tag

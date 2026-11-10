@@ -21,7 +21,11 @@ dependencies, and the base pipeline needs no model downloads.
 pip install rishe
 ```
 
-Python 3.9+. Linux (glibc and musl), macOS and Windows wheels are published.
+Wheels for CPython 3.9 – 3.14: Linux (glibc and musl), macOS (Intel and Apple
+Silicon) and Windows x86_64. On 3.8 or older `pip` stops with `No matching
+distribution found`; there is no wheel for it. Free-threaded CPython (`3.13t`,
+`3.14t`) and PyPy are not supported. Building from a source release needs
+Rust 1.91.
 
 ## Quickstart
 
