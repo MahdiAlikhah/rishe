@@ -14,10 +14,12 @@ fn set() -> &'static HashSet<&'static str> {
     })
 }
 
+/// Whether the word is in the bundled stopword list.
 pub fn is_stopword(word: &str) -> bool {
     set().contains(word)
 }
 
+/// Drop stopword tokens, keeping the order of the rest.
 pub fn remove_stopwords(tokens: Vec<String>) -> Vec<String> {
     tokens
         .into_iter()
@@ -25,6 +27,7 @@ pub fn remove_stopwords(tokens: Vec<String>) -> Vec<String> {
         .collect()
 }
 
+/// Every stopword, in unspecified order.
 pub fn stopwords() -> Vec<String> {
     set().iter().map(|word| (*word).to_string()).collect()
 }

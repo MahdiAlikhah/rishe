@@ -4,14 +4,22 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 const ZWNJ: char = '\u{200C}';
 
+/// Per-character keyboard-typo probabilities; a fixed `seed` makes the output reproducible.
 #[derive(Debug, Clone, Copy)]
 pub struct KeyboardNoiseOptions {
+    /// Chance to replace a character with a keyboard neighbour.
     pub substitution_prob: f64,
+    /// Chance to insert a neighbouring character before a character.
     pub insertion_prob: f64,
+    /// Chance to drop a character.
     pub deletion_prob: f64,
+    /// Chance to double a character.
     pub repeat_prob: f64,
+    /// Chance to emit the shifted-row form of a character.
     pub shifted_prob: f64,
+    /// Also shift letters, not only digits and punctuation.
     pub shift_letters: bool,
+    /// RNG seed; `None` seeds from the clock.
     pub seed: Option<u64>,
 }
 
@@ -29,11 +37,16 @@ impl Default for KeyboardNoiseOptions {
     }
 }
 
+/// Per-character OCR confusion probabilities; a fixed `seed` makes the output reproducible.
 #[derive(Debug, Clone, Copy)]
 pub struct OcrNoiseOptions {
+    /// Chance to replace a character with a visually similar one.
     pub substitution_prob: f64,
+    /// Chance to drop a character.
     pub deletion_prob: f64,
+    /// Chance to double a character.
     pub repeat_prob: f64,
+    /// RNG seed; `None` seeds from the clock.
     pub seed: Option<u64>,
 }
 
@@ -48,12 +61,18 @@ impl Default for OcrNoiseOptions {
     }
 }
 
+/// ZWNJ and space corruption probabilities; a fixed `seed` makes the output reproducible.
 #[derive(Debug, Clone, Copy)]
 pub struct WhitespaceNoiseOptions {
+    /// Chance to delete a ZWNJ.
     pub zwnj_deletion_prob: f64,
+    /// Chance to replace a ZWNJ with a space.
     pub zwnj_to_space_prob: f64,
+    /// Chance to delete a space.
     pub space_deletion_prob: f64,
+    /// Chance to replace a space with a ZWNJ.
     pub space_to_zwnj_prob: f64,
+    /// RNG seed; `None` seeds from the clock.
     pub seed: Option<u64>,
 }
 
@@ -69,6 +88,7 @@ impl Default for WhitespaceNoiseOptions {
     }
 }
 
+/// Corrupt characters with keyboard-neighbour typos; characters without a neighbour are kept.
 pub fn keyboard_noise(text: &str, options: KeyboardNoiseOptions) -> String {
     let mut rng = Rng::new(options.seed.unwrap_or_else(now_seed));
     let mut out = String::with_capacity(text.len());
@@ -108,6 +128,7 @@ pub fn keyboard_noise(text: &str, options: KeyboardNoiseOptions) -> String {
     out
 }
 
+/// Replace Persian letters with OCR confusions; other characters are kept.
 pub fn ocr_noise(text: &str, options: OcrNoiseOptions) -> String {
     let mut rng = Rng::new(options.seed.unwrap_or_else(now_seed));
     let mut out = String::with_capacity(text.len());
@@ -136,6 +157,7 @@ pub fn ocr_noise(text: &str, options: OcrNoiseOptions) -> String {
     out
 }
 
+/// Corrupt ZWNJ and space separators as configured; other characters are kept.
 pub fn whitespace_noise(text: &str, options: WhitespaceNoiseOptions) -> String {
     let mut rng = Rng::new(options.seed.unwrap_or_else(now_seed));
     let mut out = String::with_capacity(text.len());

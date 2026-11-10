@@ -25,17 +25,25 @@ const MONTHS: [&str; 12] = [
     "اسفند",
 ];
 
+/// A Jalali (Solar Hijri) date; [`Jalali::new`] validates the fields.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Jalali {
+    /// Jalali year, e.g. `1402`.
     pub year: i32,
+    /// Month, `1`-`12`.
     pub month: u8,
+    /// Day of month, `1`-`31` depending on the month.
     pub day: u8,
 }
 
+/// A Gregorian date used for conversion.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Gregorian {
+    /// Gregorian year, e.g. `2023`.
     pub year: i32,
+    /// Month, `1`-`12`.
     pub month: u8,
+    /// Day of month, `1`-`31` depending on the month.
     pub day: u8,
 }
 
@@ -46,6 +54,7 @@ struct JalCal {
 }
 
 impl Jalali {
+    /// Construct a date, or `None` when the month, day or year is outside the supported range.
     pub fn new(year: i32, month: u8, day: u8) -> Option<Self> {
         if day == 0 || day > Self::month_days(year, month)? {
             return None;
@@ -53,10 +62,12 @@ impl Jalali {
         Some(Self { year, month, day })
     }
 
+    /// Whether the Jalali year is a leap year, i.e. Esfand has 30 days.
     pub fn is_leap(year: i32) -> bool {
         jal_cal(year).is_some_and(|cal| cal.leap == 0)
     }
 
+    /// Days in a Jalali month, or `None` for an unsupported year or a month outside `1..=12`.
     pub fn month_days(year: i32, month: u8) -> Option<u8> {
         let cal = jal_cal(year)?;
         Some(match month {
@@ -73,6 +84,7 @@ impl Jalali {
         })
     }
 
+    /// Convert to Gregorian, or `None` when the date or year is outside the supported range.
     pub fn to_gregorian(self) -> Option<Gregorian> {
         if self.day == 0 || self.day > Self::month_days(self.year, self.month)? {
             return None;
@@ -86,6 +98,7 @@ impl Jalali {
         })
     }
 
+    /// Convert from Gregorian, or `None` when the date is invalid or outside the supported range.
     pub fn from_gregorian(date: Gregorian) -> Option<Self> {
         if date.day == 0 || date.day > Gregorian::month_days(date.year, date.month)? {
             return None;
@@ -124,10 +137,12 @@ impl Jalali {
 }
 
 impl Gregorian {
+    /// Whether the Gregorian year is a leap year.
     pub fn is_leap(year: i32) -> bool {
         (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
     }
 
+    /// Days in a Gregorian month, or `None` when the month is outside `1..=12`.
     pub fn month_days(year: i32, month: u8) -> Option<u8> {
         Some(match month {
             1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
@@ -143,6 +158,7 @@ impl Gregorian {
         })
     }
 
+    /// Format as `YYYY-MM-DD`; the fields are not validated.
     pub fn to_iso(self) -> String {
         format!("{:04}-{:02}-{:02}", self.year, self.month, self.day)
     }
@@ -150,6 +166,16 @@ impl Gregorian {
 
 /// Parse a Jalali date from `۱۴۰۲/۰۵/۱۲`, `12-5-1402` (day first when the year
 /// is last) or `۱۲ مرداد ۱۴۰۲`.
+///
+/// ```
+/// use rishe::dates;
+///
+/// let date = dates::parse("۱۲ مرداد ۱۴۰۲").unwrap();
+/// assert_eq!(date.to_iso().as_deref(), Some("2023-08-03"));
+///
+/// let gregorian = dates::Gregorian { year: 2023, month: 8, day: 3 };
+/// assert_eq!(dates::format(gregorian).as_deref(), Some("۱۲ مرداد ۱۴۰۲"));
+/// ```
 pub fn parse(text: &str) -> Option<Jalali> {
     let normalized: String = text
         .trim()

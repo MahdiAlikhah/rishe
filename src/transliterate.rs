@@ -1,5 +1,6 @@
 const ZWNJ: char = '\u{200C}';
 
+/// Map Persian letters, ZWNJ and digits to Tajik Cyrillic; unmapped characters are kept.
 pub fn to_tajik(text: &str) -> String {
     let chars: Vec<char> = text.chars().collect();
     let mut out = String::with_capacity(text.len());
@@ -77,6 +78,7 @@ pub fn to_tajik(text: &str) -> String {
     out
 }
 
+/// Map Tajik Cyrillic letters and digits back to Persian; unmapped characters are kept.
 pub fn to_persian(text: &str) -> String {
     let chars: Vec<char> = text.chars().collect();
     let mut out = String::with_capacity(text.len());

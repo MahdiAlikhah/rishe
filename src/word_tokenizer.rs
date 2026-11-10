@@ -3,18 +3,28 @@ use crate::morphology::MorphologyEngine;
 
 const VS16: char = '\u{FE0F}';
 
+/// Switches for [`crate::Pipeline::tokenize`]; all default to `false`.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct WordTokenizerOptions {
+    /// Join auxiliary verbs to the preceding participle with `_`.
     pub join_verb_parts: bool,
+    /// Join `( X )` abbreviations into `(X)`.
     pub join_abbreviations: bool,
+    /// Add spaces around emoji so they tokenize separately.
     pub separate_emoji: bool,
+    /// Replace links with the ` LINK ` placeholder.
     pub replace_links: bool,
+    /// Replace `@mentions` with the ` ID ` placeholder.
     pub replace_ids: bool,
+    /// Replace email addresses with the ` EMAIL ` placeholder.
     pub replace_emails: bool,
+    /// Replace numbers with a ` NUMn ` or ` NUMF ` placeholder.
     pub replace_numbers: bool,
+    /// Replace hashtags with ` TAG `, turning `_` inside the tag into spaces.
     pub replace_hashtags: bool,
 }
 
+/// Apply the rewrites that must run before tokenizing.
 pub fn apply_pre(text: &str, options: &WordTokenizerOptions) -> String {
     let mut current = text.to_string();
     if options.separate_emoji {
@@ -35,6 +45,7 @@ pub fn apply_pre(text: &str, options: &WordTokenizerOptions) -> String {
     current
 }
 
+/// Apply the rewrites that must run after tokenizing.
 pub fn postprocess(
     tokens: Vec<String>,
     options: &WordTokenizerOptions,

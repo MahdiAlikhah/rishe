@@ -24,6 +24,7 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
+      - run: python scripts/api_surface.py --check
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -134,6 +135,7 @@ jobs:
       - run: python -m pip install maturin
       - run: maturin build --release --out dist
       - run: python -m pip install --no-deps dist/*.whl
+      - run: python scripts/check_docs_examples.py
       - run: python examples/basic.py
       - run: python examples/masking_keywords.py
 

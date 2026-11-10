@@ -34,9 +34,11 @@ const NUMERAL_HEADS: &[&str] = &[
     "نسخه",
 ];
 
+/// Rule-based ezafe marker prediction for pre-tokenized text.
 pub struct RuleBasedEzafe;
 
 impl RuleBasedEzafe {
+    /// One flag per token: `true` where an ezafe marker is likely between that token and the next.
     pub fn predict(tokens: &[String], morph: &MorphologyEngine) -> Vec<bool> {
         let n = tokens.len();
         let mut ezafe = vec![false; n];

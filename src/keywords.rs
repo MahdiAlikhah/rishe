@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, HashMap};
 const MIN_RAKE_WORD_CHARS: usize = 3;
 const MIN_TEXTRANK_WORD_CHARS: usize = 2;
 
+/// Top `top_n` RAKE phrases of at most `max_length` words, ordered by word degree score.
 pub fn rake(text: &str, top_n: usize, max_length: usize) -> Vec<String> {
     if top_n == 0 {
         return Vec::new();
@@ -83,6 +84,8 @@ fn rake_phrases(text: &str) -> Vec<Vec<String>> {
     phrases
 }
 
+/// Top `top_n` TextRank phrases of at most `max_length` words over a
+/// `window`-word co-occurrence graph.
 pub fn textrank(text: &str, top_n: usize, max_length: usize, window: usize) -> Vec<String> {
     if top_n == 0 {
         return Vec::new();

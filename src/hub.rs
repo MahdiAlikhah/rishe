@@ -53,6 +53,13 @@ const MANIFEST_SCHEMA: u64 = 1;
 /// caller needs to tell a malformed invocation from a failed operation; the
 /// message text is identical. An empty message means the failure was already
 /// reported on stdout by `hub verify` printing `invalid`.
+///
+/// ```
+/// use rishe::hub;
+///
+/// let error = hub::run(&["bogus".to_string()]).unwrap_err();
+/// assert_eq!(error, "unknown hub command: bogus");
+/// ```
 pub fn run(args: &[String]) -> Result<(), String> {
     match run_classified(args) {
         // `hub verify` reports its failure on stdout; the message is empty.

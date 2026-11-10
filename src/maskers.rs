@@ -11,23 +11,54 @@ const VS16: char = '\u{FE0F}';
 const ZWJ: char = '\u{200D}';
 const OFFENSIVE_WORDS: &str = include_str!("../data/offensive_words.txt");
 
+/// Masker names used, in this order, when a caller gives none.
+///
+/// One list for the crate, both CLIs and the Python package; a new masker is
+/// added here only if it is safe to run on every text.
+pub const DEFAULT_MASKERS: [&str; 10] = [
+    "url",
+    "email",
+    "mention",
+    "hashtag",
+    "emoji",
+    "html",
+    "non_persian",
+    "digits",
+    "diacritics",
+    "punctuation",
+];
+
+/// A masking operation, selectable by name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MaskOp {
+    /// `http` and `https` links.
     Url,
+    /// Email addresses.
     Email,
+    /// `@user` mentions.
     Mention,
+    /// `#hashtag` tokens.
     Hashtag,
+    /// Emoji sequences, including ZWJ families and flags.
     Emoji,
+    /// HTML tags and character entities.
     Html,
+    /// Characters outside Persian letters, digits and punctuation.
     NonPersian,
+    /// Whole-word stopwords.
     Stopwords,
+    /// Whole-word offensive words.
     Offensive,
+    /// ASCII, Persian and Arabic digits.
     Digits,
+    /// Arabic diacritics.
     Diacritics,
+    /// Persian and ASCII punctuation.
     Punctuation,
 }
 
 impl MaskOp {
+    /// Resolve a masker name or alias, or `None` when unknown.
     pub fn from_name(name: &str) -> Option<Self> {
         Some(match name {
             "url" | "urls" => Self::Url,
@@ -46,6 +77,7 @@ impl MaskOp {
         })
     }
 
+    /// Placeholder used when the caller passes no mask; a space removes the token.
     pub fn default_mask(self) -> &'static str {
         match self {
             Self::Url => "<URL>",
@@ -55,6 +87,7 @@ impl MaskOp {
         }
     }
 
+    /// Apply this masker with an explicit mask, or its default placeholder when `None`.
     pub fn apply(self, text: &str, mask: Option<&str>) -> String {
         let mask = mask.unwrap_or_else(|| self.default_mask());
         match self {
@@ -74,6 +107,7 @@ impl MaskOp {
     }
 }
 
+/// Replace links up to the next whitespace with `mask`.
 pub fn mask_urls(text: &str, mask: &str) -> String {
     if !text.contains("http") {
         return text.trim().to_string();
@@ -103,6 +137,7 @@ pub fn mask_urls(text: &str, mask: &str) -> String {
     out.trim().to_string()
 }
 
+/// Replace well-formed email addresses with `mask`.
 pub fn mask_emails(text: &str, mask: &str) -> String {
     if !text.contains('@') {
         return text.trim().to_string();
@@ -180,6 +215,7 @@ fn is_email_domain(ch: char) -> bool {
     ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-')
 }
 
+/// Replace `sigil` tokens up to the next whitespace with `mask`.
 pub fn mask_sigil(text: &str, sigil: char, mask: &str) -> String {
     if !text.contains(sigil) {
         return text.trim().to_string();
@@ -202,6 +238,7 @@ pub fn mask_sigil(text: &str, sigil: char, mask: &str) -> String {
     out.trim().to_string()
 }
 
+/// Replace emoji sequences with `mask`.
 pub fn mask_emojis(text: &str, mask: &str) -> String {
     if !text.chars().any(is_emoji_base) {
         return text.trim().to_string();
@@ -277,6 +314,7 @@ pub(crate) fn is_skin_tone(ch: char) -> bool {
     matches!(ch as u32, 0x1F3FB..=0x1F3FF)
 }
 
+/// Decode HTML entities and replace tags with `mask`.
 pub fn mask_html(text: &str, mask: &str) -> String {
     if !text.contains('<') && !text.contains('&') {
         return text.trim().to_string();
@@ -361,6 +399,7 @@ fn decode_entity(entity: &str) -> Option<String> {
     None
 }
 
+/// Replace disallowed characters with `mask`, optionally keeping English and diacritics.
 pub fn mask_non_persian(
     text: &str,
     mask: &str,
@@ -388,10 +427,12 @@ pub fn mask_non_persian(
     out.trim().to_string()
 }
 
+/// Replace whole-word stopwords with `mask`.
 pub fn mask_stopwords(text: &str, mask: &str) -> String {
     replace_words(text, stopword_matcher(), mask)
 }
 
+/// Replace whole-word offensive words with `mask`.
 pub fn mask_offensive(text: &str, mask: &str) -> String {
     replace_words(text, offensive_matcher(), mask)
 }
@@ -458,6 +499,7 @@ fn is_persian_letter(ch: char) -> bool {
     PERSIAN_LETTERS.contains(ch) || ch == ZWNJ
 }
 
+/// Replace each digit with `mask`.
 pub fn mask_digits(text: &str, mask: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for ch in text.chars() {
@@ -470,6 +512,7 @@ pub fn mask_digits(text: &str, mask: &str) -> String {
     out.trim().to_string()
 }
 
+/// Replace each diacritic with `mask`.
 pub fn mask_diacritics(text: &str, mask: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for ch in text.chars() {
@@ -482,6 +525,7 @@ pub fn mask_diacritics(text: &str, mask: &str) -> String {
     out
 }
 
+/// Replace Persian and ASCII punctuation with `mask`.
 pub fn mask_punctuation(text: &str, mask: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for ch in text.chars() {

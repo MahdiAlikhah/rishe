@@ -441,6 +441,18 @@ def _embedding(args) -> int:
     return 0
 
 
+def _string_list(value: object, fallback: List[str]) -> List[str]:
+    """A request's masker list; a wrong JSON type counts as absent, as with ``text``."""
+    if not isinstance(value, list):
+        return fallback
+    return [item for item in value if isinstance(item, str)]
+
+
+def _string(value: object, fallback: Optional[str]) -> Optional[str]:
+    """A request string field; a wrong JSON type counts as absent."""
+    return value if isinstance(value, str) else fallback
+
+
 def _serve(
     pipe: Pipeline,
     stages: List[str],
@@ -492,8 +504,8 @@ def _serve(
             elif command == "mask":
                 result = pipe.mask(
                     text,
-                    request.get("maskers", request.get("stages", stages)),
-                    request.get("mask_token", mask_token),
+                    _string_list(request.get("maskers", request.get("stages")), stages),
+                    _string(request.get("mask_token"), mask_token),
                 )
             elif command == "depparse":
                 result = [
@@ -515,12 +527,17 @@ def _serve(
                 if command == "embed":
                     result = embeddings.sentence_vector(text)
                 elif command == "similar":
-                    word = request.get("word", text)
+                    word = _string(request.get("word"), text)
+                    count = request.get("n", 5)
+                    if (
+                        isinstance(count, bool)
+                        or not isinstance(count, int)
+                        or not 0 <= count <= 2**64 - 1
+                    ):
+                        count = 5
                     result = [
                         {"word": candidate, "score": score}
-                        for candidate, score in embeddings.most_similar(
-                            word, int(request.get("n", 5))
-                        )
+                        for candidate, score in embeddings.most_similar(word, count)
                     ]
                 else:
                     first = request.get("a")

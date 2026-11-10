@@ -13,19 +13,30 @@ const PERFECT_ENDINGS: [&str; 6] = [
 ];
 const FUTURE_AUX: [&str; 6] = ["خواهم", "خواهی", "خواهد", "خواهیم", "خواهید", "خواهند"];
 
+/// Verb paradigm for one root; every vector holds the six person forms, 1st/2nd/3rd
+/// singular then plural.
 #[derive(Debug, Clone, Default)]
 pub struct Conjugation {
+    /// Simple past: `رفتم`, `رفتی`, ...
     pub past: Vec<String>,
+    /// Negated past: `نرفتم`, ...
     pub negative_past: Vec<String>,
+    /// Past continuous: `می‌رفتم`, ...
     pub imperfective_past: Vec<String>,
+    /// Present: `می‌روم`, ...
     pub present: Vec<String>,
+    /// Negated present: `نمی‌روم`, ...
     pub negative_present: Vec<String>,
+    /// Subjunctive: `بروم`, ...
     pub subjunctive: Vec<String>,
+    /// Future with the `خواه` auxiliary: `خواهم رفت`, ...
     pub future: Vec<String>,
+    /// Present perfect: `رفته‌ام`, ...
     pub perfect: Vec<String>,
 }
 
 impl Conjugation {
+    /// Build the paradigm from a verb's past and present stems.
     pub fn from_roots(roots: &VerbRoots) -> Self {
         let past = roots.past.as_str();
         let present = roots.present.as_str();
@@ -50,6 +61,7 @@ impl Conjugation {
         }
     }
 
+    /// Convert to a field-name to forms map, for serialization.
     pub fn into_map(self) -> HashMap<String, Vec<String>> {
         HashMap::from([
             ("past".to_string(), self.past),

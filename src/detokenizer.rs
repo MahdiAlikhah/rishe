@@ -1,6 +1,9 @@
+/// Joins tokens back into text, spacing punctuation the way Persian is written.
 pub struct Detokenizer;
 
 impl Detokenizer {
+    /// Join with single spaces, but no space before closing punctuation and none after
+    /// opening brackets; empty tokens are skipped.
     #[inline]
     pub fn detokenize<S: AsRef<str>>(tokens: &[S]) -> String {
         let cap: usize = tokens.iter().map(|t| t.as_ref().len() + 1).sum();

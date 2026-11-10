@@ -3,10 +3,14 @@ use std::borrow::Cow;
 
 const ZWNJ: char = '\u{200C}';
 
+/// Switches for [`Normalizer`].
 #[derive(Debug, Clone)]
 pub struct NormalizerConfig {
+    /// Map ASCII and Arabic digits to Persian digits.
     pub unify_digits: bool,
+    /// Drop Arabic diacritics.
     pub strip_diacritics: bool,
+    /// Insert ZWNJ in `می`/`نمی` and in `ها`/`تر` suffixes.
     pub fix_zwnj: bool,
 }
 
@@ -20,6 +24,7 @@ impl Default for NormalizerConfig {
     }
 }
 
+/// Character-level Persian normalizer.
 pub struct Normalizer {
     config: NormalizerConfig,
     affix_matcher: AhoCorasick,
@@ -27,6 +32,7 @@ pub struct Normalizer {
 }
 
 impl Normalizer {
+    /// Build a normalizer with the given switches.
     pub fn new(config: NormalizerConfig) -> Self {
         let rules: &[(&str, &str)] = &[
             ("می ", "می\u{200C}"),
@@ -59,6 +65,7 @@ impl Normalizer {
         }
     }
 
+    /// Normalize characters and, when `fix_zwnj` is set, affix spacing.
     #[inline]
     pub fn normalize<'a>(&self, input: &'a str) -> Cow<'a, str> {
         let char_norm = self.normalize_chars(input);
@@ -74,6 +81,7 @@ impl Normalizer {
         }
     }
 
+    /// Apply the character-level rules only, without the affix ZWNJ fixes.
     pub fn normalize_chars<'a>(&self, input: &'a str) -> Cow<'a, str> {
         let mut buf: Option<String> = None;
         let mut last_was_space = false;
@@ -114,6 +122,7 @@ impl Normalizer {
         }
     }
 
+    /// Replace spaced `می`/`نمی` and `ها`/`تر` affixes with their ZWNJ forms at word boundaries.
     pub fn fix_affix_zwnj<'a>(&self, input: &'a str) -> Cow<'a, str> {
         let mut buf: Option<String> = None;
         let mut last_end = 0;

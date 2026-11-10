@@ -1,27 +1,54 @@
+//! Persian NLP engine: normalization, tokenization, morphology, dates and model inference.
+
+#![deny(missing_docs)]
+
+/// Seeded keyboard, OCR and whitespace noise for training data.
 pub mod augment;
+/// Colloquial-to-formal word expansion.
 pub mod colloquial;
+/// Verb conjugation from past and present stems.
 pub mod conjugation;
 pub mod dates;
+/// Joining tokens back into readable text.
 pub mod detokenizer;
+/// Read-only word and sentence embeddings from a memory-mapped vector file.
 pub mod embeddings;
+/// Rule-based ezafe marker prediction.
 pub mod ezafe;
+/// Model hub: cache paths, downloads and checksum verification.
 pub mod hub;
+/// Comparative, superlative, plural and possessive inflection.
 pub mod inflector;
+/// RAKE and TextRank keyword extraction.
 pub mod keywords;
+/// Masking of URLs, emails, IDs, numbers and stopwords.
 pub mod maskers;
+/// ONNX model packs for POS, NER, ezafe and dependency parsing.
 #[cfg(feature = "models")]
 pub mod models;
+/// Lemma, verb-root and noun-table lookups.
 pub mod morphology;
+/// Individual normalization operators and their registry.
 pub mod normalize_ops;
+/// Full normalization pipeline and its configuration.
 pub mod normalizer;
+/// Sentence boundary detection.
 pub mod sbd;
+/// Frequency-ranked spelling suggestions and correction.
 pub mod spell;
+/// Light stemmer built on the morphology tables.
 pub mod stemmer;
+/// Bundled Persian stopword list.
 pub mod stopwords;
+/// Splitting fused tokens into morphemes.
 pub mod token_splitter;
+/// Byte-offset tokenizer.
 pub mod tokenizer;
+/// Persian and Tajik script transliteration.
 pub mod transliterate;
+/// Number-to-words and Persian character utilities.
 pub mod utilities;
+/// Word-level tokenization options and post-processing.
 pub mod word_tokenizer;
 
 use colloquial::{ColloquialConverter, ExpandedTokens};
@@ -39,23 +66,47 @@ use stemmer::Stemmer;
 use token_splitter::TokenSplitter;
 use tokenizer::{TokenKind, Tokenizer};
 
+/// Result of one pipeline pass; every vector is aligned with `tokens` except `sentences`.
 #[cfg_attr(feature = "python", pyo3::pyclass(frozen, get_all))]
 #[derive(Debug, Clone)]
 pub struct ProcessedDoc {
+    /// Input after normalization, or the input unchanged when normalization is off.
     pub normalized_text: String,
+    /// Detokenized formal text built from `tokens`.
     pub formal_text: String,
+    /// Sentence strings; empty when the `sentences` stage is off.
     pub sentences: Vec<String>,
+    /// Word and punctuation tokens after formalization.
     pub tokens: Vec<String>,
+    /// Lemma per token; equals the token when lemmatization is off.
     pub lemmas: Vec<String>,
+    /// One ezafe flag per token; empty when the ezafe stage is off.
     pub ezafe_markers: Vec<bool>,
 }
 
+/// Stage toggles for [`Pipeline::process_with`].
+///
+/// ```
+/// use rishe::ProcessOptions;
+///
+/// let stages = ["normalize".to_string(), "sentences".to_string()];
+/// let options = ProcessOptions::from_stages(&stages);
+/// assert!(!options.lemmatize && options.sentences);
+///
+/// let unknown = ProcessOptions::from_stages_checked(&["bogus".to_string()]);
+/// assert_eq!(unknown.unwrap_err(), "unknown process stage: bogus");
+/// ```
 #[derive(Debug, Clone, Copy)]
 pub struct ProcessOptions {
+    /// Run the normalizer before tokenizing.
     pub normalize: bool,
+    /// Expand colloquial words to formal ones.
     pub formalize: bool,
+    /// Compute a lemma for each word token.
     pub lemmatize: bool,
+    /// Split the formal text into sentences.
     pub sentences: bool,
+    /// Predict ezafe markers.
     pub ezafe: bool,
 }
 
@@ -72,6 +123,12 @@ impl Default for ProcessOptions {
 }
 
 impl ProcessOptions {
+    /// Stage names [`ProcessOptions::from_stages`] understands, in pipeline order.
+    pub const STAGES: [&'static str; 5] =
+        ["normalize", "formalize", "lemmatize", "sentences", "ezafe"];
+
+    /// Turn a list of stage names into flags. Unknown names are ignored here;
+    /// a user-facing boundary should call [`ProcessOptions::from_stages_checked`].
     pub fn from_stages(stages: &[String]) -> Self {
         if stages.is_empty() {
             return Self::default();
@@ -85,8 +142,22 @@ impl ProcessOptions {
             ezafe: has("ezafe"),
         }
     }
+
+    /// Like [`ProcessOptions::from_stages`], but an unknown stage name is an
+    /// error instead of being ignored, so a typo cannot silently change the
+    /// output. An empty list means every stage, the same as omitting `stages`.
+    pub fn from_stages_checked(stages: &[String]) -> Result<Self, String> {
+        match stages
+            .iter()
+            .find(|stage| !Self::STAGES.contains(&stage.as_str()))
+        {
+            Some(stage) => Err(format!("unknown process stage: {stage}")),
+            None => Ok(Self::from_stages(stages)),
+        }
+    }
 }
 
+/// Reusable pipeline; build once and share, since model packs are loaded per instance.
 #[cfg_attr(feature = "python", pyo3::pyclass(frozen))]
 pub struct Pipeline {
     normalizer: Normalizer,
@@ -104,6 +175,16 @@ pub struct Pipeline {
 }
 
 impl Pipeline {
+    /// Build a pipeline with the given normalizer switches; model packs stay unloaded.
+    ///
+    /// ```
+    /// use rishe::Pipeline;
+    ///
+    /// let ascii = Pipeline::create(false, false, false);
+    /// let persian = Pipeline::create(true, true, true);
+    /// assert_eq!(ascii.normalize_with("123", &[]).unwrap(), "123");
+    /// assert_eq!(persian.normalize_with("123", &[]).unwrap(), "۱۲۳");
+    /// ```
     pub fn create(unify_digits: bool, strip_diacritics: bool, fix_zwnj: bool) -> Self {
         let config = NormalizerConfig {
             unify_digits,
@@ -127,6 +208,8 @@ impl Pipeline {
         }
     }
 
+    /// Load a pack for `task` (`pos`, `ner`, `ezafe`, `depparse`), erroring when its
+    /// task does not match.
     #[cfg(feature = "models")]
     pub fn load_pack(&mut self, task: &str, path: &str) -> Result<(), String> {
         let pack = models::ModelPack::load(path)?;
@@ -158,51 +241,71 @@ impl Pipeline {
         .ok_or_else(|| format!("{task} pack is not loaded"))
     }
 
+    /// POS-tag `text` with the loaded `pos` pack; errors when it is not loaded.
     #[cfg(feature = "models")]
     pub fn pos(&self, text: &str) -> Result<Vec<models::TaggedToken>, String> {
         self.pack("pos")?.tags(text)
     }
 
+    /// Extract entities with the loaded `ner` pack; errors when it is not loaded.
     #[cfg(feature = "models")]
     pub fn ner(&self, text: &str) -> Result<Vec<models::Entity>, String> {
         self.pack("ner")?.entities(text)
     }
 
+    /// Predict ezafe tags with the loaded `ezafe` pack; errors when it is not loaded.
     #[cfg(feature = "models")]
     pub fn ezafe(&self, text: &str) -> Result<Vec<models::TaggedToken>, String> {
         self.pack("ezafe")?.tags(text)
     }
 
+    /// POS-tag each text; output order matches input order.
     #[cfg(feature = "models")]
     pub fn pos_batch(&self, texts: &[String]) -> Result<Vec<Vec<models::TaggedToken>>, String> {
         self.pack("pos")?.tags_batch(texts)
     }
 
+    /// Extract entities from each text; output order matches input order.
     #[cfg(feature = "models")]
     pub fn ner_batch(&self, texts: &[String]) -> Result<Vec<Vec<models::Entity>>, String> {
         self.pack("ner")?.entities_batch(texts)
     }
 
+    /// Predict ezafe tags for each text; output order matches input order.
     #[cfg(feature = "models")]
     pub fn ezafe_batch(&self, texts: &[String]) -> Result<Vec<Vec<models::TaggedToken>>, String> {
         self.pack("ezafe")?.tags_batch(texts)
     }
 
+    /// Parse dependencies with the loaded `depparse` pack; errors when it is not loaded.
     #[cfg(feature = "models")]
     pub fn depparse(&self, text: &str) -> Result<Vec<models::Dependency>, String> {
         self.pack("depparse")?.depparse(text)
     }
 
+    /// Parse each text in parallel; output order matches input order.
     #[cfg(feature = "models")]
     pub fn depparse_batch(&self, texts: &[String]) -> Result<Vec<Vec<models::Dependency>>, String> {
         texts.par_iter().map(|text| self.depparse(text)).collect()
     }
 
+    /// Run every stage with [`ProcessOptions::default`].
+    ///
+    /// ```
+    /// use rishe::Pipeline;
+    ///
+    /// let nlp = Pipeline::create(true, true, true);
+    /// let text = "من در سال 2026 به کتاب   ها نگاه مي كنم چون سرعتش بالاست!";
+    /// let doc = nlp.process(text);
+    /// assert_eq!(doc.formal_text, "من در سال ۲۰۲۶ به کتاب‌ها نگاه می‌کنم چون سرعتش بالا است!");
+    /// assert_eq!(doc.tokens.len(), doc.lemmas.len());
+    /// ```
     #[inline]
     pub fn process(&self, text: &str) -> ProcessedDoc {
         self.process_with(text, &ProcessOptions::default())
     }
 
+    /// Run the selected stages; all vectors are aligned with `tokens` except `sentences`.
     pub fn process_with(&self, text: &str, opts: &ProcessOptions) -> ProcessedDoc {
         let norm_cow = if opts.normalize {
             self.normalizer.normalize(text)
@@ -278,11 +381,20 @@ impl Pipeline {
         }
     }
 
+    /// Run [`Pipeline::process`] over the texts in parallel, preserving input order.
     pub fn process_batch(&self, texts: &[String]) -> Vec<ProcessedDoc> {
         texts.par_iter().map(|t| self.process(t)).collect()
     }
 
     /// Normalize with an explicit, ordered list of operator names.
+    ///
+    /// ```
+    /// use rishe::Pipeline;
+    ///
+    /// let nlp = Pipeline::create(true, true, true);
+    /// let stages = ["digits".to_string()];
+    /// assert_eq!(nlp.normalize_with("1𝟮3٤٥⓺", &stages).unwrap(), "۱۲۳۴۵۶");
+    /// ```
     pub fn normalize_with(&self, text: &str, stages: &[String]) -> Result<String, String> {
         let mut ops = Vec::with_capacity(stages.len());
         for stage in stages {
@@ -307,6 +419,17 @@ impl Pipeline {
         self.normalize_with(text, stages)
     }
 
+    /// Apply maskers in order; an unknown name is an error and `None` uses each
+    /// masker's default placeholder.
+    ///
+    /// ```
+    /// use rishe::Pipeline;
+    ///
+    /// let nlp = Pipeline::create(true, true, true);
+    /// let maskers = ["url".to_string(), "email".to_string()];
+    /// let masked = nlp.mask("به https://a.b و info@a.co ایمیل بزن", &maskers, None);
+    /// assert_eq!(masked.unwrap(), "به <URL> و <EMAIL> ایمیل بزن");
+    /// ```
     pub fn mask(
         &self,
         text: &str,
@@ -338,10 +461,19 @@ impl Pipeline {
         self.mask(text, stages, mask_token)
     }
 
+    /// Stem one word, falling back to the lemma when no noun suffix matches.
+    ///
+    /// ```
+    /// use rishe::Pipeline;
+    ///
+    /// let nlp = Pipeline::create(true, true, true);
+    /// assert_eq!(nlp.stem("کتاب‌ها"), "کتاب");
+    /// ```
     pub fn stem(&self, word: &str) -> String {
         Stemmer::stem(word, &self.morphology).into_owned()
     }
 
+    /// All forms of a known verb, or `None` when the verb is not in the table.
     pub fn conjugate(&self, verb: &str) -> Option<Conjugation> {
         self.morphology.conjugate(verb)
     }
@@ -359,36 +491,44 @@ impl Pipeline {
         self.lemmatize_verb(word)
     }
 
+    /// Split one fused token into morphemes.
     pub fn split_token(&self, token: &str) -> Vec<String> {
         TokenSplitter::split(token, &self.morphology)
     }
 
+    /// Normalized spelling suggestions for one word.
     pub fn spell_suggest(&self, word: &str, max: usize) -> Vec<String> {
         let normalized = self.normalizer.normalize(word);
         self.spell.suggest(&normalized, max)
     }
 
+    /// Normalize then correct unknown words of three or more characters.
     pub fn spell_correct(&self, text: &str) -> String {
         let normalized = self.normalizer.normalize(text);
         self.spell.correct(&normalized)
     }
 
+    /// Comparative form of an adjective.
     pub fn comparative(&self, adj: &str) -> String {
         Inflector::comparative(adj)
     }
 
+    /// Superlative form of an adjective.
     pub fn superlative(&self, adj: &str) -> String {
         Inflector::superlative(adj)
     }
 
+    /// Plural form of a noun.
     pub fn plural(&self, noun: &str) -> String {
         Inflector::plural(noun)
     }
 
+    /// Possessive form of a noun for person `0..=5`, or `None` when out of range.
     pub fn possessive(&self, noun: &str, person: usize) -> Option<String> {
         Inflector::possessive(noun, person)
     }
 
+    /// Tokens with byte spans into `text`.
     pub fn tokenize_spans(&self, text: &str) -> Vec<(String, usize, usize)> {
         Tokenizer::tokenize(text)
             .into_iter()
@@ -396,6 +536,7 @@ impl Pipeline {
             .collect()
     }
 
+    /// Tokens with character spans into `text`.
     pub fn tokenize_char_spans(&self, text: &str) -> Vec<(String, usize, usize)> {
         Tokenizer::tokenize(text)
             .into_iter()
@@ -407,9 +548,17 @@ impl Pipeline {
             .collect()
     }
 
-    /// Tokenize into surface words. This does not normalize: run
-    /// [`Pipeline::normalize`] first (or use [`Pipeline::process`], which runs
-    /// the whole pipeline including normalization).
+    /// Tokenize into surface words. This does not normalize: call
+    /// [`Pipeline::normalize_with`] with an empty stage list first (or use
+    /// [`Pipeline::process`], which runs the whole pipeline including normalization).
+    ///
+    /// ```
+    /// use rishe::{word_tokenizer::WordTokenizerOptions, Pipeline};
+    ///
+    /// let nlp = Pipeline::create(true, true, true);
+    /// let options = WordTokenizerOptions::default();
+    /// assert_eq!(nlp.tokenize("سلام دنیا", &options), ["سلام", "دنیا"]);
+    /// ```
     pub fn tokenize(
         &self,
         text: &str,
@@ -455,11 +604,14 @@ impl Pipeline {
         self.tokenize(&self.normalizer.normalize(text), options)
     }
 
+    /// Top `top_n` RAKE keywords of at most `max_length` words, after normalization.
     pub fn rake(&self, text: &str, top_n: usize, max_length: usize) -> Vec<String> {
         let normalized = self.normalizer.normalize(text);
         keywords::rake(&normalized, top_n, max_length)
     }
 
+    /// Top `top_n` TextRank keywords within a `window`-token co-occurrence window,
+    /// after normalization.
     pub fn textrank(
         &self,
         text: &str,
@@ -471,6 +623,8 @@ impl Pipeline {
         keywords::textrank(&normalized, top_n, max_length, window)
     }
 
+    /// All word n-grams for `min_n..=max_n` after normalization; errors when the
+    /// range is empty or reversed.
     pub fn ngrams(&self, text: &str, min_n: usize, max_n: usize) -> Result<Vec<String>, String> {
         if min_n == 0 || max_n < min_n {
             return Err("ngram range must be (min, max) with 1 <= min <= max".to_string());
@@ -592,6 +746,7 @@ mod py_bindings {
 
     #[pymethods]
     impl Pipeline {
+        /// Python constructor: pack paths are loaded only with the `models` feature.
         #[new]
         #[pyo3(signature = (unify_digits=true, strip_diacritics=true, fix_zwnj=true, pos_pack=None, ner_pack=None, ezafe_pack=None, depparse_pack=None))]
         #[allow(unused_variables)]
@@ -638,6 +793,7 @@ mod py_bindings {
             Ok(pipe)
         }
 
+        /// Python `pos`: releases the GIL and maps errors to `ValueError`.
         #[cfg(feature = "models")]
         #[pyo3(name = "pos")]
         pub fn py_pos(&self, py: Python<'_>, text: &str) -> PyResult<Vec<models::TaggedToken>> {
@@ -645,6 +801,7 @@ mod py_bindings {
                 .map_err(pyo3::exceptions::PyValueError::new_err)
         }
 
+        /// Python `ner`: releases the GIL and maps errors to `ValueError`.
         #[cfg(feature = "models")]
         #[pyo3(name = "ner")]
         pub fn py_ner(&self, py: Python<'_>, text: &str) -> PyResult<Vec<models::Entity>> {
@@ -652,6 +809,7 @@ mod py_bindings {
                 .map_err(pyo3::exceptions::PyValueError::new_err)
         }
 
+        /// Python `ezafe`: releases the GIL and maps errors to `ValueError`.
         #[cfg(feature = "models")]
         #[pyo3(name = "ezafe")]
         pub fn py_ezafe(&self, py: Python<'_>, text: &str) -> PyResult<Vec<models::TaggedToken>> {
@@ -659,6 +817,7 @@ mod py_bindings {
                 .map_err(pyo3::exceptions::PyValueError::new_err)
         }
 
+        /// Python `pos_batch`: releases the GIL and maps errors to `ValueError`.
         #[cfg(feature = "models")]
         #[pyo3(name = "pos_batch")]
         pub fn py_pos_batch(
@@ -670,6 +829,7 @@ mod py_bindings {
                 .map_err(pyo3::exceptions::PyValueError::new_err)
         }
 
+        /// Python `ner_batch`: releases the GIL and maps errors to `ValueError`.
         #[cfg(feature = "models")]
         #[pyo3(name = "ner_batch")]
         pub fn py_ner_batch(
@@ -681,6 +841,7 @@ mod py_bindings {
                 .map_err(pyo3::exceptions::PyValueError::new_err)
         }
 
+        /// Python `ezafe_batch`: releases the GIL and maps errors to `ValueError`.
         #[cfg(feature = "models")]
         #[pyo3(name = "ezafe_batch")]
         pub fn py_ezafe_batch(
@@ -692,6 +853,7 @@ mod py_bindings {
                 .map_err(pyo3::exceptions::PyValueError::new_err)
         }
 
+        /// Python `depparse`: releases the GIL and maps errors to `ValueError`.
         #[cfg(feature = "models")]
         #[pyo3(name = "depparse")]
         pub fn py_depparse(&self, py: Python<'_>, text: &str) -> PyResult<Vec<models::Dependency>> {
@@ -699,6 +861,7 @@ mod py_bindings {
                 .map_err(pyo3::exceptions::PyValueError::new_err)
         }
 
+        /// Python `depparse_batch`: releases the GIL and maps errors to `ValueError`.
         #[cfg(feature = "models")]
         #[pyo3(name = "depparse_batch")]
         pub fn py_depparse_batch(
@@ -710,47 +873,57 @@ mod py_bindings {
                 .map_err(pyo3::exceptions::PyValueError::new_err)
         }
 
+        /// Python `__call__`: runs [`Pipeline::process`] with the GIL released.
         pub fn __call__(&self, py: Python<'_>, text: &str) -> ProcessedDoc {
             py.allow_threads(|| self.process(text))
         }
 
+        /// Deprecated Python `pipe`: warns and returns [`Pipeline::process_batch`] output.
         pub fn pipe(&self, py: Python<'_>, texts: Vec<String>) -> Vec<ProcessedDoc> {
             warn_deprecated(py, "pipe", "process_batch");
             py.allow_threads(|| self.process_batch(&texts))
         }
 
+        /// Python `process_batch`; the GIL is released.
         #[pyo3(name = "process_batch")]
         pub fn py_process_batch(&self, py: Python<'_>, texts: Vec<String>) -> Vec<ProcessedDoc> {
             py.allow_threads(|| self.process_batch(&texts))
         }
 
+        /// Python `process`: optional `stages` select the stages and unknown names raise
+        /// `ValueError`.
         #[pyo3(name = "process", signature = (text, stages=None))]
         pub fn py_process(
             &self,
             py: Python<'_>,
             text: &str,
             stages: Option<Vec<String>>,
-        ) -> ProcessedDoc {
+        ) -> PyResult<ProcessedDoc> {
             match stages {
                 Some(stages) => {
-                    let opts = ProcessOptions::from_stages(&stages);
-                    py.allow_threads(|| self.process_with(text, &opts))
+                    let opts = ProcessOptions::from_stages_checked(&stages)
+                        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+                    Ok(py.allow_threads(|| self.process_with(text, &opts)))
                 }
-                None => py.allow_threads(|| self.process(text)),
+                None => Ok(py.allow_threads(|| self.process(text))),
             }
         }
 
+        /// Deprecated Python `process_stages`: warns and maps to [`Pipeline::process_with`].
         pub fn process_stages(
             &self,
             py: Python<'_>,
             text: &str,
             stages: Vec<String>,
-        ) -> ProcessedDoc {
+        ) -> PyResult<ProcessedDoc> {
             warn_deprecated(py, "process_stages", "process");
-            let opts = ProcessOptions::from_stages(&stages);
-            py.allow_threads(|| self.process_with(text, &opts))
+            let opts = ProcessOptions::from_stages_checked(&stages)
+                .map_err(pyo3::exceptions::PyValueError::new_err)?;
+            Ok(py.allow_threads(|| self.process_with(text, &opts)))
         }
 
+        /// Deprecated Python `normalize_stages`: warns and delegates to
+        /// [`Pipeline::normalize_with`].
         #[pyo3(name = "normalize_stages")]
         pub fn py_normalize_stages(
             &self,
@@ -763,6 +936,7 @@ mod py_bindings {
                 .map_err(pyo3::exceptions::PyValueError::new_err)
         }
 
+        /// Python `mask`: maps errors to `ValueError`.
         #[pyo3(name = "mask", signature = (text, maskers, mask_token=None))]
         pub fn py_mask(
             &self,
@@ -774,6 +948,7 @@ mod py_bindings {
                 .map_err(pyo3::exceptions::PyValueError::new_err)
         }
 
+        /// Deprecated Python `mask_stages`: warns and delegates to [`Pipeline::mask`].
         #[pyo3(name = "mask_stages", signature = (text, stages, mask_token=None))]
         pub fn py_mask_stages(
             &self,
@@ -787,6 +962,7 @@ mod py_bindings {
                 .map_err(pyo3::exceptions::PyValueError::new_err)
         }
 
+        /// Python `sent_tokenize`: one string per sentence.
         pub fn sent_tokenize(&self, text: &str) -> Vec<String> {
             SentenceSplitter::split(text)
                 .into_iter()
@@ -794,6 +970,7 @@ mod py_bindings {
                 .collect()
         }
 
+        /// Python `normalize`: applies `stages` in order when given, else the full normalizer.
         #[pyo3(signature = (text, stages=None))]
         pub fn normalize(&self, text: &str, stages: Option<Vec<String>>) -> PyResult<String> {
             match stages {
@@ -804,6 +981,7 @@ mod py_bindings {
             }
         }
 
+        /// Python `tokenize`: surface tokens with the word-tokenizer switches.
         #[pyo3(name = "tokenize")]
         #[pyo3(
             signature = (
@@ -844,11 +1022,13 @@ mod py_bindings {
             Pipeline::tokenize(self, text, &options)
         }
 
+        /// Python `tokenize_spans`: tokens with character offsets.
         #[pyo3(name = "tokenize_spans")]
         pub fn py_tokenize_spans(&self, text: &str) -> Vec<(String, usize, usize)> {
             self.tokenize_char_spans(text)
         }
 
+        /// Deprecated Python `word_tokenize`: warns and normalizes before tokenizing.
         #[pyo3(name = "word_tokenize")]
         pub fn py_word_tokenize(&self, py: Python<'_>, text: &str) -> Vec<String> {
             warn_deprecated(
@@ -863,6 +1043,7 @@ mod py_bindings {
             )
         }
 
+        /// Deprecated Python `word_tokenize_with`: warns and normalizes before tokenizing.
         #[pyo3(
             name = "word_tokenize_with",
             signature = (
@@ -909,6 +1090,8 @@ mod py_bindings {
             Pipeline::tokenize(self, &self.normalizer.normalize(text), &options)
         }
 
+        /// Python `number_to_words`: accepts an int or digit string and raises
+        /// `TypeError` otherwise.
         #[pyo3(name = "number_to_words")]
         pub fn py_number_to_words(
             &self,
@@ -926,17 +1109,20 @@ mod py_bindings {
             ))
         }
 
+        /// Python `ngrams`: maps range errors to `ValueError`.
         #[pyo3(name = "ngrams", signature = (text, min_n=1, max_n=1))]
         pub fn py_ngrams(&self, text: &str, min_n: usize, max_n: usize) -> PyResult<Vec<String>> {
             self.ngrams(text, min_n, max_n)
                 .map_err(pyo3::exceptions::PyValueError::new_err)
         }
 
+        /// Python `rake`: top `n` keywords, normalized first.
         #[pyo3(name = "rake", signature = (text, n=5, max_length=3))]
         pub fn py_rake(&self, text: &str, n: usize, max_length: usize) -> Vec<String> {
             self.rake(text, n, max_length)
         }
 
+        /// Python `textrank`: top `n` keywords, normalized first.
         #[pyo3(name = "textrank", signature = (text, n=5, max_length=3, window=2))]
         pub fn py_textrank(
             &self,
@@ -948,6 +1134,7 @@ mod py_bindings {
             self.textrank(text, n, max_length, window)
         }
 
+        /// Python `keyboard_noise`: default options with the optional `seed`.
         #[pyo3(name = "keyboard_noise", signature = (text, seed=None))]
         pub fn py_keyboard_noise(&self, text: &str, seed: Option<u64>) -> String {
             augment::keyboard_noise(
@@ -959,6 +1146,7 @@ mod py_bindings {
             )
         }
 
+        /// Python `ocr_noise`: default options with the optional `seed`.
         #[pyo3(name = "ocr_noise", signature = (text, seed=None))]
         pub fn py_ocr_noise(&self, text: &str, seed: Option<u64>) -> String {
             augment::ocr_noise(
@@ -970,6 +1158,7 @@ mod py_bindings {
             )
         }
 
+        /// Python `whitespace_noise`: default options with the optional `seed`.
         #[pyo3(name = "whitespace_noise", signature = (text, seed=None))]
         pub fn py_whitespace_noise(&self, text: &str, seed: Option<u64>) -> String {
             augment::whitespace_noise(
@@ -981,21 +1170,25 @@ mod py_bindings {
             )
         }
 
+        /// Python `to_tajik`: Persian letters to Tajik Cyrillic.
         #[pyo3(name = "to_tajik")]
         pub fn py_to_tajik(&self, text: &str) -> String {
             transliterate::to_tajik(text)
         }
 
+        /// Python `to_persian`: Tajik Cyrillic to Persian letters.
         #[pyo3(name = "to_persian")]
         pub fn py_to_persian(&self, text: &str) -> String {
             transliterate::to_persian(text)
         }
 
+        /// Python `persianize`: replaces known loanwords with Persian equivalents.
         #[pyo3(name = "persianize")]
         pub fn py_persianize(&self, text: &str) -> String {
             utilities::persianize(text)
         }
 
+        /// Python `persianize_suggest`: loanword matches as `(word, alternatives, start, end)`.
         #[pyo3(name = "persianize_suggest")]
         pub fn py_persianize_suggest(
             &self,
@@ -1007,26 +1200,31 @@ mod py_bindings {
                 .collect()
         }
 
+        /// Python `lemmatize`: lemma of one word.
         pub fn lemmatize(&self, word: &str) -> String {
             self.morphology.lemmatize(word).into_owned()
         }
 
+        /// Python `lemmatize_verb`: lemma plus present stem when the word is a verb.
         #[pyo3(name = "lemmatize_verb")]
         pub fn py_lemmatize_verb(&self, word: &str) -> (String, Option<String>) {
             self.lemmatize_verb(word)
         }
 
+        /// Deprecated Python `lemma_full`: warns and delegates to `lemmatize_verb`.
         #[pyo3(name = "lemma_full")]
         pub fn py_lemma_full(&self, py: Python<'_>, word: &str) -> (String, Option<String>) {
             warn_deprecated(py, "lemma_full", "lemmatize_verb");
             self.lemmatize_verb(word)
         }
 
+        /// Python `stem`: stems one word.
         #[pyo3(name = "stem")]
         pub fn py_stem(&self, word: &str) -> String {
             self.stem(word)
         }
 
+        /// Python `conjugate`: forms as a map, or `None` for an unknown verb.
         #[pyo3(name = "conjugate")]
         pub fn py_conjugate(
             &self,
@@ -1035,49 +1233,59 @@ mod py_bindings {
             self.conjugate(verb).map(Conjugation::into_map)
         }
 
+        /// Python `split_token`: morphemes of one fused token.
         #[pyo3(name = "split_token")]
         pub fn py_split_token(&self, token: &str) -> Vec<String> {
             self.split_token(token)
         }
 
+        /// Python `spell_suggest`: up to `n` candidates.
         #[pyo3(name = "spell_suggest", signature = (word, n=5))]
         pub fn py_spell_suggest(&self, word: &str, n: usize) -> Vec<String> {
             self.spell_suggest(word, n)
         }
 
+        /// Python `spell_correct`: normalizes then corrects the text.
         #[pyo3(name = "spell_correct")]
         pub fn py_spell_correct(&self, text: &str) -> String {
             self.spell_correct(text)
         }
 
+        /// Python `comparative`: comparative form of an adjective.
         #[pyo3(name = "comparative")]
         pub fn py_comparative(&self, adj: &str) -> String {
             self.comparative(adj)
         }
 
+        /// Python `superlative`: superlative form of an adjective.
         #[pyo3(name = "superlative")]
         pub fn py_superlative(&self, adj: &str) -> String {
             self.superlative(adj)
         }
 
+        /// Python `plural`: plural form of a noun.
         #[pyo3(name = "plural")]
         pub fn py_plural(&self, noun: &str) -> String {
             self.plural(noun)
         }
 
+        /// Python `possessive`: possessive form for person `0..=5`, or `None`.
         #[pyo3(name = "possessive")]
         pub fn py_possessive(&self, noun: &str, person: usize) -> Option<String> {
             self.possessive(noun, person)
         }
 
+        /// Python `is_stopword`: whether the word is in the bundled list.
         pub fn is_stopword(&self, word: &str) -> bool {
             stopwords::is_stopword(word)
         }
 
+        /// Python `remove_stopwords`: drops stopword tokens, keeping the rest in order.
         pub fn remove_stopwords(&self, tokens: Vec<String>) -> Vec<String> {
             stopwords::remove_stopwords(tokens)
         }
 
+        /// Python `stopwords`: every bundled stopword.
         pub fn stopwords(&self) -> Vec<String> {
             stopwords::stopwords()
         }
@@ -1085,6 +1293,7 @@ mod py_bindings {
 
     #[pymethods]
     impl embeddings::Embeddings {
+        /// Python constructor: loads vectors from `path`.
         #[new]
         pub fn py_new(path: PathBuf) -> PyResult<Self> {
             Self::load(path).map_err(pyo3::exceptions::PyIOError::new_err)
@@ -1105,36 +1314,43 @@ mod py_bindings {
             self.dtype().as_str()
         }
 
+        /// Python `contains`: vocabulary membership.
         #[pyo3(name = "contains")]
         pub fn py_contains(&self, word: &str) -> bool {
             self.contains(word)
         }
 
+        /// Python `vector`: a copy of the row, or `None` for an unknown word.
         #[pyo3(name = "vector")]
         pub fn py_vector(&self, word: &str) -> Option<Vec<f32>> {
             self.vector(word).map(<[f32]>::to_vec)
         }
 
+        /// Python `similarity`: cosine similarity, or `None` when either word is unknown.
         #[pyo3(name = "similarity")]
         pub fn py_similarity(&self, first: &str, second: &str) -> Option<f32> {
             self.similarity(first, second)
         }
 
+        /// Python `sentence_vector`: mean vector of the known words.
         #[pyo3(name = "sentence_vector")]
         pub fn py_sentence_vector(&self, text: &str) -> Vec<f32> {
             self.sentence_vector(text)
         }
 
+        /// Python `sentence_vectors`: releases the GIL while averaging each text.
         #[pyo3(name = "sentence_vectors")]
         pub fn py_sentence_vectors(&self, py: Python<'_>, texts: Vec<String>) -> Vec<Vec<f32>> {
             py.allow_threads(|| self.sentence_vectors(&texts))
         }
 
+        /// Python `sentence_similarity`: cosine similarity of the two sentence vectors.
         #[pyo3(name = "sentence_similarity")]
         pub fn py_sentence_similarity(&self, first: &str, second: &str) -> f32 {
             self.sentence_similarity(first, second)
         }
 
+        /// Python `most_similar`: up to `n` neighbours by descending cosine similarity.
         #[pyo3(name = "most_similar", signature = (word, n=5))]
         pub fn py_most_similar(&self, word: &str, n: usize) -> Vec<(String, f32)> {
             self.most_similar(word, n)
@@ -1165,11 +1381,13 @@ mod py_bindings {
     #[cfg(feature = "models")]
     #[pymethods]
     impl models::ModelPack {
+        /// Python constructor: loads a pack directory.
         #[new]
         pub fn py_new(path: PathBuf) -> PyResult<Self> {
             Self::load(path).map_err(pyo3::exceptions::PyValueError::new_err)
         }
 
+        /// Deprecated Python `tag`: warns and returns `(text, tag)` pairs.
         #[pyo3(name = "tag")]
         pub fn py_tag(&self, py: Python<'_>, text: &str) -> PyResult<Vec<(String, String)>> {
             warn_deprecated(py, "tag", "tags");
@@ -1183,6 +1401,7 @@ mod py_bindings {
                 .map_err(pyo3::exceptions::PyValueError::new_err)
         }
 
+        /// Python `tags_from_words`: tags for pre-tokenized words.
         #[pyo3(name = "tags_from_words")]
         pub fn py_tags_from_words(
             &self,
@@ -1194,6 +1413,7 @@ mod py_bindings {
                 .map_err(pyo3::exceptions::PyValueError::new_err)
         }
 
+        /// Deprecated Python `tag_words`: warns and delegates to `tags_from_words`.
         #[pyo3(name = "tag_words")]
         pub fn py_tag_words(
             &self,
@@ -1204,12 +1424,14 @@ mod py_bindings {
             self.py_tags_from_words(py, words)
         }
 
+        /// Python `tags`: tagged tokens for `text`, with the GIL released.
         #[pyo3(name = "tags")]
         pub fn py_tags(&self, py: Python<'_>, text: &str) -> PyResult<Vec<models::TaggedToken>> {
             py.allow_threads(|| self.tags(text))
                 .map_err(pyo3::exceptions::PyValueError::new_err)
         }
 
+        /// Deprecated Python `tag_tokens`: warns and delegates to `tags`.
         #[pyo3(name = "tag_tokens")]
         pub fn py_tag_tokens(
             &self,
@@ -1220,12 +1442,14 @@ mod py_bindings {
             self.py_tags(py, text)
         }
 
+        /// Python `entities`: entities for `text`, with the GIL released.
         #[pyo3(name = "entities")]
         pub fn py_entities(&self, py: Python<'_>, text: &str) -> PyResult<Vec<models::Entity>> {
             py.allow_threads(|| self.entities(text))
                 .map_err(pyo3::exceptions::PyValueError::new_err)
         }
 
+        /// Python `tags_batch`: tagged tokens per text, with the GIL released.
         #[pyo3(name = "tags_batch")]
         pub fn py_tags_batch(
             &self,
@@ -1236,6 +1460,7 @@ mod py_bindings {
                 .map_err(pyo3::exceptions::PyValueError::new_err)
         }
 
+        /// Deprecated Python `tag_batch`: warns and delegates to `tags_batch`.
         #[pyo3(name = "tag_batch")]
         pub fn py_tag_batch(
             &self,
@@ -1246,6 +1471,7 @@ mod py_bindings {
             self.py_tags_batch(py, texts)
         }
 
+        /// Python `entities_batch`: entities per text, with the GIL released.
         #[pyo3(name = "entities_batch")]
         pub fn py_entities_batch(
             &self,
@@ -1256,16 +1482,19 @@ mod py_bindings {
                 .map_err(pyo3::exceptions::PyValueError::new_err)
         }
 
+        /// Python `labels`: label names as owned strings.
         #[pyo3(name = "labels")]
         pub fn py_labels(&self) -> Vec<String> {
             self.labels().to_vec()
         }
 
+        /// Python `task`: the pack task.
         #[getter(task)]
         pub fn py_task(&self) -> &str {
             self.task()
         }
 
+        /// Python `max_len`: maximum token count the pack accepts.
         #[getter(max_len)]
         pub fn py_max_len(&self) -> usize {
             self.max_len()
@@ -1274,6 +1503,7 @@ mod py_bindings {
 
     #[pymodule]
     pub fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
+        m.add("DEFAULT_MASKERS", crate::maskers::DEFAULT_MASKERS.to_vec())?;
         m.add_class::<Pipeline>()?;
         m.add_class::<ProcessedDoc>()?;
         m.add_class::<JalaliDate>()?;

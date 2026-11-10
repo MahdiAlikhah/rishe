@@ -123,9 +123,12 @@ const NON_PARTICIPLE_NOUNS: &[&str] = &[
     "وابسته",
 ];
 
+/// Past and present stems of one verb.
 #[derive(Debug, Clone)]
 pub struct VerbRoots {
+    /// Past stem or infinitive lemma, e.g. `رفت`.
     pub past: String,
+    /// Present stem, e.g. `رو`.
     pub present: String,
 }
 
@@ -148,6 +151,7 @@ const PREFERRED_PRESENT: &[(&str, &str)] = &[
     ("توانست", "توان"),
 ];
 
+/// Lookup engine over the bundled noun and verb FSTs.
 pub struct MorphologyEngine {
     noun_lexicon: Map<&'static [u8]>,
     verb_stems: Map<&'static [u8]>,
@@ -155,6 +159,7 @@ pub struct MorphologyEngine {
 }
 
 impl MorphologyEngine {
+    /// Build the engine from the FSTs bundled at compile time.
     pub fn new() -> Self {
         let noun_lexicon = Map::new(NOUNS_FST_BYTES).expect("Corrupted nouns.fst");
         let verb_stems = Map::new(VERBS_FST_BYTES).expect("Corrupted verbs.fst");
@@ -199,6 +204,7 @@ impl MorphologyEngine {
         roots
     }
 
+    /// Stems for a verb given in any known form, or `None` when it is not in the verb table.
     pub fn verb_roots(&self, verb: &str) -> Option<&VerbRoots> {
         if let Some(roots) = self.verb_roots.get(verb) {
             return Some(roots);
@@ -218,16 +224,19 @@ impl MorphologyEngine {
         self.verb_roots.get(lemma.as_ref())
     }
 
+    /// Present stem of a verb lemma, or `None` when it is not a known verb.
     pub fn present_stem(&self, lemma: &str) -> Option<&str> {
         self.verb_roots
             .get(lemma)
             .map(|roots| roots.present.as_str())
     }
 
+    /// Whether `stem` is a known past stem or verb lemma.
     pub fn is_past_stem(&self, stem: &str) -> bool {
         self.verb_roots.contains_key(stem)
     }
 
+    /// Whether the word is listed as an adjective in the noun lexicon.
     #[inline(always)]
     pub fn is_adjective(&self, word: &str) -> bool {
         const POS_ADJ: u8 = 1 << 1;
@@ -236,11 +245,13 @@ impl MorphologyEngine {
             .is_some_and(|packed| ((packed >> 56) as u8 & POS_ADJ) != 0)
     }
 
+    /// Full paradigm for a verb in any known form, or `None` when it is not in the verb table.
     pub fn conjugate(&self, verb: &str) -> Option<crate::conjugation::Conjugation> {
         self.verb_roots(verb)
             .map(crate::conjugation::Conjugation::from_roots)
     }
 
+    /// Unpack the stored lemma for `key`; identity entries borrow `key`.
     #[inline(always)]
     pub fn unpack_lemma<'a>(packed: u64, key: &'a str) -> Cow<'a, str> {
         if (packed & FLAG_IDENTITY) != 0 {
@@ -254,16 +265,19 @@ impl MorphologyEngine {
         }
     }
 
+    /// Whether the word is in the noun lexicon.
     #[inline(always)]
     pub fn is_known_noun(&self, word: &str) -> bool {
         self.noun_lexicon.contains_key(word)
     }
 
+    /// Whether the string is a known verb stem.
     #[inline(always)]
     pub fn is_known_verb_stem(&self, stem: &str) -> bool {
         self.verb_stems.contains_key(stem)
     }
 
+    /// Insert a ZWNJ after `می`/`نمی` when the rest is a known verb; other tokens are unchanged.
     #[inline]
     pub fn fix_spaceless_verb<'a>(&self, token: &'a str) -> Cow<'a, str> {
         if self.is_known_noun(token) {
@@ -283,6 +297,7 @@ impl MorphologyEngine {
         Cow::Borrowed(token)
     }
 
+    /// Lemma of one token from the noun and verb tables; returns the token when nothing matches.
     #[inline]
     pub fn lemmatize<'a>(&self, token: &'a str) -> Cow<'a, str> {
         // 1. Explicit imperfective verbs (می‌... / نمی‌...) always go to verb lemmatizer first

@@ -7,21 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Model packs are versioned separately from the crate; their versions are recorded
 in the pack manifest and on the model repository.
 
-## [Unreleased]
+## [0.11.2] - 2026-11-09
 
 ### Added
 
+- Doc comments on every public Rust item, enforced by `#![deny(missing_docs)]`,
+  with doctests on `Pipeline`, `ProcessOptions`, `dates` and `hub`.
+- Docstrings for every class, method and property in `python/rishe/_core.pyi`, so
+  an editor shows the contract instead of a bare signature.
+- `ProcessOptions::from_stages_checked`: the stage list of `from_stages`, except
+  an unknown name is an error (additive Rust API).
+- `rishe._core.DEFAULT_MASKERS`; `python/rishe/api.py` derives its tuple from it,
+  so the Rust binary, the Python CLI and the package share one masker list.
+- `docs/api-surface.txt` and `scripts/api_surface.py`, checked in CI, so a public
+  item cannot disappear or be renamed unnoticed.
+- `scripts/check_docs_examples.py`, which executes the Quick start blocks of all
+  three READMEs in CI.
 - `README.md` states the supported versions with measured numbers instead of a
   guess: CPython 3.9 – 3.14 for the wheel, Rust 1.88 for the default and
   `python` features, Rust 1.91 for `models` and for a source install of the
   Python package, each with the exact message an older tool refuses with. The
-  PyPI, crates.io and Persian READMEs say the same, and
-  `docs/STABILITY.md` carries the matrix.
+  PyPI, crates.io and Persian READMEs say the same, and `docs/STABILITY.md`
+  carries the matrix.
 - `Programming Language :: Python :: 3.14` and `Programming Language :: Python
   :: Implementation :: CPython` classifiers.
 
 ### Changed
 
+- `process(stages=...)` rejects an unknown stage name with `ValueError` instead of
+  ignoring it, so a typo cannot silently change the output; an empty list still
+  means every stage, as documented. `normalize(stages=...)` already behaved this
+  way.
+- `serve` treats a request field of the wrong JSON type as absent in both
+  implementations (`maskers`, `mask_token`, `word`, `n`), the documented rule for
+  `text`. Previously the console script raised while the Rust binary used the
+  default, so the same request got different answers.
 - CI builds and tests the Python package on every supported CPython version
   (3.9, 3.10, 3.11, 3.12, 3.13, 3.14), and the MSRV job also compiles the
   `python` feature on Rust 1.88.

@@ -55,12 +55,18 @@ cargo check --locked --features python,models
 # Public docs must be warning-free.
 RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps --features python,models
 
+# The public surface is a committed snapshot; regenerate it when a public item
+# is added, renamed or removed, and never edit the file by hand.
+python scripts/api_surface.py
+python scripts/api_surface.py --check
+
 python -m unittest discover -s python/tests -p "test_*.py" -v
 python scripts/benchmark_golden.py
 
 # The examples CI runs are the ones that need no model pack and no network.
 PYTHONIOENCODING=utf-8 python examples/basic.py
 PYTHONIOENCODING=utf-8 python examples/masking_keywords.py
+PYTHONIOENCODING=utf-8 python scripts/check_docs_examples.py
 ```
 
 CI runs the Python suite on CPython 3.9 through 3.14, so check the oldest
@@ -233,7 +239,10 @@ Network tip: the system proxy may throttle uploads. Bypassing it for HF
 - [ ] `models` gate green (`cargo +1.91.0 check --locked --features python,models`)
 - [ ] feature matrix green (`--no-default-features`, `python`, `models`, `python,models`)
 - [ ] `cargo doc` warning-free under `RUSTDOCFLAGS="-D warnings"`
+- [ ] API surface unchanged, or `docs/api-surface.txt` regenerated with
+      `python scripts/api_surface.py`
 - [ ] offline examples (`basic.py`, `masking_keywords.py`) run
+- [ ] README quick-start blocks run (`python scripts/check_docs_examples.py`)
 - [ ] Python suite green on 3.9 – 3.14
 - [ ] working tree contains only intended files
 - [ ] commit and tag authored solely by Mahdi Alikhah

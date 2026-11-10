@@ -9,6 +9,7 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
+import rishe
 from rishe.cli import main
 
 MODEL = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "mini-embed.vec"
@@ -114,6 +115,41 @@ class CliTest(unittest.TestCase):
         response = json.loads(output.getvalue().strip())
         self.assertFalse(response["ok"])
         self.assertIn("no embedding model", response["error"])
+
+    def test_serve_treats_a_wrong_typed_field_as_absent(self):
+        # docs/serve-schema.md: a field of the wrong JSON type counts as absent.
+        # The Rust binary behaves this way; this server must agree with it.
+        text = "به info@a.co بنویس"
+        default = rishe.mask(text)
+        cases = [
+            ({"command": "mask", "text": text, "maskers": "email"}, default),
+            (
+                {"command": "mask", "text": text, "maskers": [3, "email"]},
+                rishe.mask(text, maskers=["email"]),
+            ),
+            ({"command": "mask", "text": text, "mask_token": 7}, default),
+        ]
+        payload = "".join(json.dumps(request) + "\n" for request, _ in cases)
+        output = io.StringIO()
+        with mock.patch("sys.stdin", io.StringIO(payload)), redirect_stdout(output):
+            code = main(["serve"])
+        self.assertEqual(code, 0)
+        responses = [json.loads(line) for line in output.getvalue().splitlines()]
+        self.assertEqual(len(responses), len(cases))
+        for response, (_, expected) in zip(responses, cases):
+            self.assertTrue(response["ok"], response)
+            self.assertEqual(response["result"], expected)
+
+    def test_serve_similar_accepts_a_null_count(self):
+        # `n` of the wrong type is absent, so the documented default of 5 applies.
+        request = json.dumps({"command": "similar", "word": "کتاب", "n": None}) + "\n"
+        output = io.StringIO()
+        with mock.patch("sys.stdin", io.StringIO(request)), redirect_stdout(output):
+            code = main(["serve", "--model", str(MODEL)])
+        self.assertEqual(code, 0)
+        response = json.loads(output.getvalue().strip())
+        self.assertTrue(response["ok"], response)
+        self.assertLessEqual(len(response["result"]), 5)
 
     def test_hub_path(self):
         with tempfile.TemporaryDirectory() as root:

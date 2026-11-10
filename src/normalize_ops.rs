@@ -163,28 +163,44 @@ const E_SUFFIXES: &[&str] = &[
     "پیشگی",
 ];
 
+/// How a word-final `ه ی` ending is written.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum YaStyle {
+    /// `ۀ` (standard orthography).
     Standard,
+    /// `ه‌ی` with a ZWNJ.
     Joda,
 }
 
+/// One normalization step; a stage list applies steps in the order given.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NormalizeOp {
+    /// Map Arabic presentation forms and letter variants to Persian letters.
     Alphabet,
+    /// Expand Arabic ligatures into Persian words.
     ArabicUnicode,
+    /// Normalize the word-final `ه‌ی`/`ۀ` ending to the given style.
     Ya(YaStyle),
+    /// Map Arabic, math and circled digit forms to Persian digits.
     Digits,
+    /// Map punctuation variants to their Persian forms.
     Punctuation,
+    /// Truncate runs of a character to two and strip kashida.
     RepeatedLetters,
+    /// Run orthographic, punctuation, word and verbal spacing in that order.
     Spacing,
+    /// Collapse whitespace, drop invisible controls and fix ZWNJ placement.
     OrthographicSpacing,
+    /// Attach punctuation to its neighbouring word without a space.
     PunctuationSpacing,
+    /// Join a separate suffix or prefix to a known word.
     WordSpacing,
+    /// Join `می`/`نمی` and verb suffixes to known verb forms.
     VerbalSpacing,
 }
 
 impl NormalizeOp {
+    /// Resolve an operator name or alias, or `None` when unknown.
     pub fn from_name(name: &str) -> Option<Self> {
         Some(match name {
             "alphabet" => Self::Alphabet,
@@ -204,6 +220,7 @@ impl NormalizeOp {
     }
 }
 
+/// Apply one operator, borrowing the input when nothing changes.
 pub fn apply<'a>(input: &'a str, op: NormalizeOp, morph: &MorphologyEngine) -> Cow<'a, str> {
     match op {
         NormalizeOp::Alphabet => alphabet(input),
@@ -227,10 +244,12 @@ static PUNCTUATION_TABLE: OnceLock<HashMap<char, &'static str>> = OnceLock::new(
 static WORD_SUFFIXES: OnceLock<HashSet<String>> = OnceLock::new();
 static SORTED_MORPH_SUFFIXES: OnceLock<Vec<&'static str>> = OnceLock::new();
 
+/// Map Arabic presentation forms and letter variants to Persian letters.
 pub fn alphabet(input: &str) -> Cow<'_, str> {
     mapped(input, ALPHABET_TABLE.get_or_init(|| table(ALPHABET_GROUPS)))
 }
 
+/// Expand Arabic ligature characters into Persian words.
 pub fn arabic_unicode(input: &str) -> Cow<'_, str> {
     mapped(
         input,
@@ -238,10 +257,12 @@ pub fn arabic_unicode(input: &str) -> Cow<'_, str> {
     )
 }
 
+/// Map Arabic, math and circled digits to Persian digits.
 pub fn digits(input: &str) -> Cow<'_, str> {
     mapped(input, DIGIT_TABLE.get_or_init(|| table(DIGIT_GROUPS)))
 }
 
+/// Map punctuation variants to Persian punctuation.
 pub fn punctuation(input: &str) -> Cow<'_, str> {
     mapped(
         input,
@@ -249,6 +270,7 @@ pub fn punctuation(input: &str) -> Cow<'_, str> {
     )
 }
 
+/// Normalize the word-final `ه‌ی`/`ه ی` ending to the given style.
 pub fn ya(input: &str, style: YaStyle) -> Cow<'_, str> {
     let (needle, replacement) = match style {
         YaStyle::Standard => ("ه\u{200C}ی", "ۀ"),
@@ -262,6 +284,7 @@ pub fn ya(input: &str, style: YaStyle) -> Cow<'_, str> {
     }
 }
 
+/// Truncate runs of a character to two, strip kashida and trim the result.
 pub fn repeated_letters(input: &str) -> Cow<'_, str> {
     let mut out = String::with_capacity(input.len());
     let mut prev: Option<char> = None;
@@ -293,6 +316,7 @@ pub fn repeated_letters(input: &str) -> Cow<'_, str> {
     Cow::Owned(trimmed.to_string())
 }
 
+/// Collapse horizontal whitespace, drop invisible controls and keep at most one blank line.
 pub fn orthographic_spacing(input: &str) -> Cow<'_, str> {
     if input.is_empty() {
         return Cow::Borrowed(input);
@@ -330,6 +354,7 @@ pub fn orthographic_spacing(input: &str) -> Cow<'_, str> {
     Cow::Owned(collapsed.trim().to_string())
 }
 
+/// Attach punctuation to its neighbouring word without a space.
 pub fn punctuation_spacing(input: &str) -> Cow<'_, str> {
     if input.is_empty() {
         return Cow::Borrowed(input);
@@ -343,6 +368,7 @@ pub fn punctuation_spacing(input: &str) -> Cow<'_, str> {
     Cow::Owned(finalize_spacing(chars))
 }
 
+/// Join known affixes to known words; returns the input borrowed when nothing changes.
 pub fn word_spacing<'a>(input: &'a str, morph: &MorphologyEngine) -> Cow<'a, str> {
     let joined = join_spans(input, |prev, next| try_join_words(prev, next, morph));
     let with_suffixes = join_attached_morph_suffixes(&joined, morph);
@@ -352,6 +378,8 @@ pub fn word_spacing<'a>(input: &'a str, morph: &MorphologyEngine) -> Cow<'a, str
     }
 }
 
+/// Join `می`/`نمی` and verb suffixes to known verb forms; returns the input
+/// borrowed when nothing changes.
 pub fn verbal_spacing<'a>(input: &'a str, morph: &MorphologyEngine) -> Cow<'a, str> {
     let after_preverbs = join_preverb_mi(input, morph);
     let after_suffixes = join_spans(&after_preverbs, |prev, next| {
@@ -389,6 +417,7 @@ pub fn verbal_spacing<'a>(input: &'a str, morph: &MorphologyEngine) -> Cow<'a, s
     }
 }
 
+/// Run orthographic, punctuation, word and verbal spacing in that order.
 pub fn spacing<'a>(input: &'a str, morph: &MorphologyEngine) -> Cow<'a, str> {
     let s = orthographic_spacing(input);
     let s = punctuation_spacing(&s);

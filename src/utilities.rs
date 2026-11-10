@@ -59,6 +59,7 @@ const SCALES: [&str; 7] = [
     "کوینتیلیون",
 ];
 
+/// Render an integer in Persian words, prefixing `منفی` for negative values.
 pub fn number_to_words(number: i64) -> String {
     if number < 0 {
         return format!("منفی {}", unsigned_to_words(number.unsigned_abs()));
@@ -66,6 +67,8 @@ pub fn number_to_words(number: i64) -> String {
     unsigned_to_words(number as u64)
 }
 
+/// Render a Persian or ASCII digit string in Persian words, using `ممیز` for
+/// decimals; errors on malformed or out-of-range input.
 pub fn number_to_words_text(text: &str) -> Result<String, String> {
     let normalized: String = text
         .trim()
@@ -213,11 +216,16 @@ const LOANWORDS: &[(&str, &[&str])] = &[
     ("کاپ", &["جام"]),
 ];
 
+/// A loanword found by [`persianize_suggest`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LoanwordMatch {
+    /// The matched loanword.
     pub word: String,
+    /// Preferred Persian replacements, best first.
     pub alternatives: Vec<String>,
+    /// Character offset of the match start.
     pub start: usize,
+    /// Character offset one past the match end.
     pub end: usize,
 }
 
@@ -232,6 +240,7 @@ fn loanword_matcher() -> &'static AhoCorasick {
     })
 }
 
+/// Replace whole-word loanwords with their preferred Persian equivalent.
 pub fn persianize(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut last = 0;
@@ -248,6 +257,7 @@ pub fn persianize(text: &str) -> String {
     out
 }
 
+/// All whole-word loanwords with their alternatives and character spans.
 pub fn persianize_suggest(text: &str) -> Vec<LoanwordMatch> {
     let mut matches = Vec::new();
     for found in loanword_matcher().find_iter(text) {

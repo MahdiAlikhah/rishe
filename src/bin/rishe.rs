@@ -6,6 +6,7 @@ use std::process::ExitCode;
 use rishe::{
     dates,
     embeddings::{DType, Embeddings},
+    maskers::DEFAULT_MASKERS,
     Pipeline,
 };
 use serde_json::{json, Value};
@@ -46,19 +47,6 @@ Options:
 
 Text is read from stdin when omitted or when it is `-`.
 ";
-
-const DEFAULT_MASKERS: [&str; 10] = [
-    "url",
-    "email",
-    "mention",
-    "hashtag",
-    "emoji",
-    "html",
-    "non_persian",
-    "digits",
-    "diacritics",
-    "punctuation",
-];
 
 struct Options {
     json: bool,

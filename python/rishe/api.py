@@ -14,6 +14,7 @@ from __future__ import annotations
 import threading
 from typing import List, Optional, Sequence, Tuple
 
+from . import _core
 from ._core import Pipeline, ProcessedDoc
 from ._deprecation import deprecated
 from .compat import word_tokenize as _compat_word_tokenize
@@ -35,18 +36,9 @@ __all__ = [
 ]
 
 #: Masker names applied by :func:`mask` when ``maskers`` is omitted, in order.
-DEFAULT_MASKERS: Tuple[str, ...] = (
-    "url",
-    "email",
-    "mention",
-    "hashtag",
-    "emoji",
-    "html",
-    "non_persian",
-    "digits",
-    "diacritics",
-    "punctuation",
-)
+#: Defined once in Rust and reused here, so the two CLIs and the package cannot
+#: drift apart.
+DEFAULT_MASKERS: Tuple[str, ...] = tuple(_core.DEFAULT_MASKERS)
 
 #: Keyword arguments accepted by :func:`tokenize`.
 TOKENIZE_OPTIONS: Tuple[str, ...] = (
@@ -82,7 +74,8 @@ def normalize(text: str, stages: Optional[Sequence[str]] = None) -> str:
     """Normalize Persian text.
 
     ``stages`` restricts or orders the normalizer steps; omit it for the default
-    pipeline.
+    pipeline, or pass ``[]`` for the same default. An unknown stage name raises
+    :class:`ValueError`.
     """
     return pipeline().normalize(text, None if stages is None else list(stages))
 
@@ -115,7 +108,13 @@ def sent_tokenize(text: str) -> List[str]:
 
 
 def process(text: str, stages: Optional[Sequence[str]] = None) -> ProcessedDoc:
-    """Run the full pipeline and return a :class:`~rishe.ProcessedDoc`."""
+    """Run the full pipeline and return a :class:`~rishe.ProcessedDoc`.
+
+    ``stages`` keeps only the named steps, in any order: ``normalize``,
+    ``formalize``, ``lemmatize``, ``sentences`` and ``ezafe``. Omit it, or pass
+    ``[]``, for every step. An unknown stage name raises :class:`ValueError`
+    instead of being ignored, so a typo cannot silently change the output.
+    """
     return pipeline().process(text, None if stages is None else list(stages))
 
 

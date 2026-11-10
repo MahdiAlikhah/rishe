@@ -1,8 +1,11 @@
 const ZWNJ: &str = "\u{200C}";
 
+/// Persian adjective and noun inflection.
 pub struct Inflector;
 
 impl Inflector {
+    /// Comparative form: `بزرگ` -> `بزرگ‌تر`, with irregular adjectives mapped to their
+    /// listed form.
     pub fn comparative(adj: &str) -> String {
         match irregular(adj) {
             Some((comparative, _)) => comparative.to_string(),
@@ -10,6 +13,8 @@ impl Inflector {
         }
     }
 
+    /// Superlative form: `بزرگ` -> `بزرگ‌ترین`, with irregular adjectives mapped to their
+    /// listed form.
     pub fn superlative(adj: &str) -> String {
         match irregular(adj) {
             Some((_, superlative)) => superlative.to_string(),
@@ -17,10 +22,13 @@ impl Inflector {
         }
     }
 
+    /// Plural with `ها`, joined without ZWNJ after `ا`/`و`/`د`/`ر`/`ز`/`ژ`.
     pub fn plural(noun: &str) -> String {
         join(noun, "ها")
     }
 
+    /// Possessive for person `0..=5` (1st/2nd/3rd singular, then plural), or `None`
+    /// when out of range.
     pub fn possessive(noun: &str, person: usize) -> Option<String> {
         let suffixes = ["م", "ت", "ش", "مان", "تان", "شان"];
         suffixes.get(person)?;

@@ -43,6 +43,19 @@ class FrontDoorTest(unittest.TestCase):
         self.assertTrue(doc.tokens)
         self.assertEqual(len(rishe.process_batch(["سلام", "دنیا"])), 2)
 
+    def test_process_rejects_an_unknown_stage(self):
+        # A typo used to be ignored, which silently changed the output.
+        with self.assertRaises(ValueError) as caught:
+            rishe.process("کتاب خوب است", stages=["toknize"])
+        self.assertIn("unknown process stage: toknize", str(caught.exception))
+
+    def test_process_stages_subset_and_empty_list(self):
+        self.assertEqual(
+            rishe.process("مي كنم", stages=[]).formal_text,
+            rishe.process("مي كنم").formal_text,
+        )
+        self.assertIsInstance(rishe.process("مي كنم", stages=["normalize"]).tokens, list)
+
     def test_lemmatize_and_stem(self):
         self.assertEqual(rishe.lemmatize("می‌روم"), "رفت")
         self.assertTrue(rishe.stem("کتاب‌ها"))

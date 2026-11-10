@@ -1,4 +1,4 @@
-# Serve protocol, version 1
+﻿# Serve protocol, version 1
 
 `rishe serve` is a JSON-lines server: one request per line on stdin, one response
 per line on stdout. This page documents protocol version 1 for both
@@ -61,7 +61,7 @@ bytes the Rust binary writes today: compact JSON with the object keys in
 alphabetical order. The console script writes the same objects without the
 compact separators (`{"ok": true, "result": ...}`). Whitespace and object field
 order are not part of the protocol; clients must not depend on them. Error
-message wording is not part of the protocol either — the shape is.
+message wording is not part of the protocol either â€” the shape is.
 
 ## Version handshake
 
@@ -74,7 +74,7 @@ Request:
 Response:
 
 ```json
-{"ok":true,"result":{"name":"rishe","protocol":1,"version":"0.11.1"}}
+{"ok":true,"result":{"name":"rishe","protocol":1,"version":"0.11.2"}}
 ```
 
 | field | type | meaning |
@@ -89,14 +89,17 @@ binary reports its Cargo package version and the console script reports the
 installed `rishe` package version, the same number for a matching release. The
 handshake ignores every other request field. This is the bare version string;
 `rishe --version` on either CLI prints the same version with the program name
-(`rishe 0.11.1`).
+(`rishe 0.11.2`).
 
 ## Requests
 
 Every request is a JSON object with a `command` string. `text` is optional and
-defaults to the empty string; a non-string `text` is treated as absent. Commands
-that need a word or a pair of words read extra fields as listed below. The
-examples reproduce the response shape; values that come from a model pack
+defaults to the empty string; a non-string `text` is treated as absent. Every
+other optional field follows the same rule: a value of the wrong JSON type is
+treated as absent, so it falls back to its default instead of failing the
+request. Both implementations apply that rule identically. Commands that need a
+word or a pair of words read extra fields as listed below. The examples
+reproduce the response shape; values that come from a model pack
 (`tag`, `label`, `relation`) depend on the pack that is loaded.
 
 ### normalize
@@ -104,13 +107,13 @@ examples reproduce the response shape; values that come from a model pack
 Request:
 
 ```json
-{"command":"normalize","text":"مي كنم"}
+{"command":"normalize","text":"Ù…ÙŠ ÙƒÙ†Ù…"}
 ```
 
 Response: the normalized text as a string.
 
 ```json
-{"ok":true,"result":"می‌کنم"}
+{"ok":true,"result":"Ù…ÛŒâ€ŒÚ©Ù†Ù…"}
 ```
 
 ### tokenize
@@ -118,14 +121,14 @@ Response: the normalized text as a string.
 Request:
 
 ```json
-{"command":"tokenize","text":"سلام دنیا"}
+{"command":"tokenize","text":"Ø³Ù„Ø§Ù… Ø¯Ù†ÛŒØ§"}
 ```
 
 Response: an array of surface-token strings. This does not normalize; it is the
 same tokenization as `rishe tokenize`.
 
 ```json
-{"ok":true,"result":["سلام","دنیا"]}
+{"ok":true,"result":["Ø³Ù„Ø§Ù…","Ø¯Ù†ÛŒØ§"]}
 ```
 
 ### lemmatize
@@ -133,13 +136,13 @@ same tokenization as `rishe tokenize`.
 Request:
 
 ```json
-{"command":"lemmatize","text":"می‌روم"}
+{"command":"lemmatize","text":"Ù…ÛŒâ€ŒØ±ÙˆÙ…"}
 ```
 
 Response: an array of lemma strings, one per token.
 
 ```json
-{"ok":true,"result":["رفت"]}
+{"ok":true,"result":["Ø±ÙØª"]}
 ```
 
 ### mask
@@ -154,7 +157,8 @@ Request fields:
 
 When `maskers` is omitted the process default is used (`--maskers`, otherwise all
 maskers). When `mask_token` is omitted the process default is used (`--mask-token`,
-otherwise each masker's own default).
+otherwise each masker's own default). A `maskers` value that is not an array is
+ignored, and non-string entries inside it are dropped, in both implementations.
 
 ```json
 {"command":"mask","text":"info@a.co","maskers":["email"]}
@@ -248,7 +252,7 @@ Response: an array of words with their dependency head.
 Request:
 
 ```json
-{"command":"embed","text":"کتاب"}
+{"command":"embed","text":"Ú©ØªØ§Ø¨"}
 ```
 
 Response: the mean embedding vector, an array of numbers with one entry per
@@ -272,8 +276,8 @@ Request fields:
 Response: up to `n` `{"word","score"}` objects, best score first.
 
 ```json
-{"command":"similar","word":"کتاب","n":2}
-{"ok":true,"result":[{"score":0.22518165409564972,"word":"خواندم"},{"score":-0.18090607225894928,"word":"را"}]}
+{"command":"similar","word":"Ú©ØªØ§Ø¨","n":2}
+{"ok":true,"result":[{"score":0.22518165409564972,"word":"Ø®ÙˆØ§Ù†Ø¯Ù…"},{"score":-0.18090607225894928,"word":"Ø±Ø§"}]}
 ```
 
 A word that is not in the vocabulary is not an error on the server: the response
@@ -289,12 +293,12 @@ Request fields:
 | `b` | string | second word; required |
 
 ```json
-{"command":"similarity","a":"کتاب","b":"کتاب"}
+{"command":"similarity","a":"Ú©ØªØ§Ø¨","b":"Ú©ØªØ§Ø¨"}
 {"ok":true,"result":{"score":1.0000001192092896}}
 ```
 
 If either word is out of vocabulary the response is an error:
-`out of vocabulary: "کتاب" or "ناموجود"`. A missing `b` gives
+`out of vocabulary: "Ú©ØªØ§Ø¨" or "Ù†Ø§Ù…ÙˆØ¬ÙˆØ¯"`. A missing `b` gives
 `similarity needs \`a\` and \`b\``.
 
 ## Failure modes
@@ -302,7 +306,7 @@ If either word is out of vocabulary the response is an error:
 The envelope and the process stay alive in every case below; the error is for the
 one request line that caused it. The `error` column shows the Rust binary's
 wording; the console script's messages differ in places, which this protocol
-allows — match on the `ok`/`error` envelope, not on the text.
+allows â€” match on the `ok`/`error` envelope, not on the text.
 
 | situation | response `error` |
 |---|---|

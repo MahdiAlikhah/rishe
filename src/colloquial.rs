@@ -5,8 +5,11 @@ use std::borrow::Cow;
 static INFORMAL_WORDS_FST: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/informal_words.fst"));
 static INFORMAL_VERBS_FST: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/informal_verbs.fst"));
 
+/// Result of formalizing one colloquial token.
 pub enum ExpandedTokens<'a> {
+    /// One formal token.
     Single(Cow<'a, str>),
+    /// Two formal tokens, e.g. a preposition plus its pronoun clitic.
     Pair(Cow<'a, str>, Cow<'a, str>),
 }
 
@@ -75,12 +78,14 @@ const COLLOQUIAL_VERB_ENDINGS: &[(&str, &str)] = &[
     ("ند", "ند"),
 ];
 
+/// Colloquial-to-formal converter backed by bundled FSTs.
 pub struct ColloquialConverter {
     informal_words: Map<&'static [u8]>,
     informal_verb_stems: Map<&'static [u8]>,
 }
 
 impl ColloquialConverter {
+    /// Build the converter from the FSTs bundled at compile time.
     pub fn new() -> Self {
         Self {
             informal_words: Map::new(INFORMAL_WORDS_FST).expect("Corrupted informal_words.fst"),
@@ -89,6 +94,8 @@ impl ColloquialConverter {
         }
     }
 
+    /// Formalize one token: fused preposition pronouns and copulas expand to two
+    /// tokens, the rest to one.
     #[inline]
     pub fn expand_and_formalize<'a>(
         &self,
@@ -106,6 +113,8 @@ impl ColloquialConverter {
         ExpandedTokens::Single(self.to_formal(token, morph))
     }
 
+    /// Map a colloquial word or verb form to its formal form, returning the input
+    /// when nothing matches.
     #[inline]
     pub fn to_formal<'a>(&self, token: &'a str, morph: &MorphologyEngine) -> Cow<'a, str> {
         if let Some(packed) = self.informal_words.get(token) {

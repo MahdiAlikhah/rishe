@@ -86,6 +86,41 @@ fn serves_json_lines() {
 }
 
 #[test]
+fn serve_treats_a_wrong_typed_field_as_absent() {
+    // docs/serve-schema.md: a field of the wrong JSON type counts as absent, so
+    // an older client cannot get a different result from the two servers.
+    use std::io::Write;
+    let lines = concat!(
+        "{\"command\":\"mask\",\"text\":\"info@a.co\",\"maskers\":\"email\"}\n",
+        "{\"command\":\"mask\",\"text\":\"info@a.co\",\"maskers\":[3,\"email\"]}\n",
+        "{\"command\":\"mask\",\"text\":\"info@a.co\",\"mask_token\":7}\n",
+    );
+    let mut child = rishe()
+        .arg("serve")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn rishe serve");
+    child
+        .stdin
+        .as_mut()
+        .expect("stdin")
+        .write_all(lines.as_bytes())
+        .expect("write stdin");
+    let output = child.wait_with_output().expect("wait");
+    assert_eq!(output.status.code(), Some(0));
+    let responses: Vec<serde_json::Value> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("one JSON object per line"))
+        .collect();
+    assert_eq!(responses.len(), 3);
+    for response in responses {
+        assert_eq!(response["ok"], true, "unexpected error: {response}");
+        assert!(response["result"].is_string());
+    }
+}
+
+#[test]
 fn serve_answers_the_version_handshake() {
     use std::io::Write;
     let mut child = rishe()

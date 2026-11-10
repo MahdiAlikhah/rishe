@@ -19,11 +19,14 @@ const HEADER_LEN: usize = 15;
 /// Storage width of an embedding file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DType {
+    /// 4-byte floats.
     F32,
+    /// 2-byte half floats, decoded to `f32` on load.
     F16,
 }
 
 impl DType {
+    /// Format name: `f32` or `f16`.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::F32 => "f32",
@@ -454,14 +457,17 @@ impl Embeddings {
         })
     }
 
+    /// Vector dimension.
     pub fn dim(&self) -> usize {
         self.dim
     }
 
+    /// Number of words in the vocabulary.
     pub fn len(&self) -> usize {
         self.words.len()
     }
 
+    /// Always `false` for a successfully loaded model.
     pub fn is_empty(&self) -> bool {
         self.words.is_empty()
     }
@@ -472,14 +478,18 @@ impl Embeddings {
         &self.vectors[start..start + self.dim]
     }
 
+    /// Whether the word is in the vocabulary.
     pub fn contains(&self, word: &str) -> bool {
         self.index.contains_key(word)
     }
 
+    /// The word's row, or `None` when it is out of vocabulary.
     pub fn vector(&self, word: &str) -> Option<&[f32]> {
         self.index.get(word).map(|index| self.row(index))
     }
 
+    /// Cosine similarity in `-1..=1`, or `None` when either word is unknown; zero
+    /// vectors score `0`.
     pub fn similarity(&self, first: &str, second: &str) -> Option<f32> {
         let first_index = self.index.get(first)?;
         let second_index = self.index.get(second)?;
@@ -512,6 +522,7 @@ impl Embeddings {
         sum
     }
 
+    /// One mean vector per text, computed in parallel; input order is preserved.
     pub fn sentence_vectors(&self, texts: &[String]) -> Vec<Vec<f32>> {
         texts
             .par_iter()
@@ -519,6 +530,7 @@ impl Embeddings {
             .collect()
     }
 
+    /// Cosine similarity of the two mean vectors, or `0` when either is all zeros.
     pub fn sentence_similarity(&self, first: &str, second: &str) -> f32 {
         let first = self.sentence_vector(first);
         let second = self.sentence_vector(second);
@@ -529,6 +541,7 @@ impl Embeddings {
         dot(&first, &second) / denominator
     }
 
+    /// Up to `n` nearest words by descending cosine similarity, excluding the query itself.
     pub fn most_similar(&self, word: &str, n: usize) -> Vec<(String, f32)> {
         if n == 0 {
             return Vec::new();

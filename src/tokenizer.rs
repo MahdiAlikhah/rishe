@@ -1,21 +1,32 @@
+/// Lexical class of a token.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TokenKind {
+    /// Letter-initial token; may contain a ZWNJ.
     Word,
+    /// Digit sequence, optionally with decimal separators.
     Number,
+    /// Any other single character.
     Punctuation,
 }
 
+/// A token with its byte offsets into the input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Token<'a> {
+    /// Token text.
     pub text: &'a str,
+    /// Byte offset of the first character.
     pub start: usize,
+    /// Byte offset one past the last character.
     pub end: usize,
+    /// Lexical class.
     pub kind: TokenKind,
 }
 
+/// Byte-offset tokenizer.
 pub struct Tokenizer;
 
 impl Tokenizer {
+    /// Split into words, numbers and punctuation with byte spans; whitespace is skipped.
     #[inline]
     pub fn tokenize<'a>(input: &'a str) -> Vec<Token<'a>> {
         let mut tokens = Vec::with_capacity(input.len() / 6 + 1);

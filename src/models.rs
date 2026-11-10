@@ -12,27 +12,37 @@ use crate::tokenizer::Tokenizer as WordTokenizer;
 
 tract::impl_ndarray_interop!();
 
+/// A word with a POS tag and character offsets.
 #[cfg_attr(
     feature = "python",
     pyo3::pyclass(frozen, module = "rishe._core", get_all)
 )]
 #[derive(Debug, Clone)]
 pub struct TaggedToken {
+    /// Token text.
     pub text: String,
+    /// Tag label.
     pub tag: String,
+    /// Character offset of the first character.
     pub start: usize,
+    /// Character offset one past the last character.
     pub end: usize,
 }
 
+/// A named entity merged from BIO-tagged tokens.
 #[cfg_attr(
     feature = "python",
     pyo3::pyclass(frozen, module = "rishe._core", get_all)
 )]
 #[derive(Debug, Clone)]
 pub struct Entity {
+    /// Entity text, words joined by single spaces when the entity spans tokens.
     pub text: String,
+    /// Entity label without the BIO prefix.
     pub label: String,
+    /// Character offset of the first character.
     pub start: usize,
+    /// Character offset one past the last character.
     pub end: usize,
 }
 
@@ -43,10 +53,15 @@ pub struct Entity {
 /// One word and its dependency head; `head` is zero-based or `None` for the root.
 #[derive(Debug, Clone)]
 pub struct Dependency {
+    /// Token text.
     pub text: String,
+    /// Zero-based head index, or `None` for the root.
     pub head: Option<usize>,
+    /// Dependency relation label.
     pub relation: String,
+    /// Character offset of the first character.
     pub start: usize,
+    /// Character offset one past the last character.
     pub end: usize,
 }
 
@@ -185,6 +200,7 @@ fn maximum_arborescence(node_count: usize, root: usize, edges: &[ArcEdge]) -> Op
     Some(result)
 }
 
+/// Merge BIO-tagged tokens into entities, tolerating `_`/`-` prefixes and broken `I` tags.
 pub fn merge_entities(tokens: &[TaggedToken]) -> Vec<Entity> {
     let mut entities = Vec::new();
     let mut current: Option<(String, usize, usize, String)> = None;
@@ -243,6 +259,8 @@ pub struct ModelPack {
 type EncodedWords = (Vec<i64>, Vec<usize>, Vec<String>);
 
 impl ModelPack {
+    /// Load a pack directory holding `model.onnx`, `tokenizer.json` and
+    /// `labels.json`; errors on a missing or malformed file.
     pub fn load(path: impl AsRef<Path>) -> Result<Self, String> {
         let path = path.as_ref();
         if !path.is_dir() {
@@ -324,14 +342,17 @@ impl ModelPack {
         })
     }
 
+    /// Task the pack was built for: `pos`, `ner`, `ezafe` or `depparse`.
     pub fn task(&self) -> &str {
         &self.task
     }
 
+    /// Label names in model output order.
     pub fn labels(&self) -> &[String] {
         &self.labels
     }
 
+    /// Maximum token count the pack accepts.
     pub fn max_len(&self) -> usize {
         self.max_len
     }
@@ -391,10 +412,12 @@ impl ModelPack {
         self.tags_batch(texts)
     }
 
+    /// Entities extracted from `text` via the pack's tags.
     pub fn entities(&self, text: &str) -> Result<Vec<Entity>, String> {
         Ok(merge_entities(&self.tags(text)?))
     }
 
+    /// Entities per text, in input order.
     pub fn entities_batch(&self, texts: &[String]) -> Result<Vec<Vec<Entity>>, String> {
         Ok(self
             .tags_batch(texts)?
@@ -499,6 +522,7 @@ impl ModelPack {
         Ok(result)
     }
 
+    /// Dependency parse of `text`; `head` is zero-based or `None` for the root.
     pub fn depparse(&self, text: &str) -> Result<Vec<Dependency>, String> {
         let tokens = WordTokenizer::tokenize(text);
         let words: Vec<&str> = tokens.iter().map(|token| token.text).collect();

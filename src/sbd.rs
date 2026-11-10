@@ -14,9 +14,12 @@ const PERSIAN_ABBREVIATIONS: &[&str] = &[
     "ج.ا",
 ];
 
+/// Rule-based sentence boundary detection.
 pub struct SentenceSplitter;
 
 impl SentenceSplitter {
+    /// Split on `.`, `؟`, `?`, `!`, `۔` and newlines, ignoring decimal dots and
+    /// common abbreviations; slices are trimmed.
     #[inline]
     pub fn split(text: &str) -> Vec<&str> {
         let mut sentences = Vec::new();

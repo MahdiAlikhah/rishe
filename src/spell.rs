@@ -12,21 +12,26 @@ const ALPHABET: &[char] = &[
     'ۀ',
 ];
 
+/// Frequency-ranked spelling suggestions backed by the bundled word-frequency FST.
 pub struct SpellChecker {
     freq: Map<&'static [u8]>,
 }
 
 impl SpellChecker {
+    /// Build the checker from the FST bundled at compile time.
     pub fn new() -> Self {
         Self {
             freq: Map::new(WORD_FREQ_FST_BYTES).expect("Corrupted word_freq.fst"),
         }
     }
 
+    /// Whether the word is in the frequency dictionary.
     pub fn contains(&self, word: &str) -> bool {
         self.freq.contains_key(word)
     }
 
+    /// Up to `max` candidates: the known word first, then single-edit neighbours by
+    /// descending frequency, ties by text.
     pub fn suggest(&self, word: &str, max: usize) -> Vec<String> {
         if max == 0 {
             return Vec::new();
@@ -61,6 +66,8 @@ impl SpellChecker {
         out
     }
 
+    /// Replace unknown words of three or more characters with their best suggestion
+    /// and detokenize the result.
     pub fn correct(&self, text: &str) -> String {
         let mut out = Vec::new();
         for token in Tokenizer::tokenize(text) {

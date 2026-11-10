@@ -6,9 +6,12 @@ const PREFIXES: &[&str] = &[
     "نمی", "می", "بر", "باز", "در", "فرو", "وا", "ور", "فرا", "پس", "پیش",
 ];
 
+/// Splits fused Persian tokens into their morphemes.
 pub struct TokenSplitter;
 
 impl TokenSplitter {
+    /// Split on a known prefix, ZWNJ or noun suffix when the remainder is a known
+    /// word; otherwise return the token unchanged.
     pub fn split(token: &str, morph: &MorphologyEngine) -> Vec<String> {
         for &(colloq, (first, second)) in FUSED_PREP_CLITICS {
             if token == colloq {
