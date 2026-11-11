@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Model packs are versioned separately from the crate; their versions are recorded
 in the pack manifest and on the model repository.
 
-## [0.11.3] - 2026-11-10
+## [0.11.3] - 2026-11-11
 
 ### Added
 
@@ -31,7 +31,7 @@ in the pack manifest and on the model repository.
   it was never implemented, and character offsets are available from
   `tokenize_spans`. Adding it is additive for a later minor.
 
-## [0.11.2] - 2026-11-09
+## [0.11.2] - 2026-11-10
 
 ### Added
 
