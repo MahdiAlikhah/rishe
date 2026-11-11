@@ -104,7 +104,6 @@ pipe.process(text).tokens           # same, through the pipeline
 | `normalized_text` | `text` |
 | `formal_text` | unchanged |
 | `sentences`, `tokens`, `lemmas` | unchanged |
-| — | `token_spans` (new, character offsets, same shape as `tokenize_spans`) |
 | `ezafe_markers` | `ezafe` |
 
 Text-valued fields may carry a `_text` suffix (`formal_text`) when the bare name

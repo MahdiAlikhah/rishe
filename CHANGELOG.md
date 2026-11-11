@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Model packs are versioned separately from the crate; their versions are recorded
 in the pack manifest and on the model repository.
 
+## [0.11.3] - 2026-11-10
+
+### Added
+
+- `tests/guarantees.rs`: `Pipeline`, `Embeddings` and `ModelPack` are asserted to
+  be `Send + Sync`, eight threads give the same result as one, and the output is
+  identical across runs and across instances.
+- `tests/hostile.rs`: a corrupt model pack returns an error, and a 10 MB single
+  token finishes instead of hanging.
+- `docs/STABILITY.md` states the concurrency and determinism guarantees, and says
+  which tests hold the "error, never a panic" claim for each input format.
+
+### Changed
+
+- `docs/API_CONVENTIONS.md` no longer lists `ProcessedDoc.token_spans` as a field:
+  it was never implemented, and character offsets are available from
+  `tokenize_spans`. Adding it is additive for a later minor.
+
 ## [0.11.2] - 2026-11-09
 
 ### Added

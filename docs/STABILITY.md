@@ -81,6 +81,18 @@ Exit codes, exception types and the serve error shape are part of the surface:
 see [`errors.md`](errors.md). A malformed input produces an error, never a panic,
 and the CLI never writes an error to stdout.
 
+`tests/hostile.rs` and the embeddings unit tests hold this: a corrupt `.vec`,
+`.rvec` or model pack returns an error, and a 10 MB single token finishes rather
+than hanging.
+
+## Concurrency and determinism
+
+`Pipeline`, `Embeddings` and `ModelPack` are `Send + Sync`, so one instance can be
+built and shared across threads. Concurrent calls return what a single thread
+returns, and the same input with the same options gives the same output on every
+run and every instance: no result depends on hash ordering or the clock.
+`tests/guarantees.rs` asserts both.
+
 ## Formats
 
 `.rvec` version 1 and hub manifest schema 1 are read forever once published: a
