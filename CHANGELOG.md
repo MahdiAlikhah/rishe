@@ -18,9 +18,15 @@ in the pack manifest and on the model repository.
   token finishes instead of hanging.
 - `docs/STABILITY.md` states the concurrency and determinism guarantees, and says
   which tests hold the "error, never a panic" claim for each input format.
+- `README.md` shows one badge row: the supported Python versions, total PyPI
+  downloads and the license.
 
 ### Changed
 
+- `README.md` no longer repeats the measured version table: the badge carries the
+  Python versions, the install bullets keep the Rust floors, and the full matrix
+  stays in `README.pypi.md`, `README.crates.md`, `README.fa.md` and
+  [`docs/STABILITY.md`](docs/STABILITY.md).
 - `docs/API_CONVENTIONS.md` no longer lists `ProcessedDoc.token_spans` as a field:
   it was never implemented, and character offsets are available from
   `tokenize_spans`. Adding it is additive for a later minor.
