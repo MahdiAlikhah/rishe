@@ -3,8 +3,10 @@
 //! `src/embeddings.rs` already covers corrupt `.vec` and `.rvec` files; this
 //! file covers the model pack and the oversized single token.
 
+#[cfg(feature = "models")]
 use std::path::{Path, PathBuf};
 
+#[cfg(feature = "models")]
 fn scratch(name: &str) -> PathBuf {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("target")

@@ -234,7 +234,8 @@ Network tip: the system proxy may throttle uploads. Bypassing it for HF
 
 - [ ] version bumped in `Cargo.toml` and `Cargo.lock`
 - [ ] `CHANGELOG.md` entry added
-- [ ] fmt, clippy, tests (default + models), Python suite, golden benchmark green
+- [ ] fmt, clippy on default features *and* `--features python,models`, tests
+      (default + models), Python suite, golden benchmark green
 - [ ] MSRV gate green (`cargo +1.88.0 check --locked`, `--features python`)
 - [ ] `models` gate green (`cargo +1.91.0 check --locked --features python,models`)
 - [ ] feature matrix green (`--no-default-features`, `python`, `models`, `python,models`)
