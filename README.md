@@ -7,19 +7,9 @@
 **Fast Persian NLP and morphology, built in Rust.**
 
 <p align="center">
-  <a href="https://github.com/MahdiAlikhah/rishe/actions/workflows/release.yml"><img src="https://img.shields.io/github/actions/workflow/status/MahdiAlikhah/rishe/release.yml?label=ci" alt="CI status"></a>
-  <a href="https://pypi.org/project/rishe/"><img src="https://img.shields.io/pypi/v/rishe" alt="PyPI version"></a>
   <a href="https://pypi.org/project/rishe/"><img src="https://img.shields.io/pypi/pyversions/rishe" alt="Supported Python versions"></a>
-  <a href="https://crates.io/crates/rishe"><img src="https://img.shields.io/crates/v/rishe" alt="crates.io version"></a>
-  <a href="https://crates.io/crates/rishe"><img src="https://img.shields.io/crates/d/rishe" alt="crates.io downloads"></a>
-  <a href="https://docs.rs/rishe"><img src="https://img.shields.io/docsrs/rishe" alt="docs.rs"></a>
+  <a href="https://pepy.tech/projects/rishe"><img src="https://static.pepy.tech/personalized-badge/rishe?period=total&units=INTERNATIONAL_SYSTEM&left_color=BLACK&right_color=GREEN&left_text=downloads" alt="PyPI Downloads"></a>
   <a href="#license"><img src="https://img.shields.io/crates/l/rishe" alt="License: MIT OR Apache-2.0"></a>
-</p>
-
-<p align="center">
-  <a href="https://pepy.tech/projects/rishe">
-    <img src="https://static.pepy.tech/personalized-badge/rishe?period=total&units=INTERNATIONAL_SYSTEM&left_color=BLACK&right_color=GREEN&left_text=downloads" alt="PyPI Downloads">
-  </a>
 </p>
 
 <p align="center">
