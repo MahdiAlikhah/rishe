@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Model packs are versioned separately from the crate; their versions are recorded
 in the pack manifest and on the model repository.
 
+## [0.11.4] - 2026-11-12
+
+No functional changes: the public API, the output and the file formats are the
+same as 0.11.3. This is the freeze candidate — it records the numbers `1.0.0`
+will be compared against and re-verifies the published artifacts, leaving the
+removal of the deprecated aliases as the only step to `1.0.0`.
+
+Every published hub name was pulled from scratch and checksum-verified against
+its manifest: `rishe-embed-fa-300-v2`, `rishe-embed-fa-300`, `pos-compact`,
+`ner-compact`, `ezafe-compact`, `depparse-compact` and `hazm-fasttext-300`.
+
+### Added
+
+- `docs/BENCHMARKS.md` records the Rust engine baseline: median time per
+  `Pipeline::process` call on this host, with the exact command and the
+  run-to-run spread, so a later change can be compared with a number instead of
+  a feeling.
+
 ## [0.11.3] - 2026-11-11
 
 ### Added

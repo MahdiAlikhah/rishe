@@ -83,6 +83,19 @@ Median of 5 runs each. Reproduce with
 output). Scaling is near-linear to 4 threads (~91% efficiency) and reaches
 6.5× on 12.
 
+## Rust engine (criterion)
+
+The rows above compare Rishe with Hazm and Shekar through Python. This is the
+engine alone: Windows 11, release profile, single thread, rishe 0.11.4,
+2026-11-11, reproduce with `cargo bench --bench tier1_bench`.
+
+| benchmark | median per call |
+|---|---|
+| `end_to_end_process` (one sentence through `Pipeline::process`) | 8.4 – 10.0 µs |
+
+Two runs on this host spread about ±15%, so compare the range, not a single
+digit, when checking a later change. This is the reference for `1.0.0`.
+
 ## Not measured
 
 - Sentence splitting: an earlier metric compared sentence *counts*, which

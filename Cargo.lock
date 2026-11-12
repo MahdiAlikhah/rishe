@@ -2031,7 +2031,7 @@ dependencies = [
 
 [[package]]
 name = "rishe"
-version = "0.11.3"
+version = "0.11.4"
 dependencies = [
  "aho-corasick",
  "criterion",

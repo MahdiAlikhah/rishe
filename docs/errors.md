@@ -26,7 +26,7 @@ not there, an unknown Hub name.
 rishe normalize "Ù…ÙŠ ÙƒÙ†Ù…"          # stdout: Ù…ÛŒâ€ŒÚ©Ù†Ù…
 rishe --help                      # stdout: usage
 rishe                             # stdout: usage
-rishe -V                          # stdout: rishe 0.11.3
+rishe -V                          # stdout: rishe 0.11.4
 rishe hub info rishe-embed-fa-300 # stdout: rishe-embed-fa-300<TAB>missing
 ```
 
@@ -114,7 +114,7 @@ still report on stderr.
   described above.
 - `-h`/`--help`, `-V`/`--version` and the no-command usage print write to stdout
   and exit 0. `--version` prints `rishe` and the version, for example
-  `rishe 0.11.3`.
+  `rishe 0.11.4`.
 - `serve` writes response envelopes to stdout and startup diagnostics to stderr.
   Requests that fail do not change the process exit status.
 
