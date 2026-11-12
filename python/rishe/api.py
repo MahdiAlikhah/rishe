@@ -16,8 +16,6 @@ from typing import List, Optional, Sequence, Tuple
 
 from . import _core
 from ._core import Pipeline, ProcessedDoc
-from ._deprecation import deprecated
-from .compat import word_tokenize as _compat_word_tokenize
 
 __all__ = [
     "DEFAULT_MASKERS",
@@ -32,7 +30,6 @@ __all__ = [
     "stem",
     "mask",
     "keywords",
-    "word_tokenize",
 ]
 
 #: Masker names applied by :func:`mask` when ``maskers`` is omitted, in order.
@@ -160,8 +157,3 @@ def keywords(
         return pipe.textrank(text, n, max_length)
     raise ValueError(f"unknown keyword method {method!r}; use 'rake' or 'textrank'")
 
-
-@deprecated("rishe.word_tokenize", "rishe.tokenize")
-def word_tokenize(text: str) -> List[str]:
-    """Deprecated alias that keeps the 0.10 behaviour: normalize, then join verb parts."""
-    return _compat_word_tokenize(text)

@@ -86,8 +86,5 @@ hub.cached("rishe-embed-fa-300-v2")   # cached file, or None
 hub.verify("pos-compact")             # checksum check
 ```
 
-`pull_pack`, `cached_pack` and `path_pack` remain as deprecated aliases until
-`1.0.0`.
-
 The embedding model is a separate download (CC BY-SA 4.0). The base install does
 not bundle weights and importing `rishe` never touches the network.

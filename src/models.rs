@@ -385,31 +385,9 @@ impl ModelPack {
         Ok(result)
     }
 
-    /// Deprecated alias of [`ModelPack::tags`].
-    #[deprecated(since = "0.11.0", note = "use `ModelPack::tags`")]
-    pub fn tag_text_items(&self, text: &str) -> Result<Vec<TaggedToken>, String> {
-        self.tags(text)
-    }
-
-    /// Deprecated alias of [`ModelPack::tags`] that returns word/tag tuples.
-    #[deprecated(since = "0.11.0", note = "use `ModelPack::tags`")]
-    pub fn tag_text(&self, text: &str) -> Result<Vec<(String, String)>, String> {
-        Ok(self
-            .tags(text)?
-            .into_iter()
-            .map(|token| (token.text, token.tag))
-            .collect())
-    }
-
     /// Tag many texts, one result per input.
     pub fn tags_batch(&self, texts: &[String]) -> Result<Vec<Vec<TaggedToken>>, String> {
         texts.par_iter().map(|text| self.tags(text)).collect()
-    }
-
-    /// Deprecated alias of [`ModelPack::tags_batch`].
-    #[deprecated(since = "0.11.0", note = "use `ModelPack::tags_batch`")]
-    pub fn tag_text_batch(&self, texts: &[String]) -> Result<Vec<Vec<TaggedToken>>, String> {
-        self.tags_batch(texts)
     }
 
     /// Entities extracted from `text` via the pack's tags.
@@ -424,12 +402,6 @@ impl ModelPack {
             .iter()
             .map(|tokens| merge_entities(tokens))
             .collect())
-    }
-
-    /// Deprecated alias of [`ModelPack::tags_from_words`].
-    #[deprecated(since = "0.11.0", note = "use `ModelPack::tags_from_words`")]
-    pub fn tag_words(&self, words: &[&str]) -> Result<Vec<(String, String)>, String> {
-        self.tags_from_words(words)
     }
 
     fn encode_words(&self, words: &[&str]) -> Result<Option<EncodedWords>, String> {

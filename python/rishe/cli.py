@@ -47,6 +47,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(
         prog="rishe",
         description="Fast Persian NLP and morphology.",
+        epilog="What the version number means: https://github.com/MahdiAlikhah/rishe/blob/main/docs/STABILITY.md",
     )
     parser.add_argument(
         "-V",
@@ -70,11 +71,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     mask.add_argument("text", nargs="?", help="text; reads stdin when omitted")
     mask.add_argument(
         "--maskers",
-        "--stages",
         dest="maskers",
         nargs="+",
         default=list(DEFAULT_MASKERS),
-        help="maskers to apply, in order (`--stages` is a deprecated alias)",
+        help="maskers to apply, in order",
     )
     mask.add_argument("--mask-token", default=None, help="override every mask default")
     mask.add_argument("--json", action="store_true", help="emit JSON")
@@ -105,7 +105,6 @@ def main(argv: Optional[List[str]] = None) -> int:
     serve = subparsers.add_parser("serve", help="JSON-lines server on stdin/stdout.")
     serve.add_argument(
         "--maskers",
-        "--stages",
         dest="maskers",
         nargs="+",
         default=list(DEFAULT_MASKERS),

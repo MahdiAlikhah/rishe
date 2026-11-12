@@ -121,6 +121,33 @@ fn serve_treats_a_wrong_typed_field_as_absent() {
 }
 
 #[test]
+fn serve_accepts_the_legacy_stages_field() {
+    // docs/serve-schema.md: protocol 1 still accepts "stages" for 0.x clients.
+    use std::io::Write;
+    let mut child = rishe()
+        .arg("serve")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn rishe serve");
+    child
+        .stdin
+        .as_mut()
+        .expect("stdin")
+        .write_all(
+            "{\"command\":\"mask\",\"text\":\"info@a.co\",\"stages\":[\"email\"]}\n".as_bytes(),
+        )
+        .expect("write stdin");
+    let output = child.wait_with_output().expect("wait");
+    assert_eq!(output.status.code(), Some(0));
+    let response: serde_json::Value =
+        serde_json::from_str(String::from_utf8_lossy(&output.stdout).trim())
+            .expect("one JSON object");
+    assert_eq!(response["ok"], true, "unexpected error: {response}");
+    assert_eq!(response["result"], "<EMAIL>");
+}
+
+#[test]
 fn serve_answers_the_version_handshake() {
     use std::io::Write;
     let mut child = rishe()
@@ -181,11 +208,14 @@ fn serve_survives_a_non_utf8_line() {
 }
 
 #[test]
-fn masks_with_the_current_and_legacy_flags() {
+fn masks_with_the_maskers_flag_and_rejects_the_removed_one() {
     let current = stdout(rishe().args(["mask", "به https://a.b برو", "--maskers", "url"]));
-    let legacy = stdout(rishe().args(["mask", "به https://a.b برو", "--stages", "url"]));
     assert_eq!(current, "به <URL> برو");
-    assert_eq!(legacy, current);
+    let removed = rishe()
+        .args(["mask", "به https://a.b برو", "--stages", "url"])
+        .output()
+        .expect("run rishe");
+    assert_eq!(removed.status.code(), Some(2));
 }
 
 #[test]

@@ -269,7 +269,7 @@ class ModelPackTest(unittest.TestCase):
         self.assertEqual(len(ezafe), 2)
 
         pack = ModelPack(str(PACK_ROOT / "pos"))
-        self.assertEqual(len(pack.tag_batch(["کتاب‌های خوب", "خوب است"])), 2)
+        self.assertEqual(len(pack.tags_batch(["کتاب‌های خوب", "خوب است"])), 2)
 
         with self.assertRaises(ValueError):
             Pipeline(pos_pack=str(PACK_ROOT / "ner"))

@@ -28,7 +28,7 @@ Process options are read once at startup:
 
 | option | effect |
 |---|---|
-| `--maskers a,b` | default maskers for `mask` requests (`--stages` is a deprecated alias) |
+| `--maskers a,b` | default maskers for `mask` requests |
 | `--mask-token TEXT` | default replacement token for `mask` requests |
 | `--pos-pack DIR` | POS model pack, loaded at startup |
 | `--ner-pack DIR` | NER model pack, loaded at startup |
@@ -74,7 +74,7 @@ Request:
 Response:
 
 ```json
-{"ok":true,"result":{"name":"rishe","protocol":1,"version":"0.11.4"}}
+{"ok":true,"result":{"name":"rishe","protocol":1,"version":"1.0.0"}}
 ```
 
 | field | type | meaning |
@@ -89,7 +89,7 @@ binary reports its Cargo package version and the console script reports the
 installed `rishe` package version, the same number for a matching release. The
 handshake ignores every other request field. This is the bare version string;
 `rishe --version` on either CLI prints the same version with the program name
-(`rishe 0.11.4`).
+(`rishe 1.0.0`).
 
 ## Requests
 
@@ -152,7 +152,7 @@ Request fields:
 | field | type | meaning |
 |---|---|---|
 | `text` | string | text to mask |
-| `maskers` | array of strings | maskers to apply, in order; `stages` is accepted as a deprecated alias |
+| `maskers` | array of strings | maskers to apply, in order; `stages` is still accepted for 0.x clients |
 | `mask_token` | string | replacement string for every masker |
 
 When `maskers` is omitted the process default is used (`--maskers`, otherwise all

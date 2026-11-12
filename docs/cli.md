@@ -16,9 +16,8 @@ rishe mask --maskers url "به https://a.b برو"
 ```
 
 `mask` defaults to all maskers; pass `--maskers` to choose, and `--mask-token`
-to override the per-masker default. `--stages` is accepted as a deprecated alias
-for `--maskers`. The Rust binary takes comma-separated maskers
-(`--maskers url,email`) and accepts `--stages` the same way.
+to override the per-masker default. The Rust binary takes comma-separated
+maskers (`--maskers url,email`); the Python CLI takes space-separated ones.
 
 `rishe tokenize` prints surface tokens and does not normalize; compose the
 commands for the normalizing path:

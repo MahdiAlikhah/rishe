@@ -168,19 +168,6 @@ class ModelPack:
     def max_len(self) -> int:
         """Maximum number of subword tokens the model accepts."""
         ...
-    # deprecated in 0.11.x, removed in 1.0.0
-    def tag(self, text: str) -> List[Tuple[str, str]]:
-        """Deprecated alias of tags; emits DeprecationWarning."""
-        ...
-    def tag_tokens(self, text: str) -> List[TaggedToken]:
-        """Deprecated alias of tags; emits DeprecationWarning."""
-        ...
-    def tag_batch(self, texts: List[str]) -> List[List[TaggedToken]]:
-        """Deprecated alias of tags_batch; emits DeprecationWarning."""
-        ...
-    def tag_words(self, words: List[str]) -> List[Tuple[str, str]]:
-        """Deprecated alias of tags_from_words; emits DeprecationWarning."""
-        ...
 
 class Embeddings:
     """Static word embeddings loaded from a .vec or .rvec file."""
@@ -485,39 +472,4 @@ class Pipeline:
         ...
     def stopwords(self) -> List[str]:
         """Return every stopword."""
-        ...
-    # deprecated in 0.11.x, removed in 1.0.0
-    def pipe(self, texts: List[str]) -> List[ProcessedDoc]:
-        """Deprecated alias of process_batch; emits DeprecationWarning."""
-        ...
-    def process_stages(self, text: str, stages: List[str]) -> ProcessedDoc:
-        """Deprecated alias of process; emits DeprecationWarning."""
-        ...
-    def normalize_stages(self, text: str, stages: List[str]) -> str:
-        """Deprecated alias of normalize; emits DeprecationWarning."""
-        ...
-    def mask_stages(
-        self, text: str, stages: List[str], mask_token: Optional[str] = None
-    ) -> str:
-        """Deprecated alias of mask; emits DeprecationWarning."""
-        ...
-    def word_tokenize(self, text: str) -> List[str]:
-        """Deprecated alias of tokenize that normalizes first; emits DeprecationWarning."""
-        ...
-    def word_tokenize_with(
-        self,
-        text: str,
-        join_verb_parts: bool = False,
-        join_abbreviations: bool = False,
-        separate_emoji: bool = False,
-        replace_links: bool = False,
-        replace_ids: bool = False,
-        replace_emails: bool = False,
-        replace_numbers: bool = False,
-        replace_hashtags: bool = False,
-    ) -> List[str]:
-        """Deprecated alias of tokenize that normalizes first; emits DeprecationWarning."""
-        ...
-    def lemma_full(self, word: str) -> Tuple[str, Optional[str]]:
-        """Deprecated alias of lemmatize_verb; emits DeprecationWarning."""
         ...

@@ -32,16 +32,15 @@ a pack is identified by its name and its checksum, and a new pack is a new name.
 | change performance, error message wording, logging or internal structure | any release |
 | remove or rename a public name, change a return type, change documented behaviour, remove a CLI flag, remove a Python or Rust version, change `.rvec` or manifest semantics | major (`X.0.0`) only |
 
-Before `1.0.0` the minor numbers are still allowed to break: `0.11.0` was the last
-release that renamed public names. From `1.0.0` the table above applies as
-written.
+`1.0.0` is the freeze, and the table above is what it promises. Up to and
+including `0.11.0` the minor numbers renamed public names; that window is closed.
 
 ## Deprecated names
 
 - A deprecated name keeps working and warns (`DeprecationWarning` in Python,
   `#[deprecated]` in Rust, a note in the CLI help).
-- The aliases introduced before `1.0.0` are removed in `1.0.0`; they are listed
-  in the CHANGELOG and in [`API_CONVENTIONS.md`](API_CONVENTIONS.md).
+- The aliases introduced before `1.0.0` were removed in `1.0.0`; the CHANGELOG
+  lists every one.
 - After `1.0.0`, a name deprecated in a minor is not removed before the next
   major version.
 

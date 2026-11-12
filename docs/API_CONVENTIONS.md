@@ -1,8 +1,8 @@
 # API conventions
 
-The rules the public surface follows from `0.11.0` onward, and therefore the set
-of decisions that become permanent at `1.0.0`. Each rule lists what it replaces,
-so `0.11.0` can be reviewed against this file. If a name is not covered here, the
+The rules the public surface follows, and therefore the set of decisions that
+became permanent at `1.0.0`. Each rule lists what it replaced, so the `0.11.0`
+surface can be reviewed against this file. If a name is not covered here, the
 default is that the current name stays.
 
 The goal is one thing: **a user should never have to guess which name to call.**
@@ -53,9 +53,11 @@ the same thing.
 | `TaggedToken.tag`, `Entity.label`, `Dependency.relation` | `label` on all three |
 | `TaggedToken` / `Entity` / `Dependency` class names | unchanged (no rename to `Token`) |
 
-`tag` and `relation` remain only as migration aliases during `0.11.x` and are
-removed in `1.0.0`. They are plain attributes today, so they cannot emit a
-`DeprecationWarning`; the CHANGELOG entry is the migration notice for them.
+`tag` and `relation` are the historical field names and stay: they are the same
+values as `label`, `label` is what new code should use, and removing them in
+`1.0.0` would break the most-used attribute on a result class for no functional
+gain. They are plain attributes, so they cannot emit a `DeprecationWarning`; the
+CHANGELOG notes them.
 
 ## 5. "stages" and "maskers" are different words
 
@@ -79,8 +81,7 @@ the normalizing variant is not a tokenizer option — it is the pipeline.
 |---|---|
 | `tokenize` (raw), `word_tokenize` (normalizes), `word_tokenize_with` (normalizes + options) | `tokenize(text, **options)` for surface tokens, `tokenize_spans(text)`, `sent_tokenize(text)`, `normalize(text)` for normalization, `process(text).tokens` for the whole pipeline |
 
-The deprecated `word_tokenize*` aliases keep their historical
-normalize-then-tokenize behaviour for one cycle, so a migration is explicit:
+The normalizing path is spelled out, so it is explicit:
 
 ```python
 pipe.tokenize(text)                 # surface tokens, no transformation
@@ -137,7 +138,7 @@ a pack name; names are disjoint (`rishe-embed-fa-300-v2` vs `pos-compact`).
 
 | before | after |
 |---|---|
-| `pull(name)` / `pull_pack(name)` | `pull(name)` for both; `pull_pack` is a migration alias |
+| `pull(name)` / `pull_pack(name)` | `pull(name)` for both |
 | `cached(name)` / `cached_pack(name)` | `cached(name)` for both |
 | `path(name)` / `path_pack(name)` | `path(name)` for both |
 
@@ -190,6 +191,5 @@ flags; both are documented as the same idea.
 - a count parameter is not called `n`;
 - a result class does not expose `label`.
 
-The current violations are pinned in an explicit allowlist in that test, and the
-list may only shrink. `docs/api-surface.txt` is diffed in CI, so a rename after
+The allowlist of known violations is empty since `1.0.0`, and it may only shrink. `docs/api-surface.txt` is diffed in CI, so a rename after
 `1.0.0` is a red build rather than a review comment.

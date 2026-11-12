@@ -28,7 +28,6 @@ from .api import (
     stem,
     tokenize,
     tokenize_spans,
-    word_tokenize,
 )
 from .compat import (
     Lemmatizer,
@@ -74,7 +73,6 @@ __all__ = [
     "mask",
     "keywords",
     "DEFAULT_MASKERS",
-    "word_tokenize",
 ]
 
 

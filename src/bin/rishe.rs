@@ -36,7 +36,7 @@ Commands:
 
 Options:
   --json              Emit JSON.
-  --maskers a,b       Maskers to apply, in order (`--stages` is a deprecated alias).
+  --maskers a,b       Maskers to apply, in order.
   --mask-token TEXT   Override every mask default.
   --pack DIR          Model-pack directory.
   --model PATH|NAME   Embedding `.vec`/`.rvec` file or hub model name.
@@ -46,6 +46,8 @@ Options:
   -V, --version       Show the version.
 
 Text is read from stdin when omitted or when it is `-`.
+
+What the version number means: https://github.com/MahdiAlikhah/rishe/blob/main/docs/STABILITY.md
 ";
 
 struct Options {
@@ -163,7 +165,7 @@ fn run() -> Result<(), CliError> {
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--json" => options.json = true,
-            "--maskers" | "--stages" => {
+            "--maskers" => {
                 let value = args
                     .next()
                     .ok_or_else(|| CliError::Usage("--maskers needs a value".to_string()))?;
@@ -409,7 +411,7 @@ fn serve(args: &[String]) -> Result<(), CliError> {
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
-            "--maskers" | "--stages" => {
+            "--maskers" => {
                 index += 1;
                 maskers = args
                     .get(index)

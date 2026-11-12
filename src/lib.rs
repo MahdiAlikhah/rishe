@@ -413,12 +413,6 @@ impl Pipeline {
         Ok(current)
     }
 
-    /// Deprecated alias of [`Pipeline::normalize_with`].
-    #[deprecated(since = "0.11.0", note = "use `Pipeline::normalize_with`")]
-    pub fn normalize_stages(&self, text: &str, stages: &[String]) -> Result<String, String> {
-        self.normalize_with(text, stages)
-    }
-
     /// Apply maskers in order; an unknown name is an error and `None` uses each
     /// masker's default placeholder.
     ///
@@ -450,17 +444,6 @@ impl Pipeline {
         Ok(current.into_owned())
     }
 
-    /// Deprecated alias of [`Pipeline::mask`].
-    #[deprecated(since = "0.11.0", note = "use `Pipeline::mask`")]
-    pub fn mask_stages(
-        &self,
-        text: &str,
-        stages: &[String],
-        mask_token: Option<&str>,
-    ) -> Result<String, String> {
-        self.mask(text, stages, mask_token)
-    }
-
     /// Stem one word, falling back to the lemma when no noun suffix matches.
     ///
     /// ```
@@ -483,12 +466,6 @@ impl Pipeline {
         let lemma = self.morphology.lemmatize(word).into_owned();
         let present = self.morphology.present_stem(&lemma).map(str::to_owned);
         (lemma, present)
-    }
-
-    /// Deprecated alias of [`Pipeline::lemmatize_verb`].
-    #[deprecated(since = "0.11.0", note = "use `Pipeline::lemmatize_verb`")]
-    pub fn lemma_full(&self, word: &str) -> (String, Option<String>) {
-        self.lemmatize_verb(word)
     }
 
     /// Split one fused token into morphemes.
@@ -577,33 +554,6 @@ impl Pipeline {
         word_tokenizer::postprocess(tokens, options, &self.morphology)
     }
 
-    /// Deprecated: keeps its historical normalize-then-tokenize behaviour.
-    /// Use [`Pipeline::tokenize`] for surface tokens or [`Pipeline::process`]
-    /// for normalized ones.
-    #[deprecated(
-        since = "0.11.0",
-        note = "use `Pipeline::tokenize` for surface tokens or `Pipeline::process` for normalized tokens"
-    )]
-    pub fn word_tokenize(&self, text: &str) -> Vec<String> {
-        self.tokenize(
-            &self.normalizer.normalize(text),
-            &word_tokenizer::WordTokenizerOptions::default(),
-        )
-    }
-
-    /// Deprecated: keeps its historical normalize-then-tokenize behaviour.
-    #[deprecated(
-        since = "0.11.0",
-        note = "use `Pipeline::tokenize` for surface tokens or `Pipeline::process` for normalized tokens"
-    )]
-    pub fn word_tokenize_with(
-        &self,
-        text: &str,
-        options: &word_tokenizer::WordTokenizerOptions,
-    ) -> Vec<String> {
-        self.tokenize(&self.normalizer.normalize(text), options)
-    }
-
     /// Top `top_n` RAKE keywords of at most `max_length` words, after normalization.
     pub fn rake(&self, text: &str, top_n: usize, max_length: usize) -> Vec<String> {
         let normalized = self.normalizer.normalize(text);
@@ -657,15 +607,6 @@ mod py_bindings {
     ///
     /// Aliases added while the API is renamed stay for one cycle and disappear
     /// in 1.0.0; see `docs/API_CONVENTIONS.md` rule 12.
-    fn warn_deprecated(py: Python<'_>, old: &str, new: &str) {
-        let message =
-            format!("{old} is deprecated and will be removed in rishe 1.0.0; use {new} instead.");
-        if let Ok(warnings) = py.import_bound("warnings") {
-            let category = py.get_type_bound::<pyo3::exceptions::PyDeprecationWarning>();
-            let _ = warnings.call_method1("warn", (message, category));
-        }
-    }
-
     #[pyclass(frozen, get_all, module = "rishe._core")]
     #[derive(Clone, Copy)]
     pub struct JalaliDate {
@@ -878,12 +819,6 @@ mod py_bindings {
             py.allow_threads(|| self.process(text))
         }
 
-        /// Deprecated Python `pipe`: warns and returns [`Pipeline::process_batch`] output.
-        pub fn pipe(&self, py: Python<'_>, texts: Vec<String>) -> Vec<ProcessedDoc> {
-            warn_deprecated(py, "pipe", "process_batch");
-            py.allow_threads(|| self.process_batch(&texts))
-        }
-
         /// Python `process_batch`; the GIL is released.
         #[pyo3(name = "process_batch")]
         pub fn py_process_batch(&self, py: Python<'_>, texts: Vec<String>) -> Vec<ProcessedDoc> {
@@ -909,33 +844,6 @@ mod py_bindings {
             }
         }
 
-        /// Deprecated Python `process_stages`: warns and maps to [`Pipeline::process_with`].
-        pub fn process_stages(
-            &self,
-            py: Python<'_>,
-            text: &str,
-            stages: Vec<String>,
-        ) -> PyResult<ProcessedDoc> {
-            warn_deprecated(py, "process_stages", "process");
-            let opts = ProcessOptions::from_stages_checked(&stages)
-                .map_err(pyo3::exceptions::PyValueError::new_err)?;
-            Ok(py.allow_threads(|| self.process_with(text, &opts)))
-        }
-
-        /// Deprecated Python `normalize_stages`: warns and delegates to
-        /// [`Pipeline::normalize_with`].
-        #[pyo3(name = "normalize_stages")]
-        pub fn py_normalize_stages(
-            &self,
-            py: Python<'_>,
-            text: &str,
-            stages: Vec<String>,
-        ) -> PyResult<String> {
-            warn_deprecated(py, "normalize_stages", "normalize");
-            self.normalize_with(text, &stages)
-                .map_err(pyo3::exceptions::PyValueError::new_err)
-        }
-
         /// Python `mask`: maps errors to `ValueError`.
         #[pyo3(name = "mask", signature = (text, maskers, mask_token=None))]
         pub fn py_mask(
@@ -945,20 +853,6 @@ mod py_bindings {
             mask_token: Option<String>,
         ) -> PyResult<String> {
             self.mask(text, &maskers, mask_token.as_deref())
-                .map_err(pyo3::exceptions::PyValueError::new_err)
-        }
-
-        /// Deprecated Python `mask_stages`: warns and delegates to [`Pipeline::mask`].
-        #[pyo3(name = "mask_stages", signature = (text, stages, mask_token=None))]
-        pub fn py_mask_stages(
-            &self,
-            py: Python<'_>,
-            text: &str,
-            stages: Vec<String>,
-            mask_token: Option<String>,
-        ) -> PyResult<String> {
-            warn_deprecated(py, "mask_stages", "mask");
-            self.mask(text, &stages, mask_token.as_deref())
                 .map_err(pyo3::exceptions::PyValueError::new_err)
         }
 
@@ -1026,68 +920,6 @@ mod py_bindings {
         #[pyo3(name = "tokenize_spans")]
         pub fn py_tokenize_spans(&self, text: &str) -> Vec<(String, usize, usize)> {
             self.tokenize_char_spans(text)
-        }
-
-        /// Deprecated Python `word_tokenize`: warns and normalizes before tokenizing.
-        #[pyo3(name = "word_tokenize")]
-        pub fn py_word_tokenize(&self, py: Python<'_>, text: &str) -> Vec<String> {
-            warn_deprecated(
-                py,
-                "word_tokenize",
-                "tokenize (or process for normalized tokens)",
-            );
-            Pipeline::tokenize(
-                self,
-                &self.normalizer.normalize(text),
-                &word_tokenizer::WordTokenizerOptions::default(),
-            )
-        }
-
-        /// Deprecated Python `word_tokenize_with`: warns and normalizes before tokenizing.
-        #[pyo3(
-            name = "word_tokenize_with",
-            signature = (
-                text,
-                join_verb_parts=false,
-                join_abbreviations=false,
-                separate_emoji=false,
-                replace_links=false,
-                replace_ids=false,
-                replace_emails=false,
-                replace_numbers=false,
-                replace_hashtags=false
-            )
-        )]
-        #[allow(clippy::too_many_arguments)]
-        pub fn py_word_tokenize_with(
-            &self,
-            py: Python<'_>,
-            text: &str,
-            join_verb_parts: bool,
-            join_abbreviations: bool,
-            separate_emoji: bool,
-            replace_links: bool,
-            replace_ids: bool,
-            replace_emails: bool,
-            replace_numbers: bool,
-            replace_hashtags: bool,
-        ) -> Vec<String> {
-            warn_deprecated(
-                py,
-                "word_tokenize_with",
-                "tokenize (or process for normalized tokens)",
-            );
-            let options = word_tokenizer::WordTokenizerOptions {
-                join_verb_parts,
-                join_abbreviations,
-                separate_emoji,
-                replace_links,
-                replace_ids,
-                replace_emails,
-                replace_numbers,
-                replace_hashtags,
-            };
-            Pipeline::tokenize(self, &self.normalizer.normalize(text), &options)
         }
 
         /// Python `number_to_words`: accepts an int or digit string and raises
@@ -1208,13 +1040,6 @@ mod py_bindings {
         /// Python `lemmatize_verb`: lemma plus present stem when the word is a verb.
         #[pyo3(name = "lemmatize_verb")]
         pub fn py_lemmatize_verb(&self, word: &str) -> (String, Option<String>) {
-            self.lemmatize_verb(word)
-        }
-
-        /// Deprecated Python `lemma_full`: warns and delegates to `lemmatize_verb`.
-        #[pyo3(name = "lemma_full")]
-        pub fn py_lemma_full(&self, py: Python<'_>, word: &str) -> (String, Option<String>) {
-            warn_deprecated(py, "lemma_full", "lemmatize_verb");
             self.lemmatize_verb(word)
         }
 
@@ -1387,20 +1212,6 @@ mod py_bindings {
             Self::load(path).map_err(pyo3::exceptions::PyValueError::new_err)
         }
 
-        /// Deprecated Python `tag`: warns and returns `(text, tag)` pairs.
-        #[pyo3(name = "tag")]
-        pub fn py_tag(&self, py: Python<'_>, text: &str) -> PyResult<Vec<(String, String)>> {
-            warn_deprecated(py, "tag", "tags");
-            py.allow_threads(|| self.tags(text))
-                .map(|tokens| {
-                    tokens
-                        .into_iter()
-                        .map(|token| (token.text, token.tag))
-                        .collect()
-                })
-                .map_err(pyo3::exceptions::PyValueError::new_err)
-        }
-
         /// Python `tags_from_words`: tags for pre-tokenized words.
         #[pyo3(name = "tags_from_words")]
         pub fn py_tags_from_words(
@@ -1413,33 +1224,11 @@ mod py_bindings {
                 .map_err(pyo3::exceptions::PyValueError::new_err)
         }
 
-        /// Deprecated Python `tag_words`: warns and delegates to `tags_from_words`.
-        #[pyo3(name = "tag_words")]
-        pub fn py_tag_words(
-            &self,
-            py: Python<'_>,
-            words: Vec<String>,
-        ) -> PyResult<Vec<(String, String)>> {
-            warn_deprecated(py, "tag_words", "tags_from_words");
-            self.py_tags_from_words(py, words)
-        }
-
         /// Python `tags`: tagged tokens for `text`, with the GIL released.
         #[pyo3(name = "tags")]
         pub fn py_tags(&self, py: Python<'_>, text: &str) -> PyResult<Vec<models::TaggedToken>> {
             py.allow_threads(|| self.tags(text))
                 .map_err(pyo3::exceptions::PyValueError::new_err)
-        }
-
-        /// Deprecated Python `tag_tokens`: warns and delegates to `tags`.
-        #[pyo3(name = "tag_tokens")]
-        pub fn py_tag_tokens(
-            &self,
-            py: Python<'_>,
-            text: &str,
-        ) -> PyResult<Vec<models::TaggedToken>> {
-            warn_deprecated(py, "tag_tokens", "tags");
-            self.py_tags(py, text)
         }
 
         /// Python `entities`: entities for `text`, with the GIL released.
@@ -1458,17 +1247,6 @@ mod py_bindings {
         ) -> PyResult<Vec<Vec<models::TaggedToken>>> {
             py.allow_threads(|| self.tags_batch(&texts))
                 .map_err(pyo3::exceptions::PyValueError::new_err)
-        }
-
-        /// Deprecated Python `tag_batch`: warns and delegates to `tags_batch`.
-        #[pyo3(name = "tag_batch")]
-        pub fn py_tag_batch(
-            &self,
-            py: Python<'_>,
-            texts: Vec<String>,
-        ) -> PyResult<Vec<Vec<models::TaggedToken>>> {
-            warn_deprecated(py, "tag_batch", "tags_batch");
-            self.py_tags_batch(py, texts)
         }
 
         /// Python `entities_batch`: entities per text, with the GIL released.
@@ -1693,27 +1471,6 @@ mod tests {
             "سلام (دنیا)! می‌روم"
         );
         assert!(nlp.normalize_with("x", &["bogus".to_string()]).is_err());
-    }
-
-    #[test]
-    #[allow(deprecated)]
-    fn deprecated_aliases_still_work() {
-        let nlp = Pipeline::create(true, true, true);
-        let defaults = word_tokenizer::WordTokenizerOptions::default();
-        // The legacy names keep their normalize-then-tokenize behaviour; the
-        // canonical `tokenize` is the surface tokenizer.
-        assert_eq!(nlp.word_tokenize("مي كنم"), nlp.process("مي كنم").tokens);
-        assert_eq!(nlp.tokenize("مي كنم", &defaults).len(), 2);
-        assert_eq!(
-            nlp.word_tokenize_with("کتاب‌ها", &defaults),
-            nlp.tokenize("کتاب‌ها", &defaults)
-        );
-        assert_eq!(nlp.lemma_full("می‌روم"), nlp.lemmatize_verb("می‌روم"));
-        assert_eq!(nlp.mask_stages("x", &[], None).unwrap(), "x");
-        assert_eq!(
-            nlp.normalize_stages("۱۲۳", &[]).unwrap(),
-            nlp.normalize_with("۱۲۳", &[]).unwrap()
-        );
     }
 
     #[test]

@@ -12,7 +12,7 @@ requires-python = ">=3.9"
 authors = [{ name = "Mahdi Alikhah", email = "96587315+MahdiAlikhah@users.noreply.github.com" }]
 keywords = ["nlp", "persian", "farsi", "tokenization", "lemmatization", "morphology"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: Apache Software License",

@@ -18,7 +18,7 @@ from rishe import ModelPack, hub
 def pack_path(root, task):
     if root:
         return Path(root) / task
-    return Path(hub.path_pack(f"{task}-compact"))
+    return Path(hub.path(f"{task}-compact"))
 
 
 def sentences_for(task, limit):
@@ -35,13 +35,13 @@ def sentences_for(task, limit):
 
 def measure(pack, sentences):
     for words in sentences[:3]:
-        pack.tag_words(words)
+        pack.tags_from_words(words)
     times = []
     words = 0
     started = time.perf_counter()
     for sentence in sentences:
         call = time.perf_counter()
-        pack.tag_words(sentence)
+        pack.tags_from_words(sentence)
         times.append((time.perf_counter() - call) * 1000)
         words += len(sentence)
     elapsed = time.perf_counter() - started

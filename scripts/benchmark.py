@@ -157,9 +157,9 @@ def main():
     for name, fn in speed.items():
         print(f"| {name} | {timeit(fn, sents):.5f} |")
     batch = [d[0] for d in datasets["UD-PerDT"]] * 20  # full PerDT test set x20
-    pipe.pipe(batch[:500])
+    pipe.process_batch(batch[:500])
     t0 = time.perf_counter()
-    docs = pipe.pipe(batch)
+    docs = pipe.process_batch(batch)
     dt = time.perf_counter() - t0
     print(f"| batch `pipe()`: Rishe | {dt / len(batch) * 1000:.5f} |")
     tokens = sum(len(d.tokens) for d in docs)

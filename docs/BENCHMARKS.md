@@ -62,12 +62,12 @@ on Seraji.
 - Tokenization is close between Rishe and Shekar; both are faster than Hazm.
 - Normalization is where Rishe is clearly faster (~80×).
 - The full-pipeline row does more work than the competitors' tokenizers, so
-  it is not comparable to them one-to-one. `pipe()` is ~6× faster than
+  it is not comparable to them one-to-one. `process_batch()` is ~6× faster than
   calling the pipeline in a Python loop.
 
 ### Batch throughput
 
-`Pipeline.pipe()` on the full PerDT test set repeated 20× (29,100 sentences,
+`Pipeline.process_batch()` on the full PerDT test set repeated 20× (29,100 sentences,
 ~484k tokens), 12-core machine:
 
 | threads | tokens/s | sentences/s | speedup |

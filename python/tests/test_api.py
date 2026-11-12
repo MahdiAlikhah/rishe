@@ -49,7 +49,7 @@ class FrontDoorTest(unittest.TestCase):
             rishe.process("کتاب خوب است", stages=["toknize"])
         self.assertIn("unknown process stage: toknize", str(caught.exception))
 
-    def test_process_stages_subset_and_empty_list(self):
+    def test_process_stage_subset_and_empty_list(self):
         self.assertEqual(
             rishe.process("مي كنم", stages=[]).formal_text,
             rishe.process("مي كنم").formal_text,
@@ -77,47 +77,26 @@ class FrontDoorTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             rishe.keywords("کتاب", method="magic")
 
-    def test_deprecated_word_tokenize(self):
-        with self.assertWarns(DeprecationWarning):
-            self.assertEqual(rishe.word_tokenize("سلام دنیا"), ["سلام", "دنیا"])
-        # 0.10 behaviour: normalize first and join verb parts, like the compat class.
-        with self.assertWarns(DeprecationWarning):
-            self.assertEqual(rishe.word_tokenize("رفته است"), ["رفته_است"])
+class RemovedAliasesTest(unittest.TestCase):
+    """The 0.11 aliases are gone in 1.0.0: calling one is an AttributeError."""
 
-
-class DeprecatedSurfaceTest(unittest.TestCase):
-    """Aliases added in 0.11.0 must warn and keep working until 1.0.0."""
-
-    def test_pipeline_aliases_warn(self):
+    def test_removed_pipeline_aliases_are_gone(self):
         pipe = rishe.pipeline()
-        with self.assertWarns(DeprecationWarning):
-            self.assertEqual(pipe.word_tokenize("مي كنم"), ["می‌کنم"])
-        with self.assertWarns(DeprecationWarning):
-            self.assertEqual(pipe.mask_stages("به https://a.b برو", ["url"]), "به <URL> برو")
-        with self.assertWarns(DeprecationWarning):
-            self.assertEqual(pipe.normalize_stages("12", ["digits"]), "۱۲")
-        with self.assertWarns(DeprecationWarning):
-            self.assertIsNotNone(pipe.process_stages("کتاب", ["normalize"]))
-        with self.assertWarns(DeprecationWarning):
-            self.assertEqual(len(pipe.pipe(["سلام"])), 1)
-        with self.assertWarns(DeprecationWarning):
-            lemma, present = pipe.lemma_full("می‌روم")
-            self.assertEqual(lemma, "رفت")
-            self.assertIsNotNone(present or "x")
+        for name in (
+            "word_tokenize",
+            "word_tokenize_with",
+            "lemma_full",
+            "process_stages",
+            "normalize_stages",
+            "mask_stages",
+            "pipe",
+        ):
+            self.assertFalse(hasattr(pipe, name), name)
 
-    def test_canonical_names_do_not_warn(self):
-        import warnings
-
-        pipe = rishe.pipeline()
-        with warnings.catch_warnings():
-            warnings.simplefilter("error", DeprecationWarning)
-            self.assertEqual(pipe.tokenize("مي كنم"), ["مي", "كنم"])
-            self.assertEqual(pipe.process("مي كنم").tokens, ["می‌کنم"])
-            self.assertEqual(pipe.mask("به https://a.b برو", ["url"]), "به <URL> برو")
-            self.assertEqual(pipe.normalize("12", ["digits"]), "۱۲")
-            self.assertIsNotNone(pipe.process("کتاب"))
-            self.assertEqual(len(pipe.process_batch(["سلام"])), 1)
-            self.assertEqual(pipe.lemmatize_verb("می‌روم")[0], "رفت")
+    def test_removed_module_aliases_are_gone(self):
+        self.assertFalse(hasattr(rishe, "word_tokenize"))
+        for name in ("cached_pack", "path_pack", "pull_pack"):
+            self.assertFalse(hasattr(hub, name), name)
 
 
 class HubUnificationTest(unittest.TestCase):
@@ -125,14 +104,6 @@ class HubUnificationTest(unittest.TestCase):
         self.assertTrue(hub.is_pack("pos-compact"))
         self.assertFalse(hub.is_pack("rishe-embed-fa-300-v2"))
         self.assertEqual(hub.PACKS["depparse-compact"], "depparse")
-
-    def test_deprecated_pack_aliases_warn(self):
-        with self.assertWarns(DeprecationWarning):
-            with self.assertRaises(ValueError):
-                hub.cached_pack("unknown")
-        with self.assertWarns(DeprecationWarning):
-            with self.assertRaises(ValueError):
-                hub.path_pack("unknown")
 
     def test_unknown_name_lists_models_and_packs(self):
         with self.assertRaises(ValueError) as caught:

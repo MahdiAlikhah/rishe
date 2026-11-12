@@ -12,14 +12,8 @@ STUB = Path(__file__).resolve().parents[1] / "rishe" / "_core.pyi"
 
 BANNED_SUFFIXES = ("_with", "_full", "_stages", "_char_spans")
 # Rule 1: no sibling methods that differ only by an option bundle.
-# These are the deprecated aliases kept until 1.0.0; the set may not grow.
-SUFFIX_VIOLATIONS = {
-    "word_tokenize_with",
-    "lemma_full",
-    "process_stages",
-    "normalize_stages",
-    "mask_stages",
-}
+# Empty since 1.0.0 removed the deprecated aliases; the set may not grow.
+SUFFIX_VIOLATIONS = set()
 
 # Rule 3: one name for "how many". Empty since 0.11.0 renamed the parameters;
 # keep the mechanism so a new violation fails the build.
@@ -31,8 +25,8 @@ LABEL_VIOLATIONS = set()
 
 # Rule 2: batch calls end with ``_batch`` unless the name is a plural noun.
 BATCH_EXCEPTIONS = {"sentence_vectors"}
-# ``pipe`` is the deprecated alias of ``process_batch``; removed in 1.0.0.
-BATCH_VIOLATIONS = {"pipe"}
+# ``pipe`` was the deprecated alias of ``process_batch``, removed in 1.0.0.
+BATCH_VIOLATIONS = set()
 
 RESULT_CLASSES = ("TaggedToken", "Entity", "Dependency")
 

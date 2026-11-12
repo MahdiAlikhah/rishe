@@ -44,12 +44,11 @@ class CliTest(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(output, "به <URL> برو")
 
-    def test_mask_accepts_the_deprecated_stages_flag(self):
-        code, output = self.run_cli(
-            ["mask", "به https://a.b برو", "--stages", "url"]
-        )
-        self.assertEqual(code, 0)
-        self.assertEqual(output, "به <URL> برو")
+    def test_mask_rejects_the_removed_stages_flag(self):
+        # `--stages` was the deprecated spelling; 1.0.0 removed it.
+        with self.assertRaises(SystemExit) as caught:
+            main(["mask", "x", "--stages", "url"])
+        self.assertEqual(caught.exception.code, 2)
 
     def test_utf8_output_with_non_utf8_stdio(self):
         environment = dict(os.environ, PYTHONIOENCODING="cp1252")
@@ -324,6 +323,13 @@ class ServeProtocolTest(unittest.TestCase):
         responses = result.stdout.decode("utf-8").splitlines()
         self.assertEqual(len(responses), 1, responses)
         return json.loads(responses[0])
+
+    def test_mask_request_accepts_the_legacy_stages_field(self):
+        # docs/serve-schema.md: protocol 1 still accepts "stages" for 0.x clients.
+        response = self.serve_one(
+            '{"command":"mask","text":"info@a.co","stages":["email"]}'
+        )
+        self.assertEqual(response, {"ok": True, "result": "<EMAIL>"})
 
     def cli_version(self):
         result = subprocess.run(

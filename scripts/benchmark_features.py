@@ -341,7 +341,7 @@ def main():
         value = next(iter(shekar_lemma.transform([word])), word).replace(ZWNJ, "")
         return value.split("/", 1)[1] if "/" in value else None
 
-    rishe_p = {w: pipe.lemma_full(w)[1] for w in words}
+    rishe_p = {w: pipe.lemmatize_verb(w)[1] for w in words}
     hazm_p = {w: hazm_present(w) for w in words}
     shekar_p = {w: shekar_present(w) for w in words}
 

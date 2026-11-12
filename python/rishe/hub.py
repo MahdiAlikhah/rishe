@@ -22,20 +22,15 @@ from pathlib import Path
 from typing import Dict, NamedTuple, Optional
 from urllib.parse import urlparse
 
-from ._deprecation import deprecated
-
 __all__ = [
     "MODELS",
     "PACKS",
     "cache_dir",
     "cached",
-    "cached_pack",
     "info",
     "is_pack",
     "path",
-    "path_pack",
     "pull",
-    "pull_pack",
     "remove",
     "verify",
 ]
@@ -262,18 +257,6 @@ def _pack_base() -> str:
     return os.environ.get("RISHE_MODEL_BASE", PACK_BASE).rstrip("/")
 
 
-@deprecated("rishe.hub.cached_pack", "rishe.hub.cached")
-def cached_pack(name: str) -> Optional[Path]:
-    """Deprecated alias of :func:`cached` for task packs."""
-    return cached(name)
-
-
-@deprecated("rishe.hub.path_pack", "rishe.hub.path")
-def path_pack(name: str) -> Path:
-    """Deprecated alias of :func:`path` for task packs."""
-    return path(name)
-
-
 def info(name: str) -> Optional[dict]:
     """Return cache information for a model or pack, or ``None`` when missing."""
     if name not in PACKS and name not in MODELS:
@@ -366,8 +349,3 @@ def _pull_pack(name: str, *, force: bool = False) -> Path:
         raise RuntimeError(f"pack {name!r} is incomplete; missing: {', '.join(missing)}")
     return target
 
-
-@deprecated("rishe.hub.pull_pack", "rishe.hub.pull")
-def pull_pack(name: str, *, force: bool = False) -> Path:
-    """Deprecated alias of :func:`pull` for task packs."""
-    return pull(name, force=force)

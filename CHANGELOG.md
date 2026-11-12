@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Model packs are versioned separately from the crate; their versions are recorded
 in the pack manifest and on the model repository.
 
+## [1.0.0] - 2026-11-12
+
+The API freeze. The surface listed in [`docs/STABILITY.md`](docs/STABILITY.md)
+is the promise: from here, removing or renaming a public name, changing a
+return type, a default or a documented behaviour, or dropping a platform, a
+Python version or the MSRV needs `2.0.0`. A new name arrives as a minor.
+
+### Removed
+
+Every alias that `0.11.0` deprecated and promised to drop here:
+
+- Rust: `Pipeline::normalize_stages`, `mask_stages`, `lemma_full`,
+  `word_tokenize`, `word_tokenize_with`; `ModelPack::tag_text`,
+  `tag_text_items`, `tag_text_batch`, `tag_words`.
+- Python: `Pipeline.pipe`, `process_stages`, `normalize_stages`, `mask_stages`,
+  `word_tokenize`, `word_tokenize_with`, `lemma_full`; `ModelPack.tag`,
+  `tag_tokens`, `tag_batch`, `tag_words`; `rishe.word_tokenize`;
+  `hub.pull_pack`, `hub.cached_pack`, `hub.path_pack`.
+- CLI: `--stages` is gone, `--maskers` is the only spelling. The `serve`
+  request field `stages` is still accepted for 0.x clients, because the
+  protocol is versioned separately.
+
+The replacements: `tokenize` / `process` for tokens, `normalize(text, stages=...)`,
+`mask(text, maskers=...)`, `lemmatize_verb`, `process_batch`,
+`tags` / `tags_batch` / `tags_from_words`, and `hub.pull` / `cached` / `path`.
+
+`TaggedToken.tag` and `Dependency.relation` stay. They are the historical field
+names, equal to `label`; breaking the most-used attribute of a result class for
+cosmetics was not worth it at the freeze.
+
+### Changed
+
+- The `DeprecationWarning` / `#[deprecated]` machinery is gone with the aliases
+  it served.
+- `docs/api-surface.txt` is regenerated and diffed in CI: the frozen Rust and
+  Python surface is checked rather than reviewed.
+- `docs/STABILITY.md` states the freeze and is linked from the README, the
+  documentation index and both CLI helps.
+
 ## [0.11.4] - 2026-11-12
 
 No functional changes: the public API, the output and the file formats are the
@@ -478,7 +517,12 @@ Removed in `1.0.0`; each emits `DeprecationWarning` today.
 - Python bindings (abi3) and a Rust core.
 - Benchmark suite and dual MIT/Apache-2.0 licensing.
 
-[Unreleased]: https://github.com/MahdiAlikhah/rishe/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/MahdiAlikhah/rishe/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/MahdiAlikhah/rishe/compare/v0.11.4...v1.0.0
+[0.11.4]: https://github.com/MahdiAlikhah/rishe/compare/v0.11.3...v0.11.4
+[0.11.3]: https://github.com/MahdiAlikhah/rishe/compare/v0.11.2...v0.11.3
+[0.11.2]: https://github.com/MahdiAlikhah/rishe/compare/v0.11.1...v0.11.2
+[0.11.1]: https://github.com/MahdiAlikhah/rishe/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/MahdiAlikhah/rishe/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/MahdiAlikhah/rishe/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/MahdiAlikhah/rishe/compare/v0.9.0...v0.9.1
