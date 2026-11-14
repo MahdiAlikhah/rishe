@@ -142,6 +142,25 @@ def path(name: str) -> Path:
     return target
 
 
+def _safe_filename(inferred: str) -> str:
+    """Reduce a URL or caller-supplied name to one plain cache file name.
+
+    The result is joined onto the cache directory, so it must stay one component:
+    a separator, a drive prefix or a ``..`` in it would escape the cache. A query
+    string or fragment is dropped rather than becoming part of the name. Mirrors
+    ``infer_filename`` in ``src/hub.rs``.
+    """
+    name = inferred.split("?")[0].split("#")[0]
+    name = Path(name).name
+    if not name or name in {".", ".."}:
+        raise ValueError("cannot infer a filename from the URL; pass filename=")
+    if any(character in name for character in ("/", "\\", ":", "\0")):
+        raise ValueError(
+            "cannot infer a filename from the URL; it must be a plain file name"
+        )
+    return name
+
+
 def pull(
     name_or_url: str,
     *,
@@ -153,6 +172,8 @@ def pull(
 
     Custom URLs must pass ``sha256``; the checksum is verified before the file
     is moved into place, so an interrupted or tampered download is never used.
+    An already cached file is hashed again on every pull; use ``cached`` when
+    you only need the path.
     """
     if name_or_url in PACKS:
         if sha256 or filename:
@@ -167,9 +188,7 @@ def pull(
             )
         source = name_or_url
         inferred = filename or Path(urlparse(source).path).name
-        safe_name = Path(inferred).name
-        if not safe_name or safe_name in {".", ".."}:
-            raise ValueError("cannot infer a filename from the URL; pass filename=")
+        safe_name = _safe_filename(inferred)
         model = Model(url=source, sha256=sha256.lower(), filename=safe_name)
 
     if len(model.sha256) != 64:
@@ -182,7 +201,7 @@ def pull(
 def _download(url: str, target: Path, sha256: str, *, force: bool = False) -> Path:
     """Download one file atomically, resuming a partial download."""
     target = Path(target)
-    if target.exists() and not force:
+    if not force and target.is_file() and _sha256(target) == sha256.lower():
         return target
     target.parent.mkdir(parents=True, exist_ok=True)
     part = target.with_name(target.name + ".part")
@@ -228,18 +247,37 @@ def _download(url: str, target: Path, sha256: str, *, force: bool = False) -> Pa
                                 flush=True,
                             )
                             next_report += 64 << 20
+                    # Flush to disk before os.replace promotes the part file: a
+                    # crash between the replace and the page-cache writeback would
+                    # otherwise leave the model short or empty.
+                    output.flush()
+                    os.fsync(output.fileno())
 
             actual = _sha256(part)
             if actual != sha256.lower():
                 part.unlink()
-                raise ValueError(
-                    f"checksum mismatch for {url}: expected {sha256}, got {actual}"
+                # A mismatch on a fresh download means the remote bytes are wrong,
+                # so fetching them again gives the same mismatch. A mismatch on a
+                # resume may be entirely in the stale prefix just deleted, so the
+                # next attempt starts from zero and can succeed.
+                if offset == 0:
+                    raise ValueError(
+                        f"checksum mismatch for {url}: expected {sha256}, got {actual}"
+                    )
+                last_error = ValueError(
+                    f"checksum mismatch for {url}: the partial file did not match; "
+                    "restarting the download"
                 )
+                continue
             os.replace(part, target)
             if total and sys.stderr.isatty():
                 print(file=sys.stderr)
             return target
-        except (urllib.error.URLError, TimeoutError, OSError, ValueError) as error:
+        except ValueError as error:
+            if str(error).startswith("checksum mismatch"):
+                raise
+            last_error = error
+        except (urllib.error.URLError, TimeoutError, OSError) as error:
             last_error = error
 
     raise RuntimeError(f"download failed after 3 attempts: {last_error}") from last_error
@@ -258,23 +296,57 @@ def _pack_base() -> str:
 
 
 def info(name: str) -> Optional[dict]:
-    """Return cache information for a model or pack, or ``None`` when missing."""
+    """Return cache information for a model or pack, or ``None`` when missing.
+
+    The returned dict always carries the same five keys, including ``partial``,
+    so a caller can test it without ``.get`` or a ``KeyError``.
+    """
     if name not in PACKS and name not in MODELS:
         raise ValueError(_unknown(name))
     target = cached(name)
     if target is None:
+        # An interrupted pull leaves bytes on disk; report them instead of None.
+        if name in MODELS:
+            part = cache_dir() / (Path(MODELS[name].filename).name + ".part")
+            if part.is_file():
+                return {
+                    "name": name,
+                    "kind": "model",
+                    "path": str(part),
+                    "bytes": part.stat().st_size,
+                    "partial": True,
+                }
+        else:
+            partial = cache_dir() / name
+            if partial.is_dir():
+                return {
+                    "name": name,
+                    "kind": "pack",
+                    "path": str(partial),
+                    "bytes": sum(
+                        file.stat().st_size for file in partial.rglob("*") if file.is_file()
+                    ),
+                    "partial": True,
+                }
         return None
     if target.is_dir():
         size = sum(file.stat().st_size for file in target.rglob("*") if file.is_file())
     else:
         size = target.stat().st_size
-    return {"name": name, "kind": "pack" if name in PACKS else "model", "path": str(target), "bytes": size}
+    return {
+        "name": name,
+        "kind": "pack" if name in PACKS else "model",
+        "path": str(target),
+        "bytes": size,
+        "partial": False,
+    }
 
 
 def remove(name: str) -> bool:
     """Remove a cached model or pack. Returns whether anything was removed."""
     if name not in PACKS and name not in MODELS:
         raise ValueError(_unknown(name))
+    removed = False
     target = cached(name)
     if target is None:
         # Clean up a partial pack directory as well.
@@ -282,12 +354,19 @@ def remove(name: str) -> bool:
         if name in PACKS and partial.is_dir():
             shutil.rmtree(partial)
             return True
-        return False
-    if target.is_dir():
+    elif target.is_dir():
         shutil.rmtree(target)
+        removed = True
     else:
         target.unlink()
-    return True
+        removed = True
+    if name in MODELS:
+        # A model may be only partly downloaded; the part file holds that disk space.
+        part = cache_dir() / (Path(MODELS[name].filename).name + ".part")
+        if part.is_file():
+            part.unlink()
+            removed = True
+    return removed
 
 
 def verify(name: str) -> bool:

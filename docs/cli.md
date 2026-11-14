@@ -149,11 +149,26 @@ rishe hub list
 rishe hub pull depparse-compact
 rishe hub info depparse-compact
 rishe hub verify depparse-compact
+rishe hub remove depparse-compact    # delete it, including a partial pull
 ```
 
 Models land in `$RISHE_HOME/models` or `~/.cache/rishe/models`, and
 `rishe.hub.path(name)` returns the local path for
 `rishe.Embeddings(...)`.
+
+An interrupted pull leaves a `<file>.part` next to the cache file, or a
+half-filled pack directory. The next `hub pull` resumes from it — and starts over
+from zero if that prefix turns out not to belong to the remote object — `hub list`
+and `hub info` report it as `partial` with the bytes already on disk, and
+`hub remove` deletes it, including a `rishe-models-manifest.json.part` left by an
+interrupted manifest download.
+
+`hub pull <url>` needs a URL that ends in a plain file name, and the file lands in
+the cache directory. A URL whose last segment is empty, `.`/`..`, or that contains
+a path separator or a drive prefix is refused rather than written outside the
+cache. A query string or fragment is dropped: `…/fa.vec?download=true` is cached as
+`fa.vec`. A task pack is verified against the registry manifest's own digests, so
+`--sha256` is refused for a pack name instead of being ignored.
 
 ## JSON-lines server
 

@@ -83,6 +83,36 @@ class DownloadTest(unittest.TestCase):
             self.assertEqual(target.read_bytes(), PAYLOAD)
             self.assertFalse(part.exists())
 
+    def test_existing_corrupt_target_is_replaced(self):
+        server = self.serve(RangeHandler)
+        with tempfile.TemporaryDirectory() as root:
+            target = Path(root) / "payload.bin"
+            target.write_bytes(b"stale bytes")
+            hub._download(
+                f"http://127.0.0.1:{server.server_port}/payload.bin",
+                target,
+                hashlib.sha256(PAYLOAD).hexdigest(),
+            )
+            self.assertEqual(target.read_bytes(), PAYLOAD)
+
+    def test_a_stale_prefix_on_a_resume_restarts_instead_of_failing(self):
+        """A wrong local prefix must not permanently block the pull."""
+        server = self.serve(RangeHandler)
+        with tempfile.TemporaryDirectory() as root:
+            target = Path(root) / "payload.bin"
+            part = target.with_name(target.name + ".part")
+            part.parent.mkdir(parents=True, exist_ok=True)
+            # Same length as the real prefix, different bytes: only the digest
+            # step can notice, not a 416.
+            part.write_bytes(b"X" * 1000)
+            hub._download(
+                f"http://127.0.0.1:{server.server_port}/payload.bin",
+                target,
+                hashlib.sha256(PAYLOAD).hexdigest(),
+            )
+            self.assertEqual(target.read_bytes(), PAYLOAD)
+            self.assertFalse(part.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

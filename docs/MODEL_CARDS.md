@@ -1,13 +1,14 @@
 # Model cards
 
-Cards for every published Rishe pack. The comparisons between packs, and against
-other libraries, are in [MODEL_BENCHMARKS.md](MODEL_BENCHMARKS.md).
+Cards for the embedding packs and the dependency parser. The comparisons
+between packs, and against other libraries, are in
+[MODEL_BENCHMARKS.md](MODEL_BENCHMARKS.md).
 
 | pack | release | task | download | license |
 |---|---:|---|---:|---|
 | `rishe-embed-fa-300-v2` (default) | 0.10.0 | static 300-d word vectors | 42 MB `.rvec` | CC BY-SA 4.0 |
 | `rishe-embed-fa-300` | 0.9.0 | static 300-d word vectors | 135 MB `.vec` | CC BY-SA 4.0 |
-| `rishe-depparse-compact` | 0.8.0 | dependency parsing (UAS/LAS) | 48.1 MB ONNX | CC BY-SA 4.0 |
+| `depparse-compact` | 0.8.0 | dependency parsing (UAS/LAS) | 48.1 MB ONNX | CC BY-SA 4.0 |
 
 Packs are versioned separately from the crate and are pulled from the Rishe Hub
 (`rishe hub pull <name>`). Model weights are not covered by the code license.
@@ -89,7 +90,8 @@ print(vectors.sentence_similarity("این کتاب خوب است", "کتاب خ�
 ```
 
 `rishe similar` and `rishe similarity` expose the same lookups from the command
-line. `rishe convert` rewrites any word2vec file in the compact format:
+line. The Rust binary's `rishe convert` rewrites any word2vec file in the
+compact format (the Python package does not ship that command):
 
 ```bash
 rishe convert my-vectors.vec my-vectors.rvec            # f16
@@ -193,7 +195,7 @@ own vocabulary (100 pairs, seed 42):
 | model | size | vocab | positive mean | random mean | gap | `most_similar` |
 |---|---:|---:|---:|---:|---:|---:|
 | **Rishe `rishe-embed-fa-300`** | **135 MB** | **38,864** | **0.4808** | **0.1558** | **0.3250** | **5.5 ms** |
-| Rishe `rishe-embed-fa-300-135k` | 475 MB | 135,513 | 0.5055 | 0.2553 | 0.2503 | 23.5 ms |
+| Rishe `rishe-embed-fa-300-135k` (experiment, not published) | 475 MB | 135,513 | 0.5055 | 0.2553 | 0.2503 | 23.5 ms |
 | Hazm `hazm-fasttext-300` | 2.33 GB | 884,790 | 0.5565 | 0.2057 | 0.3509 | 152 ms |
 
 Hazm has the strongest raw pair similarities and the best own-vocabulary gap,
@@ -245,7 +247,10 @@ MIT/Apache-2.0 and the weights are licensed separately. The pack-local
 `LICENSE` holds the full terms and `NOTICE.md` the attribution. Keep the
 Wikipedia attribution when redistributing the vectors.
 
-## rishe-depparse-compact
+## depparse-compact
+
+Published in the Hub as `depparse-compact` (`rishe hub pull depparse-compact`);
+the pack's own card and files are named `rishe-depparse-compact`.
 
 A compact Persian dependency parser for Rishe 0.8.0. It predicts a single-root
 dependency tree and Universal Dependencies relations over whitespace-tokenized

@@ -13,10 +13,8 @@ Reproduce with `python scripts/benchmark.py` (downloads the corpora on first run
   PEYMA (1026). No subsampling.
 - Token F1 is micro-averaged over per-sentence multisets of **surface**
   tokens (UD multiword tokens kept whole). ZWNJ and punctuation count.
-  Rishe is timed and scored through `Pipeline.tokenize(text, normalize=False)`,
-  which does not normalize, the same as Hazm and Shekar;
-  `Pipeline.tokenize(text)` (and `rishe.tokenize`) is the normalize+tokenize
-  convenience path.
+  Rishe is timed and scored through `Pipeline.tokenize(text)`, which returns
+  surface tokens and does not normalize, the same as Hazm and Shekar.
 - Lemma accuracy is exact match against the UD lemma (past-stem side of
   `past#present`), with each gold word lemmatized in isolation and without
   pre-normalization. The `identity` column predicts the word itself; it shows
@@ -57,7 +55,7 @@ on Seraji.
 | normalize: Hazm | 0.0958 |
 | normalize: Shekar | 0.1041 |
 | full pipeline: Rishe (normalize + formalize + tokenize + lemmatize + sentences + ezafe) | 0.0163 |
-| batch `pipe()`: Rishe (12 threads) | 0.0026 |
+| batch `process_batch()`: Rishe (12 threads) | 0.0026 |
 
 - Tokenization is close between Rishe and Shekar; both are faster than Hazm.
 - Normalization is where Rishe is clearly faster (~80×).

@@ -63,11 +63,12 @@ Rishe vs Shekar. Hazm has no inflector.
 | comparative | **100.0%** | 0.0003 | 0.0001 |
 | superlative | **100.0%** | 0.0003 | 0.0001 |
 | plural | **100.0%** | 0.0003 | 0.0001 |
-| possessive (6 forms) | 55.0% | 0.0019 | 0.0005 |
+| possessive (6 forms) | 45.0% | 0.0019 | 0.0005 |
 
 Possessive disagreement is orthographic: Shekar writes a uniform ZWNJ before
-singular suffixes (`کتاب‌م`, `خانه‌م`); Rishe follows standard orthography
-(`کتابم`, `خانه‌ام`). Comparative, superlative, and plural match exactly.
+singular suffixes (`کتاب‌م`) and drops the linking letters after `ه`/`ا`/`و`
+(`خانه‌م`, `دریام`); Rishe follows standard orthography (`کتابم`, `خانه‌ام`,
+`دریایم`). Comparative, superlative, and plural match exactly.
 
 ## Token splitting
 
@@ -91,6 +92,11 @@ Examples:
 
 Hazm is ~20,000× slower per token because it lemmatizes every candidate split.
 Rishe also handles fused clitics (`بهش`, `ازش`) that Hazm leaves whole.
+
+One ambiguity is left to the reader: `بهم` is read as `به` + `من` ("to me"), so
+`بهم ریخت` becomes `به من ریخت` rather than the `به‌هم` compound ("collapsed").
+The ZWNJ spelling `به‌هم ریخت` is preserved as written. Telling the two apart
+needs verb agreement, so Rishe does not guess.
 
 ## Spell correction
 
@@ -220,9 +226,9 @@ Reproduce: `python scripts/benchmark_maskers.py`.
 
 ## Core accuracy unchanged
 
-The P0 additions do not regress the core benchmark: token F1 1.0000 / 0.9989 /
-0.9028 (Seraji / PerDT / PEYMA) and lemma accuracy 0.9209 / 0.9316, with
-tokenize at ~4.1 µs and the full pipeline at ~16.3 µs per sentence.
+The core benchmark is unchanged: token F1 1.0000 / 0.9989 / 0.9028 (Seraji /
+PerDT / PEYMA) and lemma accuracy 0.9209 / 0.9316, with tokenize at ~4.1 µs and
+the full pipeline at ~16.3 µs per sentence.
 
 ## Static embeddings
 
@@ -258,10 +264,9 @@ Caveats:
   converted before use, so the table measures `vector(word)` against
   `KeyedVectors[word].tolist()`.
 - `most_similar` is a linear scan over the vocabulary. It is fine for
-  interactive use (20 queries complete as part of this benchmark); an ANN index
-  is the upgrade path if it ever lands on a request hot path.
-- Interrupted downloads restart from zero. Resume support is the next Hub
-  improvement if model files keep growing.
+  interactive use (20 queries complete as part of this benchmark).
+- An interrupted download resumes from the `.part` file left by the previous
+  `pull`.
 
 Reproduce: `python -m rishe.cli hub pull hazm-fasttext-300` then
 `python scripts/benchmark_embeddings.py`.

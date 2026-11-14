@@ -57,10 +57,26 @@ class Normalizer:
         self._persian_numbers = persian_numbers
         self._unicodes_replacement = unicodes_replacement
         self._seperate_mi = seperate_mi
-        self._pipe = Pipeline(strip_diacritics=remove_diacritics)
+        if not unicodes_replacement:
+            raise NotImplementedError(
+                "Normalizer always maps Arabic letters to Persian; use "
+                "rishe.normalize(text, stages=[...]) to skip that step"
+            )
+        if not seperate_mi and correct_spacing:
+            raise NotImplementedError(
+                "correct_spacing also separates 'می' from the verb; pass "
+                "correct_spacing=False or use rishe.normalize(text, stages=[...])"
+            )
+        self._pipe = Pipeline(
+            unify_digits=persian_numbers,
+            strip_diacritics=remove_diacritics,
+            fix_zwnj=seperate_mi,
+        )
 
     def normalize(self, text: str) -> str:
-        text = self._pipe.normalize(text)
+        # Build the stage list from the flags first. Running the default pipeline
+        # here would apply the spacing step before the flags are consulted, which
+        # silently makes `correct_spacing=False` a no-op.
         stages: List[str] = []
         if self._unicodes_replacement:
             stages.extend(["alphabet", "arabic_unicode"])

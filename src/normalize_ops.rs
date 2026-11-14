@@ -105,12 +105,10 @@ const WORD_SUFFIXES_BASE: &[&str] = &[
     "کش",
     "آور",
     "آلود",
-    "نشین",
     "گزین",
     "ساز",
     "کنان",
     "دار",
-    "بند",
     "ریز",
     "گستر",
     "شناس",
@@ -132,7 +130,6 @@ const WORD_SUFFIXES_BASE: &[&str] = &[
     "اندیش",
     "گیر",
     "گذار",
-    "ساز",
     "پسند",
     "فشان",
     "بخش",
@@ -650,10 +647,12 @@ fn split_trailing_punct(token: &str) -> (&str, &str) {
 }
 
 fn is_persian_word(word: &str) -> bool {
-    !word.is_empty()
-        && word
-            .chars()
-            .all(|c| PERSIAN_LETTERS.contains(c) || c == ZWNJ)
+    !word.is_empty() && word.chars().all(is_persian_letter)
+}
+
+/// Whether `ch` is a Persian letter or the zero-width non-joiner.
+pub(crate) fn is_persian_letter(ch: char) -> bool {
+    PERSIAN_LETTERS.contains(ch) || ch == ZWNJ
 }
 
 fn join_parts(left: &str, right: &str) -> String {

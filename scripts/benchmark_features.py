@@ -191,8 +191,9 @@ def main():
         f"{timeit(shekar_inflect.possessives, nouns, reps=100):.4f} |"
     )
     print(
-        "\nPossessive differences are Shekar's uniform ZWNJ before singular suffixes "
-        "(کتاب‌م/خانه‌م); Rishe follows standard orthography (کتابم/خانه‌ام)."
+        "\nPossessive differences are orthographic: Shekar writes a uniform ZWNJ "
+        "before singular suffixes (کتاب‌م) and drops the linking letters after "
+        "ه/ا/و (خانه‌م، دریام); Rishe follows standard orthography (کتابم، خانه‌ام، دریایم)."
     )
 
     # ------------------------------------------------------------ token split

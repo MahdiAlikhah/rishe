@@ -83,17 +83,33 @@ fn main() {
     );
 }
 
-fn compile_freq_fst(tsv_path: &Path, fst_out_path: &Path) {
-    let mut entries: BTreeMap<String, u64> = BTreeMap::new();
+fn read_lines(tsv_path: &Path) -> impl Iterator<Item = String> {
     let file = File::open(tsv_path).unwrap_or_else(|e| {
         panic!(
             "cannot open {}: {e} (data/ must ship with the crate)",
             tsv_path.display()
         )
     });
+    BufReader::new(file)
+        .lines()
+        .map(|line| line.expect("Invalid UTF-8 in TSV"))
+}
 
-    for line in BufReader::new(file).lines() {
-        let line = line.expect("Invalid UTF-8 in word_freq.tsv");
+fn write_fst(fst_out_path: &Path, entries: BTreeMap<String, u64>) {
+    let wtr = BufWriter::new(File::create(fst_out_path).expect("Failed to create FST file"));
+    let mut builder = MapBuilder::new(wtr).expect("Failed to init MapBuilder");
+    for (key, value) in entries {
+        builder
+            .insert(key.as_bytes(), value)
+            .expect("FST insert failed");
+    }
+    builder.finish().expect("Failed to finish FST");
+}
+
+fn compile_freq_fst(tsv_path: &Path, fst_out_path: &Path) {
+    let mut entries: BTreeMap<String, u64> = BTreeMap::new();
+
+    for line in read_lines(tsv_path) {
         let mut parts = line.trim().split('\t');
         let key = parts.next().unwrap_or("");
         if key.is_empty() {
@@ -106,14 +122,7 @@ fn compile_freq_fst(tsv_path: &Path, fst_out_path: &Path) {
         entries.insert(key.to_owned(), freq);
     }
 
-    let wtr = BufWriter::new(File::create(fst_out_path).expect("Failed to create word_freq.fst"));
-    let mut builder = MapBuilder::new(wtr).expect("Failed to init MapBuilder");
-    for (key, value) in entries {
-        builder
-            .insert(key.as_bytes(), value)
-            .expect("FST insert failed");
-    }
-    builder.finish().expect("Failed to finish FST");
+    write_fst(fst_out_path, entries);
 }
 
 fn compile_tsv_to_fst(
@@ -124,16 +133,7 @@ fn compile_tsv_to_fst(
 ) {
     let mut entries: BTreeMap<String, u64> = BTreeMap::new();
 
-    let file = File::open(tsv_path).unwrap_or_else(|e| {
-        panic!(
-            "cannot open {}: {e} (data/ must ship with the crate)",
-            tsv_path.display()
-        )
-    });
-    let reader = BufReader::new(file);
-
-    for line in reader.lines() {
-        let line = line.expect("Invalid UTF-8 in TSV");
+    for line in read_lines(tsv_path) {
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {
             continue;
@@ -166,12 +166,5 @@ fn compile_tsv_to_fst(
         entries.insert(key.to_owned(), packed_val);
     }
 
-    let wtr = BufWriter::new(File::create(fst_out_path).expect("Failed to create FST file"));
-    let mut builder = MapBuilder::new(wtr).expect("Failed to init MapBuilder");
-    for (key, val) in entries {
-        builder
-            .insert(key.as_bytes(), val)
-            .expect("FST insert failed");
-    }
-    builder.finish().expect("Failed to finish FST");
+    write_fst(fst_out_path, entries);
 }

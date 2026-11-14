@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from importlib.metadata import PackageNotFoundError, version as _distribution_version
 from pathlib import Path
@@ -349,7 +350,8 @@ def _hub(args) -> int:
         if info is None:
             print(f"{args.name}\tmissing")
         else:
-            print(f"{info['name']}\t{info['path']}\t{info['bytes']} bytes")
+            marker = "\tpartial" if info.get("partial") else ""
+            print(f"{info['name']}\t{info['path']}\t{info['bytes']} bytes{marker}")
     elif args.hub_command == "remove":
         try:
             removed = hub.remove(args.name)
@@ -367,10 +369,22 @@ def _hub(args) -> int:
         return 0 if valid else 1
     else:
         for name, model in hub.MODELS.items():
-            status = "cached" if hub.cached(name) else "missing"
+            entry = hub.info(name)
+            if entry is None:
+                status = "missing"
+            elif entry.get("partial"):
+                status = "partial"
+            else:
+                status = "cached"
             print(f"{name}\t{status}\t{model.filename}")
         for name in hub.PACKS:
-            status = "cached" if hub.cached(name) else "missing"
+            entry = hub.info(name)
+            if entry is None:
+                status = "missing"
+            elif entry.get("partial"):
+                status = "partial"
+            else:
+                status = "cached"
             print(f"{name}\t{status}\tpack")
     return 0
 
@@ -460,18 +474,27 @@ def _serve(
 ) -> int:
     """Answer protocol-1 JSON lines (`docs/serve-schema.md`) until stdin ends."""
     stream = getattr(sys.stdin, "buffer", sys.stdin)
+
+    def emit(payload: dict) -> bool:
+        """Write one reply line; False once the reader has closed the pipe."""
+        try:
+            print(json.dumps(payload, ensure_ascii=False), flush=True)
+            return True
+        except BrokenPipeError:
+            return False
+        except OSError as error:
+            # Windows reports a closed pipe as a plain OS error, not BrokenPipeError.
+            if getattr(error, "errno", None) in (32, 22):
+                return False
+            raise
+
     for raw in stream:
         if isinstance(raw, bytes):
             try:
                 line = raw.decode("utf-8").strip()
             except UnicodeDecodeError:
-                print(
-                    json.dumps(
-                        {"ok": False, "error": "request line is not valid UTF-8"},
-                        ensure_ascii=False,
-                    ),
-                    flush=True,
-                )
+                if not emit({"ok": False, "error": "request line is not valid UTF-8"}):
+                    return _end_serve()
                 continue
         else:
             line = raw.strip()
@@ -556,7 +579,21 @@ def _serve(
             response = {"ok": True, "result": result}
         except Exception as error:  # keep the server alive on bad requests
             response = {"ok": False, "error": str(error)}
-        print(json.dumps(response, ensure_ascii=False), flush=True)
+        if not emit(response):
+            return _end_serve()
+    return 0
+
+
+def _end_serve() -> int:
+    """Exit quietly once the reader closed stdout.
+
+    The output pipe is gone, so dropping the buffered writer would raise on
+    interpreter shutdown; hand it to /dev/null first.
+    """
+    try:
+        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+    except (OSError, ValueError):
+        pass
     return 0
 
 

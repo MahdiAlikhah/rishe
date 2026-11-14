@@ -7,7 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Model packs are versioned separately from the crate; their versions are recorded
 in the pack manifest and on the model repository.
 
-## [1.0.0] - 2026-11-12
+## [Unreleased]
+
+## [1.0.0] - 2026-11-14
 
 The API freeze. The surface listed in [`docs/STABILITY.md`](docs/STABILITY.md)
 is the promise: from here, removing or renaming a public name, changing a
@@ -45,6 +47,144 @@ cosmetics was not worth it at the freeze.
   Python surface is checked rather than reviewed.
 - `docs/STABILITY.md` states the freeze and is linked from the README, the
   documentation index and both CLI helps.
+- Building the Python extension from source needs the `extension-module`
+  Cargo feature; maturin enables it through `pyproject.toml`, and the CI
+  feature job runs the PyO3 tests.
+- The `ProcessedDoc` stub says `lemmas` equals the tokens and
+  `ezafe_markers` is empty when that stage is off, instead of promising
+  aligned lemma and ezafe data for every stage list.
+
+### Fixed
+
+- `most_similar` caps the requested count at the vocabulary size, so an
+  oversized `n` returns the whole vocabulary instead of panicking; this also
+  keeps `rishe serve` and the Python server alive after such a request.
+- A `.vec` file whose header declares an absurd vocabulary size now fails with
+  an error instead of aborting the process.
+- `JalaliDate.from_gregorian` returns `None` for years outside the supported
+  calendar range instead of overflowing.
+- A model pack whose `labels.json` has a `max_len` outside `3..=4096` is
+  rejected when the pack is loaded.
+- `Embeddings.save` writes a temporary file and renames it, so an interrupted
+  `rishe convert` no longer leaves a truncated `.rvec`.
+- `hub pull` in Rust resumes a partial download and reports progress on a
+  terminal; the Python `pull` checks the checksum of an already cached file
+  instead of trusting it.
+- `hub remove` also deletes the `.part` file of an interrupted pull, and
+  `hub list`/`hub info` report a partial model or half-filled pack directory
+  as `partial` with its size instead of claiming it is absent.
+- A checksum mismatch fails on the first attempt instead of downloading the
+  whole file three times.
+- `cargo clippy --features python,models` now runs in CI, as the release
+  checklist says.
+- `spell_suggest("")` returns an empty list, and `number_to_words`
+  reports an int too large for `i64` as `OverflowError` instead of a
+  `TypeError`.
+- A `.vec` file whose first line declares a different number of vectors
+  than the file contains is an error instead of a silently partial model.
+- `tokenize(..., join_verb_parts=True)` no longer panics when the text ends
+  with a verb prefix such as `خواهد`.
+- `spell_suggest` and `spell_correct` skip words longer than 64 characters
+  instead of building millions of one-edit candidates.
+- The `html` masker no longer removes text between `<` and `>` that is not
+  a tag.
+- An embedding file with a non-finite value is rejected at load instead of
+  returning NaN similarities.
+- `possessive(noun, -1)` returns `None` instead of raising `OverflowError`.
+- `possessive` inserts the linking `ی` after nouns ending in `ا`/`آ`/`و`, so
+  `دنیا` gives `دنیایم` instead of `دنیام`.
+- `JalaliDate.from_gregorian` returns `None` for days in 560 before
+  560-03-20, matching the documented window instead of returning a date that
+  cannot be converted back.
+- The compat `Normalizer` honors `persian_numbers=False` and rejects
+  `unicodes_replacement=False` and `seperate_mi=False` with
+  `NotImplementedError` instead of silently ignoring them.
+- `tokenize_spans` counts characters once per gap instead of once per token,
+  so a long text costs linear time instead of quadratic.
+- `spell_correct` remembers each word's correction within a call, so a text
+  that repeats a misspelling is searched once per distinct word.
+- `textrank` sums each word's link weights once instead of once per pass per
+  link, so a wide `window` costs linear work per pass: 800 words went from
+  46 s to 2.6 s at window 120.
+- The sentence splitter looks back at most six characters to decide whether a
+  dot ends an abbreviation, so a long run with dots and no spaces costs linear
+  time: 84,000 characters of space-free Persian went from 1.35 s to under
+  1 ms, and a one-line 354 KB list of URLs from 2.7 s to under 1 ms.
+- `spell_correct` skips a word that contains no Persian letter instead of
+  building one-edit candidates for it: 259 KB of JSON keys went from 3.3 s to
+  12 ms.
+- `persianize_suggest` counts character offsets incrementally instead of from
+  the start of the text for every match: 780 KB with 16,000 loanwords went
+  from 225 ms to 10 ms.
+- `most_similar` skips the query word by text, so a `.vec` that lists a word
+  twice no longer returns the query itself among its neighbours.
+- The maskers no longer trim a text they did not mask, so masking leaves the
+  surrounding whitespace alone when there is nothing to replace.
+- The `mention` and `hashtag` maskers require a word boundary before the
+  sigil, so an `@` or `#` inside a word (`info@example.com`) is no longer
+  masked as a social token.
+- `textrank`'s graph builder copies each word once per edge instead of twice.
+- `plural`, `comparative`, `superlative`, `possessive` and `split_token`
+  return an empty result for empty input instead of a bare suffix or `[""]`.
+- The sentence splitter has unit tests for its punctuation, abbreviation,
+  ellipsis and no-whitespace branches, which is where the quadratic scan above
+  had been hiding.
+- `hub pull <url>` no longer writes outside the cache directory. The incoming
+  file name is validated as one plain path component, so a URL whose last
+  segment carries a separator, a drive prefix or `..` is refused instead of
+  joining to a path outside `$RISHE_HOME/models`. A query string or fragment is
+  dropped from the inferred name instead of becoming part of it, which also
+  fixes URLs like `model.vec?download=true` that previously failed with a raw
+  filesystem error on Windows.
+- `serve` ends cleanly when its reader closes the pipe. `rishe serve | head -1`
+  used to panic on the write and exit 101; both the Rust and Python servers now
+  treat a closed stdout as end of input and exit 0.
+- A resumed download whose local `.part` prefix does not match the remote object
+  restarts from zero instead of failing permanently. Only a mismatch on a fresh
+  download, where the bytes came from the remote as-is, still fails on the first
+  attempt.
+- `rishe hub pull <pack> --sha256 <digest>` is refused instead of silently
+  ignoring the flag. Task packs are verified against the registry manifest's own
+  digests, and the Python CLI already rejected this.
+- `hub.info()` always includes the `partial` key, `False` for a cached entry, so
+  a caller can read it without `.get` or a `KeyError`.
+- `hub remove <pack>` also clears a `rishe-models-manifest.json.part` left by an
+  interrupted manifest download.
+- `Normalizer(correct_spacing=False)` is honoured. The compat wrapper used to run
+  the full default normalizer first, so the spacing step had already been applied
+  before the flag was consulted and the switch did nothing.
+- The copula split no longer mangles ordinary words that end in `ست`. `است`,
+  `دست`, `هست`, `نیست`, `چیست`, `درست` and `مست` were being split into a stem plus
+  `است` (`دست` became `ده است`), because the lexicon holds one-off entries such as
+  `ده` and `مه` that made almost any stem look like a word. A token the lexicon
+  already knows is now left alone, and a genuine contraction splits to its stem as
+  written, so `کتابست` gives `کتاب است` and `عالیست` gives `عالی است` rather than
+  the invented `کتابه است` / `عالیه است`.
+- `split_token` no longer splits an ordinary word on a prefix. `برنامه`, `درخت`,
+  `بازار`, `واژه`, `دریا` and `فروشگاه` came back as `بر`+`نامه`, `در`+`خت` and so
+  on, because the prefix loop ran before the whole-word lexicon check.
+- Lexicalized nouns ending in `ه` no longer lemmatize through a lookalike verb stem.
+  `دانه`, `هسته`, `آیه`, `گوشه`, `سایه`, `پوشه`, `گیره`, `کنده` and `مانده` were
+  reduced to `دانست`, `بود`, `آمد`, `گوشید`, `سایید`, `پوشید` and `گرفت`.
+- `توت` is no longer read as `در` + `تو`; it is mulberry.
+- `split_token` no longer strips a noun suffix off a fused clitic, so `بهمین`
+  ("to this") stays one word instead of becoming `بهم` + `ین`. The same guard
+  keeps `بهتان`, `تومان`, `بهشت` and `توتم` whole; a clitic form is not a noun
+  stem.
+- `split_token` keeps a ZWNJ morpheme boundary. `می‌فروش` and `پیش‌بینی` are
+  lexicon entries, but the whole-word check no longer swallows them, so they
+  still split to `می`+`فروش` and `پیش`+`بینی`.
+- `convert` refuses to write f16 values outside ±65504 instead of writing a file
+  that `load` then rejects as non-finite, and it leaves no partial file behind.
+- An embedding row with a finite but very large magnitude no longer makes
+  `similarity` return `NaN`. Norms and dot products accumulate in f64.
+- A model whose output has the wrong number of sequence rows is an error instead
+  of an index panic.
+- A model pack whose `labels.json` disagrees with the model's own output width is
+  an error naming both counts, instead of a panic or a mislabelled result.
+- A downloaded model is flushed to disk before being moved into place, in the Rust
+  and Python downloaders, so a crash during the move cannot leave a short file
+  where a good one used to be.
 
 ## [0.11.4] - 2026-11-12
 

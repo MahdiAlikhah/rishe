@@ -19,7 +19,7 @@ No sibling methods that differ only by an option bundle, and no `_with` /
 | `normalize_stages(text, stages)`, `normalize(text)` | `normalize(text, stages=[...])` |
 | `process_stages(text, stages)`, `process_with(...)`, `pipe(texts)` | `process(text, stages=[...])`, `process_batch(texts)` |
 | `lemma_full(word)` | `lemmatize(word)`, `lemmatize_verb(word)` returns `(lemma, present_stem)` |
-| `tokenize_spans`, `tokenize_char_spans` | `tokenize_spans(text)` → `[(token, start, end)]` |
+| `tokenize_spans`, `tokenize_char_spans` | `tokenize_spans(text)` → `[(token, start, end)]`; Rust keeps `tokenize_char_spans` for character offsets |
 
 ## 2. `_batch` is the only suffix for "many inputs"
 
@@ -100,15 +100,19 @@ pipe.process(text).tokens           # same, through the pipeline
 
 ## 8. `ProcessedDoc` field names
 
-| before | after |
-|---|---|
-| `normalized_text` | `text` |
-| `formal_text` | unchanged |
-| `sentences`, `tokens`, `lemmas` | unchanged |
-| `ezafe_markers` | `ezafe` |
+The names are unchanged in `1.0.0`:
 
-Text-valued fields may carry a `_text` suffix (`formal_text`) when the bare name
-would be ambiguous; everything else is a plural noun.
+| field | content |
+|---|---|
+| `normalized_text` | the input after normalization (the input itself when normalization is off) |
+| `formal_text` | detokenized formal text |
+| `sentences`, `tokens`, `lemmas` | sentence strings, tokens, one lemma per token |
+| `ezafe_markers` | one ezafe flag per token |
+
+`text` and `ezafe` are not `ProcessedDoc` fields: `Pipeline.ezafe(text)` is the
+learned-ezafe task method. Text-valued fields may carry a `_text` suffix
+(`formal_text`, `normalized_text`) when the bare name would be ambiguous;
+everything else is a plural noun.
 
 ## 9. Module-level front door
 
@@ -162,6 +166,11 @@ The same operation has the same name in both languages, differing only where the
 language forces it: constructors (`Pipeline::create` / `Pipeline()`), convenient
 getters (a Python property may be a method in Rust), and keyword arguments (a Rust
 options struct with `Default`).
+
+Span units are the one documented exception: Rust `tokenize_spans` returns byte
+offsets and `tokenize_char_spans` character offsets, while Python's
+`tokenize_spans` returns character offsets. Slice with the unit of the language
+you are in.
 
 ## 14. Parameters
 

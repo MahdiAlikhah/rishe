@@ -1,58 +1,78 @@
-"""Execute the Quick start blocks of the three READMEs.
+#!/usr/bin/env python3
+"""Run the ```python blocks from each README's quick-start section.
 
-The quick start is the code a new user copies first, so it is the part most
-likely to rot. Later README sections are not run: they need a downloaded model
-pack or embedding file. The compiled extension must be importable.
+Covers only the quick-start sections of README.md, README.pypi.md and
+README.fa.md; the deeper tours carry their own examples (model packs, the hub,
+embedding files), so they are not executed here. None of these blocks needs a
+model pack or the network, but they do need the compiled extension: run this
+after `pip install` (CI: the `examples` job) or with a built `_core`.
+
+Blocks inside one section share a namespace: the later quick-start blocks reuse
+`rishe` and `text` from the earlier ones.
 """
-
-from __future__ import annotations
-
 import re
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+SECTIONS = {
+    "README.md": "Quick start",
+    "README.pypi.md": "Quickstart",
+    "README.fa.md": "شروع سریع",
+}
+HEADING = re.compile(r"^(#+)\s+(.*)$")
+FENCE = re.compile(r"^```(\w*)\s*$")
 
-# (README, heading text, lowercased) — one section per README.
-SECTIONS = [
-    ("README.md", "quick start"),
-    ("README.pypi.md", "quickstart"),
-    ("README.fa.md", "شروع سریع"),
-]
-
-HEADING = re.compile(r"^(#{1,6})\s+(.*)$")
-PYTHON_FENCE = re.compile(r"^```python\n(.*?)^```", re.S | re.M)
-
-
-def quick_start_blocks(text: str, marker: str, source: str) -> list[str]:
-    lines = text.splitlines()
-    for start, line in enumerate(lines):
-        heading = HEADING.match(line)
-        if heading and marker in heading.group(2).lower():
-            level = len(heading.group(1))
-            for end in range(start + 1, len(lines)):
-                next_heading = HEADING.match(lines[end])
-                if next_heading and len(next_heading.group(1)) <= level:
-                    return PYTHON_FENCE.findall("\n".join(lines[start:end]))
-            return PYTHON_FENCE.findall("\n".join(lines[start:]))
-    raise SystemExit(f"{source}: no {marker!r} heading found")
+# Appended, not prepended: an installed wheel wins, and a checkout with the
+# extension already built still runs.
+sys.path.append(str(ROOT / "python"))
 
 
-def main() -> int:
-    ran = 0
-    for name, marker in SECTIONS:
-        text = (ROOT / name).read_text(encoding="utf-8")
-        blocks = quick_start_blocks(text, marker, name)
+def python_blocks(path, title):
+    """[(line of the first code line, source)] for the ```python blocks of one section."""
+    lines = path.read_text(encoding="utf-8").splitlines()
+    start = next(
+        (
+            i
+            for i, line in enumerate(lines)
+            if (heading := HEADING.match(line)) and heading.group(2).strip() == title
+        ),
+        None,
+    )
+    if start is None:
+        raise SystemExit(f"{path.name}: no {title!r} heading")
+    level = len(HEADING.match(lines[start]).group(1))
+    blocks, body, language = [], None, None
+    for number, line in enumerate(lines[start + 1 :], start + 2):
+        fence = FENCE.match(line)
+        if body is not None:
+            if fence:
+                if language == "python":
+                    blocks.append((number - len(body), "\n".join(body) + "\n"))
+                body = None
+            else:
+                body.append(line)
+        elif fence:
+            body, language = [], fence.group(1)
+        elif (heading := HEADING.match(line)) and len(heading.group(1)) <= level:
+            break
+    if body is not None:
+        raise SystemExit(f"{path.name}: unterminated ```{language} fence under {title!r}")
+    return blocks
+
+
+def main():
+    total = 0
+    for name, title in SECTIONS.items():
+        blocks = python_blocks(ROOT / name, title)
         if not blocks:
-            raise SystemExit(f"{name}: the quick start section has no ```python block")
-        namespace = {"__name__": "readme_quick_start"}
-        # One namespace per file: later blocks reuse names from earlier ones,
-        # exactly as a reader copies them in order.
-        for number, block in enumerate(blocks, start=1):
-            where = f"{name}#quick-start-block-{number}"
-            exec(compile(block, where, "exec"), namespace)  # noqa: S102 - our own READMEs
-            ran += 1
-    print(f"ran {ran} quick-start blocks from {len(SECTIONS)} READMEs")
+            raise SystemExit(f"{name}: the {title!r} section has no ```python block")
+        namespace = {}
+        for line, source in blocks:
+            exec(compile(source, f"{name}:{line}", "exec"), namespace)
+        total += len(blocks)
+        print(f"{name}: {len(blocks)} block(s)")
+    print(f"{total} block(s) ran")
     return 0
 
 

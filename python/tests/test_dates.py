@@ -28,6 +28,15 @@ class DateTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             JalaliDate(1402, 12, 30)
 
+    def test_from_gregorian_refuses_days_before_the_window(self):
+        self.assertIsNone(JalaliDate.from_gregorian(560, 1, 1))
+        self.assertIsNone(JalaliDate.from_gregorian(560, 3, 19))
+        date = JalaliDate.from_gregorian(560, 3, 20)
+        self.assertIsNotNone(date)
+        assert date is not None
+        self.assertEqual((date.year, date.month, date.day), (-61, 1, 1))
+        self.assertEqual(date.to_gregorian(), (560, 3, 20))
+
     def test_cli(self):
         for argv in (["date", "۱۲ مرداد ۱۴۰۲"], ["date", "1402/05/12"]):
             output = io.StringIO()

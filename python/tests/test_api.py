@@ -27,6 +27,20 @@ class FrontDoorTest(unittest.TestCase):
         with self.assertRaises(TypeError):
             rishe.tokenize("کتاب", colour=True)
 
+    def test_empty_spell_suggest_and_big_int(self):
+        pipeline = rishe.pipeline()
+        self.assertEqual(pipeline.spell_suggest(""), [])
+        self.assertEqual(pipeline.number_to_words(1000), "یک هزار")
+        with self.assertRaises(OverflowError):
+            pipeline.number_to_words(10**25)
+
+    def test_possessive_out_of_range_is_none(self):
+        pipeline = rishe.pipeline()
+        self.assertEqual(pipeline.possessive("کتاب", 0), "کتابم")
+        self.assertEqual(pipeline.possessive("دنیا", 0), "دنیایم")
+        self.assertIsNone(pipeline.possessive("کتاب", -1))
+        self.assertIsNone(pipeline.possessive("کتاب", 6))
+
     def test_tokenize_spans(self):
         spans = rishe.tokenize_spans("سلام دنیا")
         self.assertEqual([token for token, _, _ in spans], ["سلام", "دنیا"])

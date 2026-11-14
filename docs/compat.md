@@ -42,9 +42,18 @@ the same engine. See [api.md](api.md) for that surface and
 - **Compiled lexicons.** `words_file` and `verbs_file` are rejected with
   `NotImplementedError` instead of being silently ignored. Rishe's lexicons are
   built into the binary, so there is nothing to point at.
-- **Partial coverage.** POSTaggers, parsers, chunkers, corpus-specific readers
-  and embeddings are not part of the base package. Use `Pipeline` (or the
-  optional model packs) for tagging, parsing and embeddings.
+- **`Normalizer` switches.** `persian_numbers=False` turns digit unification
+  off, and `correct_spacing=False` leaves whitespace and ZWNJ placement alone.
+  Two settings cannot be honored by the default normalizer and are rejected with
+  `NotImplementedError` rather than ignored:
+  `unicodes_replacement=False` (Arabic letters are always mapped) and
+  `seperate_mi=False` while `correct_spacing=True` (the spacing step separates
+  `می`). Use `rishe.normalize(text, stages=[...])` when a step has to be
+  byte-level controlled.
+- **Partial coverage.** The classic wrappers for POSTaggers, parsers, chunkers
+  and embeddings are not part of this module. Use `Pipeline` (or the optional
+  model packs) for tagging, parsing and embeddings; corpus readers ship as
+  `rishe.corpora` and embeddings as `rishe.Embeddings`.
 - **Normalizer output is close, not byte-identical.** Hazm applies a larger set
   of spacing and style rules; Rishe exposes them as composable operators through
   `normalize(stages=...)`, so a stage-by-stage comparison shows exactly where the

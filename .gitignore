@@ -1,6 +1,8 @@
 /target
 /.venv
 __pycache__/
+# Local build output: the editable install imports python/rishe/_core.pyd,
+# so run `maturin develop` to recreate it after removing it.
 *.pyd
 *.pdb
 *.so
@@ -14,3 +16,8 @@ __pycache__/
 /training/**/*.model
 /training/**/sentences.txt
 /training/**/*.zip
+
+# pip and maturin scratch directories land in the working directory of the
+# command that started them; keep them from showing up as untracked noise.
+/pip-*/
+/tmp*/

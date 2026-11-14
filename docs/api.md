@@ -47,7 +47,7 @@ import rishe
 
 rishe.normalize("مي كنم")                    # 'می‌کنم'
 rishe.tokenize("سلام دنیا")                   # ['سلام', 'دنیا']
-rishe.tokenize_spans("سلام دنیا")             # [('سلام', 0, 4), ...]
+rishe.tokenize_spans("سلام دنیا")             # character offsets: [('سلام', 0, 4), ...]
 rishe.sent_tokenize(text)                     # sentence list
 rishe.lemmatize("می‌روم")                     # 'رفت'
 rishe.mask(text, maskers=["url", "email"])    # mask sensitive spans

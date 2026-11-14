@@ -260,13 +260,18 @@ pub fn persianize(text: &str) -> String {
 /// All whole-word loanwords with their alternatives and character spans.
 pub fn persianize_suggest(text: &str) -> Vec<LoanwordMatch> {
     let mut matches = Vec::new();
+    // Matches come left to right, so count characters once instead of per match.
+    let mut last_byte = 0;
+    let mut last_char = 0;
     for found in loanword_matcher().find_iter(text) {
+        let start = last_char + text[last_byte..found.start()].chars().count();
+        let end = start + text[found.start()..found.end()].chars().count();
+        last_byte = found.end();
+        last_char = end;
         if !word_boundary(text, found.start(), found.end()) {
             continue;
         }
         let (word, alternatives) = LOANWORDS[found.pattern().as_usize()];
-        let start = text[..found.start()].chars().count();
-        let end = text[..found.end()].chars().count();
         matches.push(LoanwordMatch {
             word: word.to_string(),
             alternatives: alternatives.iter().map(|alt| (*alt).to_string()).collect(),
@@ -333,5 +338,11 @@ mod tests {
         assert_eq!(matches[0].word, "فایل");
         assert_eq!(matches[0].alternatives, ["پرونده"]);
         assert_eq!((matches[0].start, matches[0].end), (0, 4));
+
+        // Spans are character offsets, not bytes, and stay right after a skipped match.
+        let spaced = persianize_suggest("«فایل» و کامپیوتر");
+        let spans: Vec<(usize, usize)> = spaced.iter().map(|m| (m.start, m.end)).collect();
+        assert_eq!(spans, [(1, 5), (9, 17)]);
+        assert_eq!(spaced[1].word, "کامپیوتر");
     }
 }

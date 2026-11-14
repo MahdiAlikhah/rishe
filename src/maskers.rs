@@ -1,4 +1,4 @@
-use crate::normalize_ops::{ALL_PUNCT, PERSIAN_LETTERS};
+use crate::normalize_ops::{is_persian_letter, ALL_PUNCT, PERSIAN_LETTERS};
 use crate::stopwords;
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder, MatchKind};
 use std::sync::OnceLock;
@@ -107,10 +107,18 @@ impl MaskOp {
     }
 }
 
+/// Trim only when masking changed the text; a pass with no matches leaves it alone.
+fn finish(text: &str, out: String) -> String {
+    if out == text {
+        return out;
+    }
+    out.trim().to_string()
+}
+
 /// Replace links up to the next whitespace with `mask`.
 pub fn mask_urls(text: &str, mask: &str) -> String {
     if !text.contains("http") {
-        return text.trim().to_string();
+        return text.to_string();
     }
 
     let mut out = String::with_capacity(text.len());
@@ -134,18 +142,18 @@ pub fn mask_urls(text: &str, mask: &str) -> String {
         }
     }
 
-    out.trim().to_string()
+    finish(text, out)
 }
 
 /// Replace well-formed email addresses with `mask`.
 pub fn mask_emails(text: &str, mask: &str) -> String {
     if !text.contains('@') {
-        return text.trim().to_string();
+        return text.to_string();
     }
 
     let spans = email_spans(text);
     if spans.is_empty() {
-        return text.trim().to_string();
+        return text.to_string();
     }
 
     let mut out = String::with_capacity(text.len());
@@ -156,7 +164,7 @@ pub fn mask_emails(text: &str, mask: &str) -> String {
         last = end;
     }
     out.push_str(&text[last..]);
-    out.trim().to_string()
+    finish(text, out)
 }
 
 pub(crate) fn email_spans(text: &str) -> Vec<(usize, usize)> {
@@ -218,14 +226,16 @@ fn is_email_domain(ch: char) -> bool {
 /// Replace `sigil` tokens up to the next whitespace with `mask`.
 pub fn mask_sigil(text: &str, sigil: char, mask: &str) -> String {
     if !text.contains(sigil) {
-        return text.trim().to_string();
+        return text.to_string();
     }
 
     let mut out = String::with_capacity(text.len());
     let mut chars = text.chars().peekable();
+    let mut previous: Option<char> = None;
 
     while let Some(ch) = chars.next() {
-        if ch == sigil {
+        // A sigil inside a word (`info@example.com`) is not a mention or hashtag.
+        if ch == sigil && previous.is_none_or(|prev: char| !prev.is_alphanumeric()) {
             while chars.peek().is_some_and(|next| !next.is_whitespace()) {
                 chars.next();
             }
@@ -233,15 +243,16 @@ pub fn mask_sigil(text: &str, sigil: char, mask: &str) -> String {
         } else {
             out.push(ch);
         }
+        previous = Some(ch);
     }
 
-    out.trim().to_string()
+    finish(text, out)
 }
 
 /// Replace emoji sequences with `mask`.
 pub fn mask_emojis(text: &str, mask: &str) -> String {
     if !text.chars().any(is_emoji_base) {
-        return text.trim().to_string();
+        return text.to_string();
     }
 
     let chars: Vec<char> = text.chars().collect();
@@ -282,7 +293,7 @@ pub fn mask_emojis(text: &str, mask: &str) -> String {
         i += 1;
     }
 
-    out.trim().to_string()
+    finish(text, out)
 }
 
 pub(crate) fn is_emoji_base(ch: char) -> bool {
@@ -317,7 +328,7 @@ pub(crate) fn is_skin_tone(ch: char) -> bool {
 /// Decode HTML entities and replace tags with `mask`.
 pub fn mask_html(text: &str, mask: &str) -> String {
     if !text.contains('<') && !text.contains('&') {
-        return text.trim().to_string();
+        return text.to_string();
     }
 
     let unescaped = html_unescape(text);
@@ -326,11 +337,17 @@ pub fn mask_html(text: &str, mask: &str) -> String {
 
     while i < unescaped.len() {
         if unescaped.as_bytes()[i] == b'<' {
-            if let Some(close) = unescaped[i..].find('>') {
-                if close > 1 {
-                    out.push_str(mask);
-                    i += close + 1;
-                    continue;
+            let tag_start = unescaped[i + 1..]
+                .chars()
+                .next()
+                .is_some_and(|ch| ch.is_ascii_alphabetic() || matches!(ch, '/' | '!' | '?'));
+            if tag_start {
+                if let Some(close) = unescaped[i..].find('>') {
+                    if close > 1 {
+                        out.push_str(mask);
+                        i += close + 1;
+                        continue;
+                    }
                 }
             }
         }
@@ -339,7 +356,7 @@ pub fn mask_html(text: &str, mask: &str) -> String {
         i += ch.len_utf8();
     }
 
-    out.trim().to_string()
+    finish(text, out)
 }
 
 fn html_unescape(text: &str) -> String {
@@ -424,7 +441,7 @@ pub fn mask_non_persian(
         }
     }
 
-    out.trim().to_string()
+    finish(text, out)
 }
 
 /// Replace whole-word stopwords with `mask`.
@@ -480,7 +497,7 @@ fn replace_words(text: &str, matcher: &AhoCorasick, mask: &str) -> String {
         last = found.end();
     }
     out.push_str(&text[last..]);
-    out.trim().to_string()
+    finish(text, out)
 }
 
 fn word_boundary(text: &str, start: usize, end: usize) -> bool {
@@ -495,10 +512,6 @@ fn word_boundary(text: &str, start: usize, end: usize) -> bool {
     before && after
 }
 
-fn is_persian_letter(ch: char) -> bool {
-    PERSIAN_LETTERS.contains(ch) || ch == ZWNJ
-}
-
 /// Replace each digit with `mask`.
 pub fn mask_digits(text: &str, mask: &str) -> String {
     let mut out = String::with_capacity(text.len());
@@ -509,7 +522,7 @@ pub fn mask_digits(text: &str, mask: &str) -> String {
             out.push(ch);
         }
     }
-    out.trim().to_string()
+    finish(text, out)
 }
 
 /// Replace each diacritic with `mask`.
@@ -522,7 +535,7 @@ pub fn mask_diacritics(text: &str, mask: &str) -> String {
             out.push(ch);
         }
     }
-    out
+    finish(text, out)
 }
 
 /// Replace Persian and ASCII punctuation with `mask`.
@@ -535,7 +548,7 @@ pub fn mask_punctuation(text: &str, mask: &str) -> String {
             out.push(ch);
         }
     }
-    out.trim().to_string()
+    finish(text, out)
 }
 
 #[cfg(test)]
@@ -588,6 +601,8 @@ mod tests {
             "این یک  متن  نمونه است."
         );
         assert_eq!(mask_html("a &amp; b", ""), "a & b");
+        assert_eq!(mask_html("a < b > c", ""), "a < b > c");
+        assert_eq!(mask_html("اگر 1 < 2 و 3 > 2", ""), "اگر 1 < 2 و 3 > 2");
         assert_eq!(mask_html("&#1587;&#x644;&#x627;&#1605;", ""), "سلام");
     }
 
@@ -621,6 +636,21 @@ mod tests {
             MaskOp::Punctuation.apply("دریغ است ایران که ویران شود!", None),
             "دریغ است ایران که ویران شود"
         );
+    }
+
+    #[test]
+    fn a_pass_without_matches_leaves_the_text_alone() {
+        assert_eq!(MaskOp::Url.apply("  a  b  ", None), "  a  b  ");
+        assert_eq!(MaskOp::Mention.apply("  a  b  ", None), "  a  b  ");
+    }
+
+    #[test]
+    fn a_sigil_inside_a_word_is_not_a_mention() {
+        assert_eq!(
+            MaskOp::Mention.apply("info@example.com", None),
+            "info@example.com"
+        );
+        assert_eq!(MaskOp::Hashtag.apply("C#tag", None), "C#tag");
     }
 
     #[test]

@@ -30,7 +30,10 @@ class JalaliDate:
     def from_gregorian(
         year: int, month: int, day: int
     ) -> Optional["JalaliDate"]:
-        """Convert a Gregorian date to Jalali, or None when it is invalid."""
+        """Convert a Gregorian date to Jalali, or None when it is invalid.
+
+        The supported window is 560-03-20 through 3798-12-31.
+        """
         ...
     @property
     def year(self) -> int:
@@ -238,13 +241,17 @@ class ProcessedDoc:
         ...
     @property
     def lemmas(self) -> List[str]:
-        """Lemma of each token, in the same order and length as tokens."""
+        """Lemma of each token, in the same order and length as tokens.
+
+        Equal to the tokens when the lemmatize stage is off.
+        """
         ...
     @property
     def ezafe_markers(self) -> List[bool]:
         """For each token, whether an ezafe is predicted before the next token.
 
         The list has the same length as tokens; the last entry is always false.
+        Empty when the ezafe stage is off.
         """
         ...
 
@@ -366,8 +373,8 @@ class Pipeline:
     def number_to_words(self, value: Union[int, str]) -> str:
         """Return the Persian words for an int or a digit string.
 
-        Raises ValueError for a string that is not a number and TypeError for
-        other types.
+        Raises ValueError for a string that is not a number, OverflowError for
+        an int too large for i64, and TypeError for other types.
         """
         ...
     def ngrams(self, text: str, min_n: int = 1, max_n: int = 1) -> List[str]:

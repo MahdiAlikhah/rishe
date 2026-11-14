@@ -1,6 +1,6 @@
 //! `rishe` command-line interface.
 
-use std::io::{BufRead, Read};
+use std::io::{BufRead, Read, Write};
 use std::process::ExitCode;
 
 use rishe::{
@@ -509,6 +509,18 @@ fn serve(args: &[String]) -> Result<(), CliError> {
 
     let stdin = std::io::stdin();
     let mut reader = stdin.lock();
+    // A reader that closes early (`rishe serve | head -1`) must end the loop, not
+    // panic. `println!` aborts the process on a closed stdout, so write through a
+    // locked handle and treat a write error as end of input.
+    let stdout = std::io::stdout();
+    let mut out = std::io::BufWriter::new(stdout.lock());
+    let mut reply = |line: &str| -> Result<(), String> {
+        writeln!(out, "{line}").map_err(|error| format!("cannot write stdout: {error}"))?;
+        // The protocol is line-oriented and a caller may wait for each reply, so
+        // flush per line instead of only at exit.
+        out.flush()
+            .map_err(|error| format!("cannot write stdout: {error}"))
+    };
     let mut raw = Vec::new();
     loop {
         raw.clear();
@@ -524,10 +536,10 @@ fn serve(args: &[String]) -> Result<(), CliError> {
                 // A line that is not valid UTF-8 is still one request line: answer
                 // it and keep serving, as `docs/serve-schema.md` promises.
                 let response = json!({"ok": false, "error": "request line is not valid UTF-8"});
-                println!(
-                    "{}",
-                    serde_json::to_string(&response).map_err(|error| error.to_string())?
-                );
+                let text = serde_json::to_string(&response).map_err(|error| error.to_string())?;
+                if reply(&text).is_err() {
+                    break;
+                }
                 continue;
             }
         };
@@ -544,10 +556,10 @@ fn serve(args: &[String]) -> Result<(), CliError> {
             Ok(result) => json!({"ok": true, "result": result}),
             Err(error) => json!({"ok": false, "error": error}),
         };
-        println!(
-            "{}",
-            serde_json::to_string(&response).map_err(|error| error.to_string())?
-        );
+        let text = serde_json::to_string(&response).map_err(|error| error.to_string())?;
+        if reply(&text).is_err() {
+            break;
+        }
     }
     Ok(())
 }
@@ -597,18 +609,9 @@ fn handle_request(
                 .or(default_mask_token);
             json!(pipe.mask(text, &maskers, token)?)
         }
-        "date" => {
-            let date =
-                dates::parse(text).ok_or_else(|| format!("cannot parse date from {text:?}"))?;
-            let gregorian = date
-                .to_gregorian()
-                .ok_or_else(|| format!("invalid Jalali date: {date:?}"))?;
-            json!({
-                "jalali": {"year": date.year, "month": date.month, "day": date.day},
-                "gregorian": {"year": gregorian.year, "month": gregorian.month, "day": gregorian.day},
-                "iso": gregorian.to_iso(),
-            })
-        }
+        // One payload for both front ends; the CLI and `serve` differ only in the
+        // wording of the parse error, which each documents separately.
+        "date" => date_value(text)?,
         "pos" | "ner" | "ezafe" | "depparse" => model_result(pipe, command, text)?,
         "embed" | "similar" | "similarity" => {
             embedding_result(embeddings, &request, command, text)?
@@ -723,25 +726,55 @@ fn emit_list(values: &[String], json: bool) {
     }
 }
 
-fn emit_date(text: &str, json: bool) -> Result<(), String> {
-    let date =
-        dates::parse(text).ok_or_else(|| format!("cannot parse a Jalali date from {text:?}"))?;
+/// The `date` payload, shared by the CLI and `serve` so the two cannot drift.
+fn date_value(text: &str) -> Result<Value, String> {
+    let date = dates::parse(text).ok_or_else(|| format!("cannot parse date from {text:?}"))?;
     let gregorian = date
         .to_gregorian()
         .ok_or_else(|| format!("invalid Jalali date: {date:?}"))?;
+    Ok(json!({
+        "jalali": {"year": date.year, "month": date.month, "day": date.day},
+        "gregorian": {"year": gregorian.year, "month": gregorian.month, "day": gregorian.day},
+        "iso": gregorian.to_iso(),
+    }))
+}
+
+fn emit_date(text: &str, json: bool) -> Result<(), String> {
+    // The CLI documents this wording (`docs/errors.md`) and this key order
+    // (`tests/cli.rs`), so it formats the line itself. `date_value` reuses the
+    // same fields for `serve`, which is key-order agnostic.
+    let value = date_value(text).map_err(|error| {
+        if error.starts_with("cannot parse date from ") {
+            format!("cannot parse a Jalali date from {text:?}")
+        } else {
+            error
+        }
+    })?;
+    let part = |name: &str, field: &str| -> Result<String, String> {
+        value
+            .get(name)
+            .and_then(|object| object.get(field))
+            .and_then(Value::as_i64)
+            .map(|number| number.to_string())
+            .ok_or_else(|| format!("date payload has no {name}.{field}"))
+    };
+    let iso = value
+        .get("iso")
+        .and_then(Value::as_str)
+        .ok_or("date payload has no iso field")?;
     if json {
         println!(
             "{{\"jalali\":{{\"year\":{},\"month\":{},\"day\":{}}},\"gregorian\":{{\"year\":{},\"month\":{},\"day\":{}}},\"iso\":{}}}",
-            date.year,
-            date.month,
-            date.day,
-            gregorian.year,
-            gregorian.month,
-            gregorian.day,
-            json_string(&gregorian.to_iso())
+            part("jalali", "year")?,
+            part("jalali", "month")?,
+            part("jalali", "day")?,
+            part("gregorian", "year")?,
+            part("gregorian", "month")?,
+            part("gregorian", "day")?,
+            json_string(iso)
         );
     } else {
-        println!("{}", gregorian.to_iso());
+        println!("{iso}");
     }
     Ok(())
 }

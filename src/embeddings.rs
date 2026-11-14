@@ -15,6 +15,8 @@ const DTYPE_F32: u8 = 0;
 const DTYPE_F16: u8 = 1;
 /// `RVEC` magic, version, dtype tag, `u32` dim and `u32` vocab size.
 const HEADER_LEN: usize = 15;
+/// Largest magnitude an `f16` holds exactly; anything above it saturates to infinity.
+const F16_MAX: f32 = 65_504.0;
 
 /// Storage width of an embedding file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -94,10 +96,23 @@ fn write_binary<W: Write>(
 
     let width = dtype.width();
     let mut buffer = Vec::with_capacity((1 << 16) * width);
-    for value in vectors {
+    for (index, value) in vectors.iter().enumerate() {
         match dtype {
             DType::F32 => buffer.extend_from_slice(&value.to_le_bytes()),
-            DType::F16 => buffer.extend_from_slice(&f32_to_f16(*value).to_le_bytes()),
+            DType::F16 => {
+                // `f32_to_f16` saturates to infinity, and `checked` refuses a
+                // non-finite value on load, so storing this would write a file
+                // this crate cannot read back. A finite `f32` can reach here
+                // because a text `.vec` allows any finite value.
+                if value.abs() > F16_MAX {
+                    let word = words.get(index / dim as usize).map_or("?", |word| &**word);
+                    return Err(format!(
+                        "cannot store {value} for {word:?} as f16: it is outside ±{F16_MAX} \
+                         and would be stored as infinity; use f32"
+                    ));
+                }
+                buffer.extend_from_slice(&f32_to_f16(*value).to_le_bytes());
+            }
         }
         if buffer.len() >= (1 << 20) {
             writer
@@ -109,6 +124,43 @@ fn write_binary<W: Write>(
     writer
         .write_all(&buffer)
         .map_err(|error| format!("write error: {error}"))
+}
+
+/// Reject a decoded value that would turn every similarity into NaN.
+fn checked(value: f32) -> Result<f32, String> {
+    if value.is_finite() {
+        Ok(value)
+    } else {
+        Err("embedding file contains a non-finite value".to_string())
+    }
+}
+
+/// Per-row L2 norms, computed in `f64` so squaring a large component cannot
+/// overflow to infinity.
+///
+/// With an `f32` accumulator a finite row like `[1e20, 0, 0]` squares to
+/// infinity, the norm becomes infinity, and every cosine against it is
+/// `NaN` — the exact value `checked` exists to prevent. An infinite norm is
+/// still possible from a finite `f64` product (or from a row whose length
+/// exceeds `f32::MAX` only after the sum), so it is reported rather than stored.
+fn row_norms(vectors: &[f32], dim: usize) -> Result<Vec<f32>, String> {
+    vectors
+        .chunks_exact(dim)
+        .map(|row| {
+            let norm = row
+                .iter()
+                .map(|&value| f64::from(value) * f64::from(value))
+                .sum::<f64>()
+                .sqrt();
+            if norm > f64::from(f32::MAX) {
+                return Err(format!(
+                    "embedding file has a row too large to compare: its length exceeds {}",
+                    f32::MAX
+                ));
+            }
+            Ok(norm as f32)
+        })
+        .collect()
 }
 
 /// Convert an IEEE 754 binary16 bit pattern to `f32`.
@@ -221,14 +273,33 @@ impl Embeddings {
     /// file decodes to values very close to the original `f32` ones.
     pub fn save(&self, path: impl AsRef<Path>, dtype: DType) -> Result<(), String> {
         let path = path.as_ref();
-        let file = File::create(path)
-            .map_err(|error| format!("cannot create {}: {error}", path.display()))?;
+        let mut temporary = path.as_os_str().to_os_string();
+        temporary.push(".part");
+        let temporary = std::path::PathBuf::from(temporary);
+        let file = File::create(&temporary)
+            .map_err(|error| format!("cannot create {}: {error}", temporary.display()))?;
         let mut writer = std::io::BufWriter::with_capacity(1 << 20, file);
-        write_binary(&mut writer, self.dim, &self.words, &self.vectors, dtype).and_then(|()| {
+        let written = write_binary(&mut writer, self.dim, &self.words, &self.vectors, dtype)
+            .and_then(|()| {
+                writer
+                    .flush()
+                    .map_err(|error| format!("write error: {error}"))
+            });
+        // Flush pushes the bytes out of this process, not out of the page cache:
+        // without the fsync a crash after the rename leaves the target short or
+        // empty, which would destroy a file that was good before.
+        let written = written.and_then(|()| {
             writer
-                .flush()
+                .into_inner()
+                .map_err(|error| format!("write error: {error}"))?
+                .sync_all()
                 .map_err(|error| format!("write error: {error}"))
-        })
+        });
+        if let Err(error) = written {
+            let _ = std::fs::remove_file(&temporary);
+            return Err(error);
+        }
+        std::fs::rename(&temporary, path).map_err(|error| error.to_string())
     }
 
     /// Storage width of the file this model was loaded from.
@@ -260,7 +331,10 @@ impl Embeddings {
             return Err("embedding dimension must be positive".to_string());
         }
 
-        let mut words: Vec<Box<str>> = Vec::with_capacity(declared);
+        let mut words: Vec<Box<str>> = Vec::new();
+        words
+            .try_reserve(declared)
+            .map_err(|_| "embedding file is too large for available memory".to_string())?;
         let mut vectors: Vec<f32> = Vec::new();
         vectors
             .try_reserve(declared.saturating_mul(dim))
@@ -280,6 +354,12 @@ impl Embeddings {
                         line_number + 2
                     )
                 })?;
+                if !value.is_finite() {
+                    return Err(format!(
+                        "line {}: non-finite value {field:?}",
+                        line_number + 2
+                    ));
+                }
                 vectors.push(value);
             }
             if vectors.len() - row_start != dim {
@@ -292,6 +372,12 @@ impl Embeddings {
             words.push(word.into());
         }
 
+        if words.len() != declared {
+            return Err(format!(
+                "header declares {declared} vectors but the file has {}",
+                words.len()
+            ));
+        }
         if words.is_empty() {
             return Err("embedding file contains no vectors".to_string());
         }
@@ -319,10 +405,7 @@ impl Embeddings {
         )
         .map_err(|error| format!("fst error: {error}"))?;
 
-        let norms = vectors
-            .chunks_exact(dim)
-            .map(|row| dot(row, row).sqrt())
-            .collect();
+        let norms = row_norms(&vectors, dim)?;
 
         Ok(Self {
             dim,
@@ -401,20 +484,16 @@ impl Embeddings {
             file.read_exact(chunk)
                 .map_err(|error| format!("read error: {error}"))?;
             match dtype {
-                DType::F32 => vectors.extend(
-                    chunk
-                        .as_chunks::<4>()
-                        .0
-                        .iter()
-                        .map(|&raw| f32::from_le_bytes(raw)),
-                ),
-                DType::F16 => vectors.extend(
-                    chunk
-                        .as_chunks::<2>()
-                        .0
-                        .iter()
-                        .map(|&raw| f16_to_f32(u16::from_le_bytes(raw))),
-                ),
+                DType::F32 => {
+                    for raw in chunk.as_chunks::<4>().0 {
+                        vectors.push(checked(f32::from_le_bytes(*raw))?);
+                    }
+                }
+                DType::F16 => {
+                    for raw in chunk.as_chunks::<2>().0 {
+                        vectors.push(checked(f16_to_f32(u16::from_le_bytes(*raw)))?);
+                    }
+                }
             }
             remaining -= take;
         }
@@ -442,10 +521,7 @@ impl Embeddings {
         )
         .map_err(|error| format!("fst error: {error}"))?;
 
-        let norms = vectors
-            .chunks_exact(dim)
-            .map(|row| dot(row, row).sqrt())
-            .collect();
+        let norms = row_norms(&vectors, dim)?;
 
         Ok(Self {
             dim,
@@ -493,11 +569,17 @@ impl Embeddings {
     pub fn similarity(&self, first: &str, second: &str) -> Option<f32> {
         let first_index = self.index.get(first)?;
         let second_index = self.index.get(second)?;
-        let denominator = self.norms[first_index as usize] * self.norms[second_index as usize];
-        if denominator == 0.0 {
+        let first_norm = self.norms[first_index as usize];
+        let second_norm = self.norms[second_index as usize];
+        if first_norm == 0.0 || second_norm == 0.0 {
             return Some(0.0);
         }
-        Some(dot(self.row(first_index), self.row(second_index)) / denominator)
+        Some(cosine(
+            first_norm,
+            self.row(first_index),
+            second_norm,
+            self.row(second_index),
+        ))
     }
 
     /// Mean of the vectors of all in-vocabulary tokens. OOV tokens are skipped.
@@ -543,6 +625,7 @@ impl Embeddings {
 
     /// Up to `n` nearest words by descending cosine similarity, excluding the query itself.
     pub fn most_similar(&self, word: &str, n: usize) -> Vec<(String, f32)> {
+        let n = n.min(self.words.len());
         if n == 0 {
             return Vec::new();
         }
@@ -560,10 +643,12 @@ impl Embeddings {
         let mut heap: BinaryHeap<std::cmp::Reverse<Candidate<'_>>> =
             BinaryHeap::with_capacity(n + 1);
         for (index, candidate) in self.words.iter().enumerate() {
-            if index as u64 == query_index || self.norms[index] == 0.0 {
+            // A file may list a word twice; skip the query by text, not only by row.
+            if index as u64 == query_index || self.norms[index] == 0.0 || candidate.as_ref() == word
+            {
                 continue;
             }
-            let score = dot(query, self.row(index as u64)) / (query_norm * self.norms[index]);
+            let score = cosine(query_norm, query, self.norms[index], self.row(index as u64));
             let candidate = Candidate {
                 score,
                 word: candidate.as_ref(),
@@ -612,6 +697,21 @@ impl Ord for Candidate<'_> {
 #[inline]
 fn dot(first: &[f32], second: &[f32]) -> f32 {
     first.iter().zip(second).map(|(a, b)| a * b).sum::<f32>()
+}
+
+/// Cosine similarity from two precomputed norms, accumulating in `f64`.
+///
+/// The norms are finite (see [`row_norms`]), but multiplying two of them as
+/// `f32` can still overflow for large rows, and the products inside `dot` can
+/// overflow on their own. Widening keeps a finite row finite all the way to the
+/// result instead of returning `NaN`.
+fn cosine(first_norm: f32, first: &[f32], second_norm: f32, second: &[f32]) -> f32 {
+    let product = first_norm as f64 * second_norm as f64;
+    let mut sum = 0.0_f64;
+    for (a, b) in first.iter().zip(second) {
+        sum += f64::from(*a) * f64::from(*b);
+    }
+    (sum / product) as f32
 }
 
 #[cfg(test)]
@@ -679,7 +779,149 @@ mod tests {
 
         std::fs::write(&path, "1 3\nکتاب 1 0\n").unwrap();
         assert!(Embeddings::load(&path).is_err());
+
+        std::fs::write(&path, "1000 3\nکتاب 1 0 0\nخانه 0 1 0\n").unwrap();
+        let error = Embeddings::load(&path)
+            .err()
+            .expect("a header count mismatch must be an error");
+        assert!(error.contains("declares 1000"), "{error}");
         std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn test_rejects_non_finite_values() {
+        let path = scratch("embeddings_nonfinite.vec");
+        std::fs::write(&path, "2 2\nکتاب 1 0\nبد nan 0\n").unwrap();
+        let error = Embeddings::load(&path)
+            .err()
+            .expect("a non-finite value must be an error");
+        assert!(error.contains("non-finite"), "{error}");
+
+        let binary = scratch("embeddings_nonfinite.rvec");
+        let words: Vec<Box<str>> = vec!["کتاب".into(), "بد".into()];
+        write_binary(
+            &mut std::fs::File::create(&binary).unwrap(),
+            2,
+            &words,
+            &[1.0, 0.0, f32::NAN, 0.0],
+            DType::F32,
+        )
+        .unwrap();
+        assert!(Embeddings::load(&binary).is_err());
+        std::fs::remove_file(&path).ok();
+        std::fs::remove_file(&binary).ok();
+    }
+
+    #[test]
+    fn test_huge_declared_vocabulary_is_an_error() {
+        let path = scratch("embeddings_huge.vec");
+        std::fs::write(&path, "1000000000000 1\n").unwrap();
+        let error = Embeddings::load(&path)
+            .err()
+            .expect("huge header must be an error");
+        assert!(error.contains("too large"), "{error}");
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn test_most_similar_clamps_an_oversized_count() {
+        let path = scratch("embeddings_clamp.vec");
+        std::fs::write(&path, TINY).unwrap();
+        let embeddings = Embeddings::load(&path).unwrap();
+        std::fs::remove_file(&path).ok();
+        assert_eq!(embeddings.most_similar("کتاب", usize::MAX).len(), 5);
+    }
+
+    #[test]
+    fn test_most_similar_skips_a_duplicate_query_row() {
+        let path = scratch("embeddings_duplicate.vec");
+        std::fs::write(
+            &path,
+            "5 3\nکتاب 1 0 0\nخانه 0.9 0.1 0\nمدرسه 0.8 0.2 0\nکتاب 0 1 0\nاست 0.5 0.5 0\n",
+        )
+        .unwrap();
+        let embeddings = Embeddings::load(&path).unwrap();
+        std::fs::remove_file(&path).ok();
+
+        let nearest = embeddings.most_similar("کتاب", 10);
+        assert!(
+            nearest.iter().all(|(word, _)| word != "کتاب"),
+            "{nearest:?}"
+        );
+        assert_eq!(nearest.len(), 3);
+    }
+
+    #[test]
+    fn an_f16_save_refuses_a_value_it_cannot_hold() {
+        // A text file may hold any finite value; storing one above f16's range
+        // would saturate to infinity and write a file `load` then rejects.
+        let path = scratch("embeddings_f16_range.vec");
+        let binary = scratch("embeddings_f16_range.rvec");
+        // Start from a clean slate: an earlier run that panicked mid-test, or a
+        // build that wrote the file anyway, must not decide this assertion.
+        std::fs::remove_file(&path).ok();
+        std::fs::remove_file(&binary).ok();
+        std::fs::remove_file(scratch("embeddings_f16_range.rvec.part")).ok();
+
+        std::fs::write(&path, "1 3\nw 70000 0 0\n").unwrap();
+        let embeddings = Embeddings::load(&path).expect("70000 is a finite f32");
+
+        let error = embeddings
+            .save(&binary, DType::F16)
+            .expect_err("f16 cannot hold 70000");
+        assert!(error.contains("outside"), "{error}");
+        assert!(error.contains("use f32"), "{error}");
+        assert!(
+            !binary.exists() && !scratch("embeddings_f16_range.rvec.part").exists(),
+            "a refused save must not leave a file behind"
+        );
+
+        // The same model still saves as f32, and that file loads back.
+        embeddings.save(&binary, DType::F32).expect("f32 holds it");
+        let reloaded = Embeddings::load(&binary).unwrap();
+        assert_eq!(reloaded.vector("w"), Some([70000.0, 0.0, 0.0].as_slice()));
+        std::fs::remove_file(&path).ok();
+        std::fs::remove_file(&binary).ok();
+    }
+
+    #[test]
+    fn a_huge_but_finite_row_still_gets_a_real_similarity() {
+        // 1e20 squares to infinity in f32; the norms are accumulated in f64 so
+        // the cosine stays finite instead of becoming NaN.
+        let path = scratch("embeddings_big_row.vec");
+        std::fs::write(&path, "2 3\nw 1e20 0 0\nx 1e20 0 0\n").unwrap();
+        let embeddings = Embeddings::load(&path).unwrap();
+        std::fs::remove_file(&path).ok();
+
+        let same = embeddings.similarity("w", "w").expect("known words");
+        assert!(same.is_finite(), "similarity must not be NaN: {same}");
+        assert!((same - 1.0).abs() < 1e-6, "{same}");
+        let identical = embeddings.similarity("w", "x").expect("known words");
+        assert!((identical - 1.0).abs() < 1e-6, "{identical}");
+
+        // `most_similar` must produce finite scores too, not NaN ties.
+        for (_, score) in embeddings.most_similar("w", 1) {
+            assert!(score.is_finite(), "most_similar produced {score}");
+        }
+    }
+
+    #[test]
+    fn most_similar_keeps_every_candidate_when_scores_tie() {
+        // TINY gives distinct scores; these rows all match `x` equally, which
+        // exercises the heap's `partial_cmp` tie path.
+        let path = scratch("embeddings_ties.vec");
+        std::fs::write(&path, "4 2\nx 1 0\na 0 1\nb 0 1\nc 0 1\n").unwrap();
+        let embeddings = Embeddings::load(&path).unwrap();
+        std::fs::remove_file(&path).ok();
+
+        let nearest = embeddings.most_similar("x", 3);
+        assert_eq!(nearest.len(), 3, "{nearest:?}");
+        let mut words: Vec<&str> = nearest.iter().map(|(word, _)| word.as_str()).collect();
+        words.sort_unstable();
+        assert_eq!(words, ["a", "b", "c"]);
+        for (_, score) in &nearest {
+            assert!(score.is_finite(), "{score}");
+        }
     }
 
     #[test]

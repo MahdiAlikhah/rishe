@@ -29,6 +29,19 @@ pub struct TaggedToken {
     pub end: usize,
 }
 
+/// Reject a model whose output has a different label count than `labels.json`.
+///
+/// Split out from the inference paths so the check can be tested without an ONNX
+/// model on disk.
+fn check_labels(what: &str, found: usize, expected: usize) -> Result<(), String> {
+    if found == expected {
+        return Ok(());
+    }
+    Err(format!(
+        "{what} has {found} labels, labels.json has {expected}"
+    ))
+}
+
 /// A named entity merged from BIO-tagged tokens.
 #[cfg_attr(
     feature = "python",
@@ -304,9 +317,9 @@ impl ModelPack {
             .get("max_len")
             .and_then(|value| value.as_u64())
             .unwrap_or(192) as usize;
-        if max_len < 3 {
+        if !(3..=4096).contains(&max_len) {
             return Err(format!(
-                "invalid max_len {max_len} in {}",
+                "invalid max_len {max_len} in {}; expected 3..=4096",
                 labels_path.display()
             ));
         }
@@ -473,13 +486,15 @@ impl ModelPack {
             .ndarray::<f32>()
             .map_err(|error| format!("cannot read logits: {error}"))?;
 
-        let label_count = logits.shape().get(2).copied().unwrap_or(0);
-        if label_count != self.labels.len() {
+        let sequence = logits.shape().get(1).copied().unwrap_or(0);
+        if let Some(&position) = positions.iter().find(|&&position| position >= sequence) {
             return Err(format!(
-                "model has {label_count} labels, labels.json has {}",
-                self.labels.len()
+                "logits have {} rows but need position {position}",
+                logits.shape().get(1).copied().unwrap_or(0)
             ));
         }
+        let label_count = logits.shape().get(2).copied().unwrap_or(0);
+        check_labels("model", label_count, self.labels.len())?;
 
         let mut result = Vec::with_capacity(kept.len());
         for (word, position) in kept.into_iter().zip(positions) {
@@ -548,7 +563,9 @@ impl ModelPack {
                 .ok_or_else(|| "model returned no arc scores".to_string())?
                 .ndarray::<f32>()
                 .map_err(|error| format!("cannot read arc scores: {error}"))?;
-            if arcs.shape().get(2).copied() != Some(word_count + 1) {
+            if arcs.shape().get(2).copied() != Some(word_count + 1)
+                || arcs.shape().get(1).copied() != Some(word_count)
+            {
                 return Err("arc scores have an unexpected shape".to_string());
             }
             (0..word_count)
@@ -608,13 +625,15 @@ impl ModelPack {
             .ok_or_else(|| "model returned no relation logits".to_string())?
             .ndarray::<f32>()
             .map_err(|error| format!("cannot read relation logits: {error}"))?;
-        let label_count = relations.shape().get(2).copied().unwrap_or(0);
-        if label_count != self.labels.len() {
+        let rows = relations.shape().get(1).copied().unwrap_or(0);
+        if rows < kept.len() {
             return Err(format!(
-                "model has {label_count} labels, labels.json has {}",
-                self.labels.len()
+                "relation logits have {rows} rows but need {}",
+                kept.len()
             ));
         }
+        let label_count = relations.shape().get(2).copied().unwrap_or(0);
+        check_labels("model", label_count, self.labels.len())?;
 
         let mut cursor = 0;
         let mut result = Vec::with_capacity(word_count);
@@ -701,6 +720,41 @@ mod tests {
     }
 
     #[test]
+    fn a_wrong_label_count_is_an_error_not_a_panic() {
+        assert!(check_labels("model", 3, 3).is_ok());
+        let error = check_labels("model", 3, 20).expect_err("a mismatch must be an error");
+        assert!(error.contains("3 labels"), "{error}");
+        assert!(error.contains("labels.json has 20"), "{error}");
+    }
+
+    #[test]
+    fn a_pack_whose_labels_disagree_with_the_model_is_an_error() {
+        // The model in the fixture emits 3 labels; declaring 20 must fail the call
+        // instead of indexing a label the output does not have.
+        let source =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/tiny-pack");
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("rishe-bad-labels");
+        std::fs::create_dir_all(&dir).unwrap();
+        for entry in ["model.onnx", "tokenizer.json"] {
+            std::fs::copy(source.join(entry), dir.join(entry)).unwrap();
+        }
+        std::fs::write(
+            dir.join("labels.json"),
+            r#"{"task":"pos","labels":["A","B","C","D","E","F","G","H","I","J","K","L","M","N","O","P","Q","R","S","T"],"max_len":16}"#,
+        )
+        .unwrap();
+
+        let pack = ModelPack::load(&dir).expect("the pack itself loads");
+        match pack.tags("کتاب") {
+            Ok(tags) => panic!("20 declared labels for a 3-label model must fail, got {tags:?}"),
+            Err(error) => assert!(error.contains("labels"), "{error}"),
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
     fn mst_breaks_cycle_with_single_root() {
         let scores = vec![vec![8.0, 0.0, 10.0], vec![9.0, 10.0, 0.0]];
         assert_eq!(maximum_spanning_tree(&scores), Some(vec![1, 2]));
@@ -709,6 +763,21 @@ mod tests {
     #[test]
     fn mst_roots_a_single_word() {
         assert_eq!(maximum_spanning_tree(&[vec![5.0]]), Some(vec![1]));
+    }
+
+    #[test]
+    fn a_pack_with_an_absurd_max_len_is_an_error() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("rishe-bad-maxlen");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("labels.json"),
+            r#"{"labels":["X"],"max_len":10000000000}"#,
+        )
+        .unwrap();
+        assert!(ModelPack::load(&dir).is_err());
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

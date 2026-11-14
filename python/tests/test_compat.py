@@ -20,6 +20,20 @@ class CompatTest(unittest.TestCase):
             "کجا نشان",
         )
 
+    def test_normalizer_persian_numbers_can_be_off(self):
+        self.assertEqual(Normalizer().normalize("123"), "۱۲۳")
+        self.assertEqual(Normalizer(persian_numbers=False).normalize("123"), "123")
+
+    def test_normalizer_rejects_switches_it_cannot_honor(self):
+        with self.assertRaises(NotImplementedError):
+            Normalizer(unicodes_replacement=False)
+        with self.assertRaises(NotImplementedError):
+            Normalizer(seperate_mi=False)
+        self.assertEqual(
+            Normalizer(seperate_mi=False, correct_spacing=False).normalize("می روم"),
+            "می روم",
+        )
+
     def test_word_tokenizer_joins_verb_parts(self):
         self.assertEqual(WordTokenizer().tokenize("رفته است"), ["رفته_است"])
         self.assertEqual(
@@ -51,6 +65,19 @@ class CompatTest(unittest.TestCase):
             WordTokenizer(words_file="words.dat")
         with self.assertRaises(NotImplementedError):
             Lemmatizer(verbs_file="verbs.dat")
+
+    def test_correct_spacing_can_be_turned_off(self):
+        """The switch must actually change the output, not be silently ignored."""
+        off = Normalizer(correct_spacing=False)
+        on = Normalizer(correct_spacing=True)
+        for text in ("سلام   دنیا", "کتاب ها"):
+            self.assertEqual(on.normalize(text), on.normalize(text))
+            self.assertNotEqual(
+                on.normalize(text),
+                off.normalize(text),
+                f"correct_spacing=False changed nothing for {text!r}",
+            )
+        self.assertEqual(off.normalize("سلام   دنیا"), "سلام   دنیا")
 
 
 if __name__ == "__main__":

@@ -32,6 +32,14 @@ impl Inflector {
     pub fn possessive(noun: &str, person: usize) -> Option<String> {
         let suffixes = ["م", "ت", "ش", "مان", "تان", "شان"];
         suffixes.get(person)?;
+        if noun.is_empty() {
+            return Some(String::new());
+        }
+
+        if noun.ends_with(['ا', 'آ', 'و']) {
+            // Vowel-final nouns take a linking ی before the suffix: دنیا -> دنیایم.
+            return Some(format!("{noun}ی{}", suffixes[person]));
+        }
 
         if noun.ends_with('ه') {
             if person < 3 {
@@ -50,13 +58,14 @@ fn irregular(adj: &str) -> Option<(&'static str, &'static str)> {
         "خوب" => Some(("بهتر", "بهترین")),
         "کم" => Some(("کمتر", "کمترین")),
         "بیش" => Some(("بیشتر", "بیشترین")),
-        "مه" => Some(("مهتر", "مهترین")),
-        "به" => Some(("بهتر", "بهترین")),
         _ => None,
     }
 }
 
 fn join(word: &str, suffix: &str) -> String {
+    if word.is_empty() {
+        return String::new();
+    }
     if word.chars().last().is_some_and(|c| "اأآودذرزژ".contains(c)) {
         format!("{word}{suffix}")
     } else {

@@ -174,6 +174,47 @@ fn serve_answers_the_version_handshake() {
 }
 
 #[test]
+fn serve_survives_a_reader_that_closes_the_pipe() {
+    // `rishe serve | head -1` is the ordinary way to read one reply. The reader
+    // closes stdout after the first line, and the server must end cleanly instead
+    // of panicking on the write and exiting 101.
+    use std::io::{BufRead, BufReader, Write};
+    let mut child = rishe()
+        .arg("serve")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn rishe serve");
+    let mut stdin = child.stdin.take().expect("stdin");
+    // Keep feeding so the server is still writing when the pipe goes away.
+    let feeder = std::thread::spawn(move || {
+        let line = "{\"command\":\"version\"}\n";
+        for _ in 0..20_000 {
+            if stdin.write_all(line.as_bytes()).is_err() {
+                break;
+            }
+        }
+    });
+
+    let stdout = child.stdout.take().expect("stdout");
+    let mut reader = BufReader::new(stdout);
+    let mut first = String::new();
+    reader.read_line(&mut first).expect("first reply");
+    assert!(first.contains("\"ok\":true"), "{first}");
+    // Drop the read end: the next write from the server hits a closed pipe.
+    drop(reader);
+
+    let status = child.wait().expect("wait");
+    feeder.join().ok();
+    assert!(
+        !matches!(status.code(), Some(101)),
+        "a closed stdout must not panic the server (exit {:?})",
+        status.code()
+    );
+}
+
+#[test]
 fn serve_survives_a_non_utf8_line() {
     use std::io::Write;
     let mut child = rishe()
@@ -279,6 +320,41 @@ fn embeds_similar_and_similarity() {
 }
 
 #[test]
+fn hub_pull_refuses_a_sha256_for_a_pack() {
+    // A pack is verified against the manifest's own digests, so a caller digest has
+    // nothing to apply to. The parser accepts the flag, so this is a value-level
+    // failure: exit 1, not 2, matching docs/errors.md and the Python CLI.
+    let output = rishe()
+        .args(["hub", "pull", "pos-compact", "--sha256", &"0".repeat(64)])
+        .env("RISHE_MODEL_BASE", "http://127.0.0.1:9")
+        .output()
+        .expect("run rishe");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("task packs do not accept --sha256"),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn hub_pull_refuses_a_url_with_no_file_name() {
+    for url in ["https://example.com/", "https://example.com/.."] {
+        let output = rishe()
+            .args(["hub", "pull", url, "--sha256", &"0".repeat(64)])
+            .env("RISHE_MODEL_BASE", "http://127.0.0.1:9")
+            .output()
+            .expect("run rishe");
+        assert_eq!(output.status.code(), Some(1), "{url}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("cannot infer a filename"),
+            "{url}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
 fn hub_path_reports_the_cache_path() {
     let near_miss = rishe()
         .args(["hub", "path", "rishe-embed-fa-300"])
@@ -291,6 +367,118 @@ fn hub_path_reports_the_cache_path() {
         assert_eq!(near_miss.status.code(), Some(1));
         assert!(String::from_utf8_lossy(&near_miss.stderr).contains("not cached"));
     }
+}
+
+#[test]
+fn hub_remove_and_info_see_a_partial_download() {
+    let scratch = ScratchDir::new("hub-partial");
+    let home = scratch.path();
+    let models = home.join("models");
+    std::fs::create_dir_all(&models).expect("models dir");
+    let part = models.join("rishe-embed-fa-300.vec.part");
+    std::fs::write(&part, b"half a download").expect("partial file");
+
+    // info reports the bytes already on disk instead of claiming the model is absent.
+    let info = stdout(
+        rishe()
+            .env("RISHE_HOME", home)
+            .args(["hub", "info", "rishe-embed-fa-300"]),
+    );
+    assert!(
+        info.contains("partial"),
+        "info hid the partial download: {info}"
+    );
+    assert!(info.contains(&part.display().to_string()), "{info}");
+
+    // list agrees with info rather than calling the same state "missing".
+    let listed = stdout(rishe().env("RISHE_HOME", home).args(["hub", "list"]));
+    let row = listed
+        .lines()
+        .find(|line| line.starts_with("rishe-embed-fa-300\t"))
+        .expect("model row");
+    assert_eq!(row, "rishe-embed-fa-300\tpartial\trishe-embed-fa-300.vec");
+
+    // remove deletes the part file, so the disk space is actually freed.
+    let removed =
+        stdout(
+            rishe()
+                .env("RISHE_HOME", home)
+                .args(["hub", "remove", "rishe-embed-fa-300"]),
+        );
+    assert_eq!(removed.trim(), "removed");
+    assert!(!part.exists(), "remove left the partial download behind");
+
+    // With nothing cached and no part, both commands still say so.
+    let again =
+        stdout(
+            rishe()
+                .env("RISHE_HOME", home)
+                .args(["hub", "remove", "rishe-embed-fa-300"]),
+        );
+    assert_eq!(again.trim(), "not cached");
+    let missing =
+        stdout(
+            rishe()
+                .env("RISHE_HOME", home)
+                .args(["hub", "info", "rishe-embed-fa-300"]),
+        );
+    assert!(missing.contains("missing"), "{missing}");
+}
+
+#[test]
+fn hub_remove_and_info_see_a_partial_pack() {
+    let scratch = ScratchDir::new("hub-pack-partial");
+    let home = scratch.path();
+    let pack = home.join("models").join("pos-compact");
+    std::fs::create_dir_all(&pack).expect("pack dir");
+    std::fs::write(pack.join("labels.json"), b"{}").expect("partial pack file");
+
+    // A half-pulled pack directory is not "missing": it occupies disk space.
+    let info = stdout(
+        rishe()
+            .env("RISHE_HOME", home)
+            .args(["hub", "info", "pos-compact"]),
+    );
+    assert!(
+        info.contains("partial"),
+        "info hid the partial pack: {info}"
+    );
+    let listed = stdout(rishe().env("RISHE_HOME", home).args(["hub", "list"]));
+    assert!(
+        listed.contains("pos-compact\tpartial\tpack"),
+        "list disagreed with info: {listed}"
+    );
+
+    let removed = stdout(
+        rishe()
+            .env("RISHE_HOME", home)
+            .args(["hub", "remove", "pos-compact"]),
+    );
+    assert_eq!(removed.trim(), "removed");
+    assert!(!pack.exists(), "remove left the partial pack behind");
+}
+
+#[test]
+fn hub_remove_clears_a_partial_manifest_too() {
+    // `load_manifest` downloads with force into the cache root, so an interrupted
+    // pack pull can leave a manifest part that no model or pack owns.
+    let scratch = ScratchDir::new("hub-manifest-partial");
+    let home = scratch.path();
+    let models = home.join("models");
+    std::fs::create_dir_all(models.join("pos-compact")).expect("pack dir");
+    let manifest_part = models.join("rishe-models-manifest.json.part");
+    std::fs::write(&manifest_part, b"half a manifest").expect("manifest part");
+
+    let removed = stdout(
+        rishe()
+            .env("RISHE_HOME", home)
+            .args(["hub", "remove", "pos-compact"]),
+    );
+    assert_eq!(removed.trim(), "removed");
+    assert!(
+        !manifest_part.exists(),
+        "remove left the partial manifest behind"
+    );
 }
 
 #[test]

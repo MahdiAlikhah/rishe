@@ -93,9 +93,10 @@ vectors.sentence_similarity("این کتاب خوب است", "کتاب خوبی 
 
 `rishe-embed-fa-300-v2` is a 300-dimensional, 68,144-word Word2Vec skip-gram
 model trained on 150,000 Persian Wikipedia articles. The hub serves the compact
-`.rvec` file, which stores the same matrix as IEEE 754 binary16; `rishe convert`
-rewrites any word2vec `.vec` file that way, and `Embeddings` reads both formats
-without extra options. The 0.9.x 30,000-article pack stays available as
+`.rvec` file, which stores the same matrix as IEEE 754 binary16; the Rust
+binary's `rishe convert` rewrites any word2vec `.vec` file that way, and
+`Embeddings` reads both formats without extra options. The 0.9.x 30,000-article
+pack stays available as
 `rishe-embed-fa-300`. The vectors are CC BY-SA 4.0; see [NOTICE.md](NOTICE.md).
 
 ## Architecture

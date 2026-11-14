@@ -412,11 +412,12 @@ fn join_verb_parts(tokens: Vec<String>, morph: &MorphologyEngine) -> Vec<String>
     }
     let mut result: Vec<String> = Vec::with_capacity(tokens.len());
     for token in tokens.into_iter().rev() {
-        let join = BEFORE_VERBS.contains(&token.as_str())
-            || (result
-                .last()
-                .is_some_and(|last| AFTER_VERBS.contains(&last.as_str()))
-                && is_participle(&token, morph));
+        let join = !result.is_empty()
+            && (BEFORE_VERBS.contains(&token.as_str())
+                || (result
+                    .last()
+                    .is_some_and(|last| AFTER_VERBS.contains(&last.as_str()))
+                    && is_participle(&token, morph)));
         if join {
             let last = result.last_mut().unwrap();
             *last = format!("{token}_{last}");
@@ -474,6 +475,15 @@ mod tests {
         assert_eq!(
             join_verb_parts(vec!["خسته".to_string(), "شدید".to_string()], &morph),
             ["خسته_شدید"]
+        );
+    }
+
+    #[test]
+    fn a_trailing_verb_prefix_is_not_joined() {
+        let morph = MorphologyEngine::new();
+        assert_eq!(
+            join_verb_parts(vec!["رفته".to_string(), "خواهد".to_string()], &morph),
+            ["رفته", "خواهد"]
         );
     }
 

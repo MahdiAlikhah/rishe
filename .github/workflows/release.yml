@@ -39,7 +39,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
       - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --locked --features python,models --all-targets -- -D warnings
       - run: cargo test --locked --features models
 
   # MSRV gate: the default feature set and the `python` feature must build on
@@ -73,6 +76,8 @@ jobs:
       - run: cargo check --locked --features python
       - run: cargo check --locked --features models
       - run: cargo check --locked --features python,models
+      - run: sudo apt-get update && sudo apt-get install -y python3-dev
+      - run: cargo test --locked --features python --test py_binding_errors
 
   # Public docs must be warning-free: rustdoc warnings are errors here.
   docs:

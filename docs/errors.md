@@ -1,4 +1,4 @@
-﻿# Errors and exit codes
+# Errors and exit codes
 
 The `rishe` command ships as the Rust binary (`cargo install rishe`) and as the
 `rishe` console script from the Python package. This page is the error contract
@@ -31,11 +31,14 @@ rishe hub info rishe-embed-fa-300 # stdout: rishe-embed-fa-300<TAB>missing
 ```
 
 `hub info` is a report, not a check: a known name that is not cached prints
-`missing` and exits 0. `hub verify` is the check, and exits 1 when the files are
-missing or corrupt (see below).
+`missing` and exits 0. When an interrupted pull left a `.part` file it prints
+`partial` and the bytes already on disk instead, and still exits 0. `hub verify`
+is the check, and exits 1 when the files are missing or corrupt (see below).
 
-`serve` exits 0 when stdin reaches EOF, even if requests on the way failed. The
-per-line envelopes are described in [serve-schema.md](serve-schema.md).
+`serve` exits 0 when stdin reaches EOF, even if requests on the way failed, and
+also when its reader closes the pipe first: `rishe serve | head -1` ends the loop
+at the closed write instead of panicking. The per-line envelopes are described in
+[serve-schema.md](serve-schema.md).
 
 ### Status 2
 
@@ -87,6 +90,17 @@ rishe hub path rishe-embed-fa-300    # when it has not been pulled
 rishe hub path nope-model
 # stderr: unknown model "nope-model"; known models: ...
 
+rishe hub pull pos-compact --sha256 <64-hex-digest>
+# stderr: task packs do not accept --sha256
+
+rishe convert big.vec out.rvec --dtype f16   # a value outside ±65504
+# stderr: cannot store 70000 for "w" as f16: it is outside ±65504 and would be
+#         stored as infinity; use f32
+#         (nothing is written: no output file and no .part file)
+
+rishe hub pull https://example.com/ --sha256 <64-hex-digest>
+# stderr: cannot infer a filename from the URL; it must end in a plain file name
+
 rishe hub verify rishe-embed-fa-300  # when the files are missing or corrupt
 # stdout: invalid
 # stderr: (empty)
@@ -135,8 +149,8 @@ every per-command failure message, is in [serve-schema.md](serve-schema.md).
 
 ## Python API exceptions
 
-The Python API reports problems as exceptions, not exit codes. Measured with the
-local build (CPython 3.13.15, Windows x86_64, `.venv\Scripts\python.exe`):
+The Python API reports problems as exceptions, not exit codes. Measured on
+CPython 3.13.15, Windows x86_64:
 
 | operation | exception | example |
 |---|---|---|
@@ -145,6 +159,7 @@ local build (CPython 3.13.15, Windows x86_64, `.venv\Scripts\python.exe`):
 | missing embedding file | `OSError` | `rishe.Embeddings("missing.vec")` â†’ `cannot open ...: The system cannot find the file specified. (os error 2)` |
 | corrupt embedding file | `OSError` | `rishe.Embeddings(bad)` â†’ `expected a '<vocab> <dim>' header on the first line of the .vec file` |
 | empty or malformed embedding | `OSError` | `empty embedding file`, `embedding dimension must be positive` |
+| non-finite embedding value | `OSError` | `rishe.Embeddings(bad)` → `line 2: non-finite value "nan"` |
 | Hub name not registered | `ValueError` | `hub.path("unknown-model")` â†’ `unknown model or pack 'unknown-model'; models: ...; packs: ...` |
 | Hub name registered but not cached | `FileNotFoundError` | `hub.path("rishe-embed-fa-300")` â†’ `'rishe-embed-fa-300' is not cached; run: rishe hub pull ...` |
 | pack load failure | `ValueError` | `Pipeline(pos_pack="missing-dir")` â†’ `model pack is not a directory: ...`; a missing component â†’ `labels.json is missing from ...` |

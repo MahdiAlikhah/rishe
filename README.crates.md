@@ -16,8 +16,8 @@ cargo add rishe
 
 The default crate and the `python` feature build on Rust 1.88: older toolchains
 stop at `icu_collections@2.4.0 requires rustc 1.88`. The optional `models`
-feature adds POS, NER and ezafe pack inference and needs Rust 1.91
-(`tract@0.23.9`). Newer stable toolchains work.
+feature adds POS, NER, ezafe and dependency-parsing pack inference and needs
+Rust 1.91 (`tract@0.23.9`). Newer stable toolchains work.
 
 ```bash
 cargo install rishe
@@ -26,8 +26,8 @@ rishe date "۱۲ مرداد ۱۴۰۲"
 ```
 
 The `rishe` binary covers normalization, tokenization, lemmatization, masking
-and Jalali date parsing; add `--features models` for `pos`, `ner` and `ezafe`
-with `--pack <dir>`.
+and Jalali date parsing; add `--features models` for `pos`, `ner`, `ezafe` and
+`depparse` with `--pack <dir>`.
 
 ## What you get
 
@@ -38,12 +38,14 @@ with `--pack <dir>`.
 - Normalization and masking stages, key-phrase extraction, transliteration,
   augmentation, Jalali date parsing and number/utility helpers.
 - Static fastText/word2vec embeddings, loaded once and shared read-only.
-- Optional POS, NER and learned ezafe model packs.
+- Optional POS, NER, learned ezafe and dependency-parsing model packs.
 
-The individual engines are public modules too: `normalizer`, `tokenizer`,
-`word_tokenizer`, `sbd`, `ezafe`, `morphology`, `conjugation`, `inflector`,
-`stemmer`, `spell`, `stopwords`, `keywords`, `transliterate`, `augment`,
-`dates`, `utilities` and `embeddings`.
+The individual engines, the pack runtime and the hub are public modules too:
+`normalizer`, `tokenizer`, `word_tokenizer`, `sbd`, `ezafe`, `morphology`,
+`conjugation`, `inflector`, `stemmer`, `spell`, `stopwords`, `keywords`,
+`transliterate`, `augment`, `dates`, `utilities`, `embeddings`, `colloquial`,
+`detokenizer`, `hub`, `maskers`, `models`, `normalize_ops` and
+`token_splitter`.
 
 ## Quickstart
 

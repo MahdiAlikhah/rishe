@@ -2,7 +2,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::env;
 use std::fs::{self, File};
-use std::io::{Read, Write};
+use std::io::{IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -132,6 +132,26 @@ fn require_name<'a>(args: &'a [String], message: &str) -> Result<&'a str, HubErr
         .ok_or_else(|| HubError::Usage(message.to_string()))
 }
 
+/// Infer a cache file name from a URL, or `None` when it cannot be a plain name.
+///
+/// The result is joined onto the cache directory, so it must stay one component:
+/// a separator, a drive prefix or a `..` in it would escape the cache. A query
+/// string or fragment is dropped rather than becoming part of the name.
+fn infer_filename(url: &str) -> Option<&str> {
+    let path = url.split(['?', '#']).next().unwrap_or(url);
+    let name = path.rsplit('/').next().unwrap_or(path);
+    if name.is_empty() || name == "." || name == ".." {
+        return None;
+    }
+    // A name holding a separator, a drive prefix or a NUL names more than one
+    // path component on at least one platform, so it is never a plain file name.
+    let escapes = name.contains(['/', '\\', ':', '\0']);
+    if escapes {
+        return None;
+    }
+    Some(name)
+}
+
 fn pull(args: &[String]) -> Result<(), HubError> {
     let name = args
         .first()
@@ -158,6 +178,16 @@ fn pull(args: &[String]) -> Result<(), HubError> {
     }
 
     if let Some((_, task)) = PACKS.iter().find(|(pack, _)| pack == name) {
+        // A pack is verified against the digests in the registry manifest, so a
+        // caller-supplied digest has nothing to apply to. Refuse it rather than
+        // ignore it: ignoring reads as a pin that never happened. This is a value
+        // the parser accepted, so it is a runtime failure (exit 1), matching
+        // `docs/errors.md` and the Python CLI.
+        if sha256.is_some() {
+            return Err(HubError::Runtime(
+                "task packs do not accept --sha256".to_string(),
+            ));
+        }
         let path = pull_pack(name, task, force).map_err(HubError::Runtime)?;
         println!("{}", path.display());
         return Ok(());
@@ -183,12 +213,12 @@ fn pull(args: &[String]) -> Result<(), HubError> {
                 "--sha256 must be a 64-character hex digest".to_string(),
             ));
         }
-        let filename = name.rsplit('/').next().unwrap_or(name);
-        if filename.is_empty() || filename == "." || filename == ".." {
-            return Err(HubError::Runtime(
-                "cannot infer a filename from the URL".to_string(),
-            ));
-        }
+        let filename = infer_filename(name).ok_or_else(|| {
+            HubError::Runtime(
+                "cannot infer a filename from the URL; it must end in a plain file name"
+                    .to_string(),
+            )
+        })?;
         (name.clone(), sha.to_ascii_lowercase(), filename.to_string())
     };
     let target = cache_dir().map_err(HubError::Runtime)?.join(&filename);
@@ -199,16 +229,24 @@ fn pull(args: &[String]) -> Result<(), HubError> {
 
 fn list() -> Result<(), String> {
     for (name, _, _, filename) in MODELS {
-        let status = if cache_dir()?.join(filename).is_file() {
+        let path = cache_dir()?.join(filename);
+        let status = if path.is_file() {
             "cached"
+        } else if part_path(&path).is_file() {
+            // An interrupted pull still takes up disk; say so instead of "missing".
+            "partial"
         } else {
             "missing"
         };
         println!("{name}\t{status}\t{filename}");
     }
     for (name, _) in PACKS {
+        let target = cache_dir()?.join(name);
         let status = if cached_pack(name)?.is_some() {
             "cached"
+        } else if target.is_dir() {
+            // An interrupted pull leaves a half-filled pack directory behind.
+            "partial"
         } else {
             "missing"
         };
@@ -222,17 +260,36 @@ fn info(name: &str) -> Result<(), String> {
     {
         let path = cache_dir()?.join(filename);
         if !path.is_file() {
-            println!("{name}\tmissing");
+            // A part left by an interrupted pull still takes up disk.
+            let part = part_path(&path);
+            if !part.is_file() {
+                println!("{name}\tmissing");
+                return Ok(());
+            }
+            let bytes = part.metadata().map_err(|error| error.to_string())?.len();
+            println!("{name}\t{}\t{bytes} bytes\tpartial", part.display());
             return Ok(());
         }
         let bytes = path.metadata().map_err(|error| error.to_string())?.len();
         (path, bytes)
     } else if PACKS.iter().any(|(pack, _)| *pack == name) {
-        let Some(path) = cached_pack(name)? else {
-            println!("{name}\tmissing");
-            return Ok(());
-        };
-        (path.clone(), directory_size(&path)?)
+        let target = cache_dir()?.join(name);
+        match cached_pack(name)? {
+            Some(path) => (path.clone(), directory_size(&path)?),
+            None if target.is_dir() => {
+                // An interrupted pull leaves a half-filled pack directory behind.
+                println!(
+                    "{name}\t{}\t{} bytes\tpartial",
+                    target.display(),
+                    directory_size(&target)?
+                );
+                return Ok(());
+            }
+            None => {
+                println!("{name}\tmissing");
+                return Ok(());
+            }
+        }
     } else {
         return Err(format!("unknown model or pack {name:?}"));
     };
@@ -253,23 +310,41 @@ fn path(name: &str) -> Result<(), String> {
 }
 
 fn remove(name: &str) -> Result<(), String> {
+    let is_pack = PACKS.iter().any(|(pack, _)| *pack == name);
     let path = if let Some((_, _, _, filename)) = MODELS.iter().find(|item| item.0 == name) {
         cache_dir()?.join(filename)
-    } else if PACKS.iter().any(|(pack, _)| *pack == name) {
+    } else if is_pack {
         cache_dir()?.join(name)
     } else {
         return Err(format!("unknown model or pack {name:?}"));
     };
-    if !path.exists() {
-        println!("not cached");
-        return Ok(());
-    }
+    let mut removed = false;
     if path.is_dir() {
         fs::remove_dir_all(&path).map_err(|error| error.to_string())?;
-    } else {
-        fs::remove_file(&path).map_err(|error| error.to_string())?;
+        removed = true;
     }
-    println!("removed");
+    // A model may be only partly downloaded; the part file holds that disk space.
+    let mut targets = Vec::new();
+    if path.is_file() {
+        targets.push(path.clone());
+    }
+    let part = part_path(&path);
+    if part.is_file() {
+        targets.push(part);
+    }
+    // An interrupted `load_manifest` leaves a part file in the cache root that no
+    // model or pack owns, so a pack removal also clears it.
+    if is_pack {
+        let manifest_part = part_path(&cache_dir()?.join("rishe-models-manifest.json"));
+        if manifest_part.is_file() {
+            targets.push(manifest_part);
+        }
+    }
+    for file in &targets {
+        fs::remove_file(file).map_err(|error| error.to_string())?;
+        removed = true;
+    }
+    println!("{}", if removed { "removed" } else { "not cached" });
     Ok(())
 }
 
@@ -442,13 +517,26 @@ fn pack_base() -> String {
         .to_string()
 }
 
+/// Sibling `<name>.part` file that holds an in-progress download.
+fn part_path(target: &Path) -> PathBuf {
+    let mut part = target.as_os_str().to_os_string();
+    part.push(".part");
+    PathBuf::from(part)
+}
+
+/// Why one download attempt did not finish.
+enum Attempt {
+    /// The remote bytes are wrong; another attempt fetches the same bytes again.
+    Fatal(String),
+    /// Another attempt can help: an I/O error, or a stale prefix already dropped.
+    Retry(String),
+}
+
 fn download(url: &str, target: &Path, sha: &str, force: bool) -> Result<(), String> {
     if !force && target.is_file() && sha256_file(target)? == sha.to_ascii_lowercase() {
         return Ok(());
     }
-    let mut part = target.as_os_str().to_os_string();
-    part.push(".part");
-    let part = PathBuf::from(part);
+    let part = part_path(target);
     if let Some(parent) = target.parent() {
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
@@ -456,36 +544,129 @@ fn download(url: &str, target: &Path, sha: &str, force: bool) -> Result<(), Stri
         .timeout_connect(Duration::from_secs(15))
         .timeout_read(Duration::from_secs(120))
         .build();
+
     let mut last_error = String::new();
     for _ in 0..3 {
-        let attempt = (|| -> Result<(), String> {
-            let response = agent
-                .get(url)
-                .call()
-                .map_err(|error| format!("download failed for {url}: {error}"))?;
-            let mut reader = response.into_reader();
-            let mut file = File::create(&part).map_err(|error| error.to_string())?;
-            std::io::copy(&mut reader, &mut file).map_err(|error| error.to_string())?;
-            file.flush().map_err(|error| error.to_string())?;
-            drop(file);
-            let actual = sha256_file(&part)?;
-            if actual != sha.to_ascii_lowercase() {
-                return Err(format!(
-                    "checksum mismatch for {url}: expected {sha}, got {actual}"
-                ));
+        let result = (|| -> Result<(), Attempt> {
+            let io = |error: String| Attempt::Retry(error);
+            let offset = fs::metadata(&part)
+                .map(|metadata| metadata.len())
+                .unwrap_or(0);
+            let mut request = agent.get(url);
+            if offset > 0 {
+                request = request.set("Range", &format!("bytes={offset}-"));
             }
-            fs::rename(&part, target).map_err(|error| error.to_string())?;
+            let response = match request.call() {
+                Ok(response) => response,
+                Err(ureq::Error::Status(416, _)) if offset > 0 => {
+                    // The prefix does not belong to this remote object; start over.
+                    let _ = fs::remove_file(&part);
+                    return Err(Attempt::Retry(format!(
+                        "download failed for {url}: range not satisfiable"
+                    )));
+                }
+                Err(error) => {
+                    return Err(Attempt::Retry(format!(
+                        "download failed for {url}: {error}"
+                    )))
+                }
+            };
+            let resumed = offset > 0 && response.status() == 206;
+            let start = if resumed { offset } else { 0 };
+            let expected = response
+                .header("Content-Length")
+                .and_then(|value| value.parse::<u64>().ok())
+                .map(|length| length + start);
+            let mut file = if resumed {
+                fs::OpenOptions::new()
+                    .append(true)
+                    .open(&part)
+                    .map_err(|error| io(error.to_string()))?
+            } else {
+                File::create(&part).map_err(|error| io(error.to_string()))?
+            };
+            let mut reader = response.into_reader();
+            copy_with_progress(&mut reader, &mut file, start, expected).map_err(io)?;
+            // Flush to disk before the rename promotes the part file to the
+            // artifact: without the fsync a crash here leaves the target short or
+            // empty, which destroys a file that was good before.
+            file.sync_all().map_err(|error| io(error.to_string()))?;
+            drop(file);
+            let actual = sha256_file(&part).map_err(io)?;
+            if actual != sha.to_ascii_lowercase() {
+                // The part is wrong either way, so drop it and decide whether a
+                // retry is worth making.
+                let _ = fs::remove_file(&part);
+                return Err(if start == 0 {
+                    // A fresh download's bytes came from the remote as-is, so
+                    // fetching them again produces the same mismatch.
+                    Attempt::Fatal(format!(
+                        "checksum mismatch for {url}: expected {sha}, got {actual}"
+                    ))
+                } else {
+                    // A resume's mismatch may be entirely in the stale prefix the
+                    // retry has just deleted, so the next attempt starts from zero
+                    // and can succeed.
+                    Attempt::Retry(format!(
+                        "checksum mismatch for {url}: the partial file did not match; restarting the download"
+                    ))
+                });
+            }
+            fs::rename(&part, target).map_err(|error| io(error.to_string()))?;
             Ok(())
         })();
-        match attempt {
+        match result {
             Ok(()) => return Ok(()),
-            Err(error) => {
-                last_error = error;
-                let _ = fs::remove_file(&part);
-            }
+            // A mismatch on fresh bytes is not worth repeating: the same request
+            // returns the same bytes. Every other failure keeps its partial file
+            // and is retried, so a slow or flaky link still makes progress.
+            Err(Attempt::Fatal(error)) => return Err(error),
+            Err(Attempt::Retry(error)) => last_error = error,
         }
     }
     Err(last_error)
+}
+
+/// Copy a response body into `file`, printing progress on a terminal.
+fn copy_with_progress(
+    reader: &mut impl Read,
+    file: &mut File,
+    mut written: u64,
+    expected: Option<u64>,
+) -> Result<(), String> {
+    let terminal = std::io::stderr().is_terminal();
+    let mut report = (written / (64 << 20) + 1) * (64 << 20);
+    let mut printed = false;
+    let mut buffer = vec![0_u8; 1 << 20];
+    loop {
+        let read = reader
+            .read(&mut buffer)
+            .map_err(|error| error.to_string())?;
+        if read == 0 {
+            break;
+        }
+        file.write_all(&buffer[..read])
+            .map_err(|error| error.to_string())?;
+        written += read as u64;
+        if terminal && written >= report {
+            match expected {
+                Some(total) if total > 0 => eprint!(
+                    "\r  {:.0}/{:.0} MB ({:.0}%)",
+                    written as f64 / 1e6,
+                    total as f64 / 1e6,
+                    100.0 * written as f64 / total as f64
+                ),
+                _ => eprint!("\r  {:.0} MB", written as f64 / 1e6),
+            }
+            let _ = std::io::stderr().flush();
+            report += 64 << 20;
+            printed = true;
+        }
+    }
+    if printed {
+        eprintln!();
+    }
+    Ok(())
 }
 
 fn sha256_file(path: &Path) -> Result<String, String> {
@@ -500,7 +681,15 @@ fn sha256_file(path: &Path) -> Result<String, String> {
         }
         digest.update(&buffer[..read]);
     }
-    Ok(hex::encode(digest.finalize()))
+    Ok(encode_hex(&digest.finalize()))
+}
+
+fn encode_hex(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        out.push_str(&format!("{byte:02x}"));
+    }
+    out
 }
 
 fn directory_size(path: &Path) -> Result<u64, String> {
@@ -533,6 +722,101 @@ mod tests {
         serde_json::from_str(text).expect("test manifest is valid JSON")
     }
 
+    /// A loopback HTTP server that replays queued responses for tests.
+    struct Serve {
+        url: String,
+        address: std::net::SocketAddr,
+        stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+        handle: std::thread::JoinHandle<Vec<String>>,
+    }
+
+    impl Serve {
+        /// Serve the queued responses in order, repeating the last one.
+        fn start(responses: Vec<(String, Vec<u8>)>) -> Self {
+            use std::io::{Read, Write};
+            use std::net::TcpListener;
+            use std::sync::atomic::{AtomicBool, Ordering};
+            use std::sync::Arc;
+
+            let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+            let address = listener.local_addr().expect("address");
+            let stop = Arc::new(AtomicBool::new(false));
+            let finish = Arc::clone(&stop);
+            let handle = std::thread::spawn(move || {
+                let mut seen = Vec::new();
+                while let Ok((mut stream, _)) = listener.accept() {
+                    if finish.load(Ordering::SeqCst) {
+                        break;
+                    }
+                    let mut buffer = [0_u8; 2048];
+                    let read = stream.read(&mut buffer).expect("request");
+                    seen.push(String::from_utf8_lossy(&buffer[..read]).to_ascii_lowercase());
+                    let (headers, body) = &responses[(seen.len() - 1).min(responses.len() - 1)];
+                    stream.write_all(headers.as_bytes()).expect("headers");
+                    stream.write_all(body).expect("body");
+                }
+                seen
+            });
+            Self {
+                url: format!("http://{address}/model"),
+                address,
+                stop,
+                handle,
+            }
+        }
+
+        /// Stop accepting and return every request the client sent.
+        fn finish(self) -> Vec<String> {
+            use std::sync::atomic::Ordering;
+
+            self.stop.store(true, Ordering::SeqCst);
+            std::net::TcpStream::connect(self.address).expect("wake server");
+            self.handle.join().expect("server")
+        }
+    }
+
+    fn ok_response(body: &[u8]) -> (String, Vec<u8>) {
+        let head = format!(
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        );
+        (head, body.to_vec())
+    }
+
+    fn partial_response(body: &[u8], start: usize) -> (String, Vec<u8>) {
+        // `Connection: close` matters as much here as in `ok_response`: without it
+        // ureq pools the socket, while this server has already gone back to
+        // `accept()` and will never read that connection again. A test that made a
+        // second request would then block until the read timeout instead of failing.
+        let head = format!(
+            "HTTP/1.1 206 Partial Content\r\nContent-Length: {}\r\nContent-Range: bytes {}-{}/{}\r\nConnection: close\r\n\r\n",
+            body.len() - start,
+            start,
+            body.len() - 1,
+            body.len()
+        );
+        (head, body[start..].to_vec())
+    }
+
+    fn empty_response(status: &str) -> (String, Vec<u8>) {
+        (
+            format!("HTTP/1.1 {status}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"),
+            Vec::new(),
+        )
+    }
+
+    fn digest(body: &[u8]) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(body);
+        encode_hex(&hasher.finalize())
+    }
+
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!("rishe-{name}-{}", std::process::id()));
+        std::fs::create_dir_all(&root).expect("scratch dir");
+        root
+    }
+
     #[test]
     fn absent_schema_means_version_one() {
         assert_eq!(manifest_schema(&manifest(r#"{"tasks":{}}"#)), Ok(1));
@@ -560,6 +844,145 @@ mod tests {
         ] {
             let error = manifest_schema(&manifest(text)).unwrap_err();
             assert!(error.contains("reads schema 1"), "{text}: {error}");
+        }
+    }
+
+    #[test]
+    fn download_resumes_a_partial_file() {
+        let body = b"resumed payload".to_vec();
+        let kept = 5;
+        let root = scratch("download");
+        let target = root.join("model.bin");
+        std::fs::write(root.join("model.bin.part"), &body[..kept]).expect("partial file");
+
+        let server = Serve::start(vec![partial_response(&body, kept)]);
+        download(&server.url, &target, &digest(&body), false).expect("download");
+        let requests = server.finish();
+        assert!(requests[0].contains("range: bytes=5-"), "{}", requests[0]);
+        assert_eq!(std::fs::read(&target).expect("target"), body);
+        assert!(!root.join("model.bin.part").exists(), "partial left behind");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn a_failed_attempt_keeps_the_partial_file() {
+        let root = scratch("download-keep");
+        let target = root.join("model.bin");
+        let part = root.join("model.bin.part");
+        std::fs::write(&part, b"partial").expect("partial file");
+
+        let server = Serve::start(vec![empty_response("500 Internal Server Error")]);
+        assert!(download(&server.url, &target, &"0".repeat(64), false).is_err());
+        let requests = server.finish();
+        assert_eq!(requests.len(), 3, "a server error is worth retrying");
+        assert_eq!(std::fs::read(&part).expect("partial file kept"), b"partial");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn an_unsatisfiable_range_starts_over() {
+        let body = b"fresh payload".to_vec();
+        let root = scratch("download-416");
+        let target = root.join("model.bin");
+        std::fs::write(root.join("model.bin.part"), vec![0_u8; 64]).expect("stale partial");
+
+        let server = Serve::start(vec![
+            empty_response("416 Range Not Satisfiable"),
+            ok_response(&body),
+        ]);
+        download(&server.url, &target, &digest(&body), false).expect("download");
+        let requests = server.finish();
+        assert!(requests[0].contains("range: bytes=64-"), "{}", requests[0]);
+        assert!(!requests[1].contains("range:"), "{}", requests[1]);
+        assert_eq!(std::fs::read(&target).expect("target"), body);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn a_checksum_mismatch_fails_once_and_drops_the_partial_file() {
+        let body = b"bytes that do not match the digest".to_vec();
+        let root = scratch("download-sum");
+        let target = root.join("model.bin");
+        let part = root.join("model.bin.part");
+
+        // The server would answer a retry, so a slow client shows up as a count.
+        let server = Serve::start(vec![ok_response(&body)]);
+        let error = download(&server.url, &target, &"0".repeat(64), false).expect_err("mismatch");
+        let requests = server.finish();
+        assert!(
+            error.contains("checksum mismatch"),
+            "a wrong checksum must fail on the first attempt: {error}"
+        );
+        assert_eq!(
+            requests.len(),
+            1,
+            "a wrong checksum downloaded the same bytes again"
+        );
+        assert!(!part.exists(), "partial file survived a checksum mismatch");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn a_stale_prefix_on_a_resume_restarts_instead_of_failing() {
+        let body = b"correct remote payload".to_vec();
+        let kept = 8;
+        let root = scratch("download-stale-prefix");
+        let target = root.join("model.bin");
+        // Same length as the real prefix, different bytes: the 416 branch cannot
+        // catch this, only the digest step can.
+        std::fs::write(root.join("model.bin.part"), b"STALE!!!").expect("stale partial");
+
+        let server = Serve::start(vec![partial_response(&body, kept), ok_response(&body)]);
+        download(&server.url, &target, &digest(&body), false)
+            .expect("a stale prefix must not block the pull");
+        let requests = server.finish();
+        assert!(
+            requests[0].contains("range: bytes=8-"),
+            "the first attempt should resume: {}",
+            requests[0]
+        );
+        assert!(
+            !requests[1].contains("range:"),
+            "the retry should start from zero: {}",
+            requests[1]
+        );
+        assert_eq!(requests.len(), 2, "one mismatch, one restart");
+        assert_eq!(std::fs::read(&target).expect("target"), body);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn infer_filename_rejects_anything_that_could_escape_the_cache() {
+        // Plain URLs keep their last segment.
+        assert_eq!(infer_filename("http://host/model.vec"), Some("model.vec"));
+        assert_eq!(infer_filename("https://host/a/b/fa.rvec"), Some("fa.rvec"));
+        // A query string or fragment is dropped, not turned into a name.
+        assert_eq!(
+            infer_filename("http://host/model.vec?a=1"),
+            Some("model.vec")
+        );
+        assert_eq!(
+            infer_filename("http://host/model.vec#frag"),
+            Some("model.vec")
+        );
+        // A traversal in the URL collapses to its last segment, which is safe:
+        // `http://host/../../etc/passwd` lands at `<cache>/passwd`, inside the cache.
+        assert_eq!(
+            infer_filename("http://host/../../etc/passwd"),
+            Some("passwd")
+        );
+        // Traversal, separators, drive prefixes and empty names are refused. The
+        // backslash forms are the real attack on Windows, where it separates, and a
+        // colon in the last segment is an alternate data stream or a drive prefix.
+        for url in [
+            "http://host/..",
+            "http://host/.",
+            "http://host/",
+            "http://host/..\\..\\important.txt",
+            "http://host/a\\b.vec",
+            "http://host/x:y.dll",
+        ] {
+            assert_eq!(infer_filename(url), None, "{url} must be refused");
         }
     }
 

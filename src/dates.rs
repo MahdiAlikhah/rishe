@@ -99,11 +99,22 @@ impl Jalali {
     }
 
     /// Convert from Gregorian, or `None` when the date is invalid or outside the supported range.
+    ///
+    /// The input window is 560-03-20 through 3798-12-31. `to_gregorian` can
+    /// produce a 3799 date for late 3177, which this function refuses.
     pub fn from_gregorian(date: Gregorian) -> Option<Self> {
+        // g2d counts days in an i32; keep the year inside the BREAKS window.
+        let first = BREAKS[0] + 621;
+        let last = BREAKS[BREAKS.len() - 1] + 621 - 1;
+        if !(first..=last).contains(&date.year) {
+            return None;
+        }
         if date.day == 0 || date.day > Gregorian::month_days(date.year, date.month)? {
             return None;
         }
-        d2j(g2d(date.year, i32::from(date.month), i32::from(date.day)))
+        let jalali = d2j(g2d(date.year, i32::from(date.month), i32::from(date.day)))?;
+        // A few days at the start of 560 land before the first Jalali year in the table.
+        Self::new(jalali.year, jalali.month, jalali.day)
     }
 
     /// `۱۲ مرداد ۱۴۰۲`
@@ -421,6 +432,31 @@ mod tests {
         assert_eq!(Jalali::month_days(1402, 12), Some(29));
         assert_eq!(Jalali::month_days(1402, 13), None);
         assert_eq!(Jalali::new(1402, 12, 30), None);
+    }
+
+    #[test]
+    fn from_gregorian_refuses_unsupported_years() {
+        assert_eq!(Jalali::from_gregorian(gregorian(9_999_999, 1, 1)), None);
+        assert_eq!(Jalali::from_gregorian(gregorian(-5_000, 1, 1)), None);
+        assert_eq!(Jalali::from_gregorian(gregorian(2026, 13, 1)), None);
+        assert_eq!(Jalali::from_gregorian(gregorian(2026, 2, 30)), None);
+        assert!(Jalali::from_gregorian(gregorian(2026, 3, 21)).is_some());
+    }
+
+    #[test]
+    fn from_gregorian_refuses_days_before_the_window() {
+        assert_eq!(Jalali::from_gregorian(gregorian(560, 1, 1)), None);
+        assert_eq!(Jalali::from_gregorian(gregorian(560, 3, 19)), None);
+        assert_eq!(
+            Jalali::from_gregorian(gregorian(560, 3, 20)),
+            Some(Jalali {
+                year: -61,
+                month: 1,
+                day: 1,
+            })
+        );
+        assert!(Jalali::from_gregorian(gregorian(3798, 12, 31)).is_some());
+        assert_eq!(Jalali::from_gregorian(gregorian(3799, 1, 1)), None);
     }
 
     #[test]

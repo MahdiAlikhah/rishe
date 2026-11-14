@@ -344,8 +344,8 @@ Protocol `1` is the contract described above:
 - New commands and new optional request fields are minor additions. A client that
   ignores an unknown result field keeps working, and a server that receives an
   unknown field ignores it.
-- The request fields and result shapes documented here do not change before
-  `1.0.0`.
+- The request fields and result shapes are frozen as of `1.0.0`; within
+  protocol 1 only additive changes are minor.
 - Removing or renaming a command, changing a result shape, or changing what an
   existing request means is a major change and would be a new protocol version.
 - Error message wording may change in any release, as long as the `ok`/`error`

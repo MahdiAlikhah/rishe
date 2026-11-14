@@ -515,11 +515,16 @@ impl Pipeline {
 
     /// Tokens with character spans into `text`.
     pub fn tokenize_char_spans(&self, text: &str) -> Vec<(String, usize, usize)> {
+        let mut byte_end = 0;
+        let mut char_end = 0;
         Tokenizer::tokenize(text)
             .into_iter()
             .map(|token| {
-                let start = text[..token.start].chars().count();
-                let end = text[..token.end].chars().count();
+                // Count the gap between tokens once, so this stays linear in `text`.
+                let start = char_end + text[byte_end..token.start].chars().count();
+                let end = start + token.text.chars().count();
+                byte_end = token.end;
+                char_end = end;
                 (token.text.to_owned(), start, end)
             })
             .collect()
@@ -603,10 +608,6 @@ mod py_bindings {
     use pyo3::prelude::*;
     use std::path::PathBuf;
 
-    /// Emit a Python ``DeprecationWarning`` for a renamed surface entry.
-    ///
-    /// Aliases added while the API is renamed stay for one cycle and disappear
-    /// in 1.0.0; see `docs/API_CONVENTIONS.md` rule 12.
     #[pyclass(frozen, get_all, module = "rishe._core")]
     #[derive(Clone, Copy)]
     pub struct JalaliDate {
@@ -932,6 +933,11 @@ mod py_bindings {
             if let Ok(number) = value.extract::<i64>() {
                 return Ok(utilities::number_to_words(number));
             }
+            if value.is_instance_of::<pyo3::types::PyInt>() {
+                return Err(pyo3::exceptions::PyOverflowError::new_err(
+                    "number out of range for i64",
+                ));
+            }
             if let Ok(text) = value.extract::<String>() {
                 return utilities::number_to_words_text(&text)
                     .map_err(pyo3::exceptions::PyValueError::new_err);
@@ -1096,8 +1102,8 @@ mod py_bindings {
 
         /// Python `possessive`: possessive form for person `0..=5`, or `None`.
         #[pyo3(name = "possessive")]
-        pub fn py_possessive(&self, noun: &str, person: usize) -> Option<String> {
-            self.possessive(noun, person)
+        pub fn py_possessive(&self, noun: &str, person: isize) -> Option<String> {
+            self.possessive(noun, usize::try_from(person).ok()?)
         }
 
         /// Python `is_stopword`: whether the word is in the bundled list.
@@ -1368,6 +1374,14 @@ mod tests {
         assert_eq!(nlp.superlative("بزرگ"), "بزرگ‌ترین");
         assert_eq!(nlp.plural("کتاب"), "کتاب‌ها");
         assert_eq!(nlp.possessive("خانه", 0), Some("خانه‌ام".to_string()));
+        assert_eq!(nlp.possessive("دنیا", 0), Some("دنیایم".to_string()));
+        assert_eq!(nlp.possessive("پا", 3), Some("پایمان".to_string()));
+        assert_eq!(nlp.possessive("بازو", 2), Some("بازویش".to_string()));
+        assert_eq!(nlp.comparative(""), "");
+        assert_eq!(nlp.superlative(""), "");
+        assert_eq!(nlp.plural(""), "");
+        assert_eq!(nlp.possessive("", 0), Some(String::new()));
+        assert_eq!(nlp.possessive("", 6), None);
     }
 
     #[test]
@@ -1376,6 +1390,76 @@ mod tests {
         assert_eq!(nlp.split_token("کتاب‌ها"), ["کتاب", "ها"]);
         assert_eq!(nlp.split_token("بهش"), ["به", "او"]);
         assert_eq!(nlp.split_token("می‌روم"), ["می", "روم"]);
+        assert!(nlp.split_token("").is_empty());
+    }
+
+    #[test]
+    fn ordinary_words_ending_in_copula_are_left_alone() {
+        // These are words, not a stem plus `است`. The old rule appended a `ه` and
+        // split them, and the lexicon's one-off entries made the result "valid".
+        let nlp = Pipeline::create(true, true, true);
+        for text in [
+            "کتاب خوب است",
+            "دست من",
+            "هست",
+            "نیست",
+            "چیست",
+            "درست",
+            "مست",
+        ] {
+            assert_eq!(
+                nlp.process(text).formal_text,
+                text,
+                "{text:?} must not be split"
+            );
+        }
+
+        // A real copula still expands, and the stem is the base, not base + `ه`.
+        assert_eq!(nlp.process("بالاست").formal_text, "بالا است");
+        assert_eq!(nlp.process("کتاب\u{200C}ست").formal_text, "کتاب است");
+        assert_eq!(nlp.process("کتابست").formal_text, "کتاب است");
+        assert_eq!(nlp.process("عالیست").formal_text, "عالی است");
+    }
+
+    #[test]
+    fn known_whole_words_are_not_split_on_a_prefix() {
+        // `بر`+`نامه` and `در`+`خت` are both lexicon words, so the prefix loop used
+        // to win before the whole-word check; these are ordinary words.
+        let nlp = Pipeline::create(true, true, true);
+        for word in ["برنامه", "درخت", "بازار", "واژه", "دریا", "فروشگاه"]
+        {
+            assert_eq!(nlp.split_token(word), [word], "{word:?} must stay whole");
+        }
+        // The documented splits still work.
+        assert_eq!(nlp.split_token("بهش"), ["به", "او"]);
+        assert_eq!(nlp.split_token("کتاب\u{200C}ها"), ["کتاب", "ها"]);
+        // `توت` is mulberry, not `در` + `تو`.
+        assert_eq!(nlp.process("توت را خوردم").tokens, ["توت", "را", "خوردم"]);
+        assert_eq!(nlp.process("بهم گفت").formal_text, "به من گفت");
+    }
+
+    #[test]
+    fn lexicalized_nouns_ending_in_he_are_not_participle_stems() {
+        // The stoplist keeps a noun from lemmatizing through a verb stem that only
+        // looks like the rest of the word.
+        let morph = morphology::MorphologyEngine::new();
+        for (word, wrong) in [
+            ("دانه", "دانست"),
+            ("هسته", "بود"),
+            ("آیه", "آمد"),
+            ("گوشه", "گوشید"),
+            ("سایه", "سایید"),
+            ("پوشه", "پوشید"),
+        ] {
+            assert_ne!(
+                morph.lemmatize(word),
+                wrong,
+                "{word:?} must not lemmatize to {wrong:?}"
+            );
+        }
+        // Genuine participles still reduce to their verb.
+        assert_eq!(morph.lemmatize("کرده"), "کرد");
+        assert_eq!(morph.lemmatize("شده"), "شد");
     }
 
     #[test]
@@ -1396,6 +1480,43 @@ mod tests {
     }
 
     #[test]
+    fn a_clitic_form_is_not_a_noun_stem() {
+        // `بهمین` ("to this") came back as `بهم` + `ین`, because `بهم` is a clitic
+        // key the lexicon happens to list and the attached-suffix loop accepted it
+        // as a stem. A clitic form is never a noun stem.
+        let nlp = Pipeline::create(true, true, true);
+        assert_eq!(nlp.split_token("بهمین"), ["بهمین"]);
+
+        // The clitic readings themselves must survive.
+        assert_eq!(nlp.split_token("بهم"), ["به", "من"]);
+        assert_eq!(nlp.split_token("ازم"), ["از", "من"]);
+        assert_eq!(nlp.split_token("واسم"), ["برای", "من"]);
+
+        // A real attached suffix still splits off a noun stem.
+        assert_eq!(nlp.split_token("کتابم"), ["کتاب", "م"]);
+        assert_eq!(nlp.split_token("کتاب\u{200C}ها"), ["کتاب", "ها"]);
+        // But a word the lexicon knows stays whole, even when it looks like
+        // `کتاب` + `ت`: `کتابت` is "calligraphy", and `توتم`/`بهتان`/`تومان`
+        // likewise are not clitic-plus-suffix.
+        for word in ["کتابت", "توتم", "بهتان", "تومان", "بهشت"] {
+            assert_eq!(nlp.split_token(word), [word], "{word:?} must stay whole");
+        }
+
+        // A ZWNJ is where the morpheme boundary belongs, and these forms are
+        // lexicon entries too, so the whole-word guard must not swallow them.
+        let zwnj = '\u{200C}';
+        for (word, expected) in [
+            (format!("می{zwnj}فروش"), ["می", "فروش"]),
+            (format!("می{zwnj}خوار"), ["می", "خوار"]),
+            (format!("می{zwnj}گسار"), ["می", "گسار"]),
+            (format!("می{zwnj}روم"), ["می", "روم"]),
+            (format!("نمی{zwnj}دانم"), ["نمی", "دانم"]),
+        ] {
+            assert_eq!(nlp.split_token(&word), expected, "{word:?}");
+        }
+    }
+
+    #[test]
     fn test_token_spans() {
         let nlp = Pipeline::create(true, true, true);
         assert_eq!(
@@ -1406,6 +1527,21 @@ mod tests {
             nlp.tokenize_char_spans("سلام دنیا"),
             vec![("سلام".to_string(), 0, 4), ("دنیا".to_string(), 5, 9)]
         );
+
+        // Walking the tokens must give the same character offsets as counting the
+        // prefix of every token independently.
+        let text = "سلام😊 دنیا\u{00A0}۱۲۳ (خوب)";
+        let expected: Vec<_> = Tokenizer::tokenize(text)
+            .into_iter()
+            .map(|token| {
+                (
+                    token.text.to_owned(),
+                    text[..token.start].chars().count(),
+                    text[..token.end].chars().count(),
+                )
+            })
+            .collect();
+        assert_eq!(nlp.tokenize_char_spans(text), expected);
     }
 
     #[test]

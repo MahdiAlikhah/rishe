@@ -44,16 +44,19 @@ pub(crate) const FUSED_PREP_CLITICS: &[(&str, (&str, &str))] = &[
     ("واسشون", ("برای", "آن\u{200C}ها")),
 ];
 
-const NON_COPULA_STEMS: &[&str] = &[
-    "ماست",
-    "راست",
-    "کاست",
-    "خواست",
-    "برخاست",
-    "پوست",
-    "دوست",
-    "پیوست",
-];
+/// Fused forms that are also ordinary words, so the clitic reading is wrong.
+///
+/// `توت` is mulberry; every other key in [`FUSED_PREP_CLITICS`] is a form that
+/// only exists as a clitic, so the table stays useful. Tested by frequency, not
+/// by lexicon membership: all 28 keys are frequency-1 lexicon entries, so a
+/// blanket "is a known noun" guard would switch the whole feature off.
+pub(crate) const CLITIC_LOOKALIKES: &[&str] = &["توت"];
+
+/// Copula lookalikes that the whole-word guard does not already cover.
+///
+/// The guard rejects any token the lexicon knows, which covers 7 of the 8 former
+/// entries here; `کاست` is the one the lexicon does not list.
+const NON_COPULA_STEMS: &[&str] = &["کاست"];
 
 const COLLOQUIAL_NOUN_SUFFIXES: &[(&str, &str)] = &[
     ("\u{200C}هامون", "\u{200C}هایمان"),
@@ -103,7 +106,7 @@ impl ColloquialConverter {
         morph: &MorphologyEngine,
     ) -> ExpandedTokens<'a> {
         for &(colloq, (prep, pron)) in FUSED_PREP_CLITICS {
-            if token == colloq {
+            if token == colloq && !CLITIC_LOOKALIKES.contains(&token) {
                 return ExpandedTokens::Pair(Cow::Borrowed(prep), Cow::Borrowed(pron));
             }
         }
@@ -140,25 +143,32 @@ impl ColloquialConverter {
         if NON_COPULA_STEMS.contains(&token) {
             return None;
         }
+        // `است`, `دست`, `هست`, `نیست`, `درست`, `مست` are ordinary words that happen
+        // to end in `ست`, and 732 lexicon entries do the same. Splitting them yields
+        // nonsense (`دست` -> `ده است`), and the lexicon's `ا`/`دره`/`مه` entries
+        // otherwise make almost any stem look like a word. A whole word that is in
+        // the lexicon is the word, not a stem plus a copula.
+        if morph.is_known_noun(token) {
+            return None;
+        }
         if let Some(base) = token.strip_suffix("\u{200C}ست") {
             let formal = self.to_formal(base, morph);
             if morph.is_known_noun(&formal) {
                 return Some((formal, "است"));
             }
         }
+        // The contraction drops the `ا` of `است` (`کتابست` = `کتاب` + `است`), so
+        // the stem is the base exactly as written, whatever it ends in. Appending a
+        // `ه` invented a different word instead (`کتابست` -> `کتابه است`,
+        // `عالیست` -> `عالیه است`), and because the lexicon holds one-off junk
+        // entries the invented word was accepted almost every time.
         if let Some(base) = token.strip_suffix("ست") {
-            if base.ends_with('ا') || base.ends_with('و') {
-                let formal = self.to_formal(base, morph);
-                if morph.is_known_noun(&formal) {
-                    return Some((formal, "است"));
-                }
+            if base.is_empty() {
+                return None;
             }
-            let mut restored = String::with_capacity(base.len() + 'ه'.len_utf8());
-            restored.push_str(base);
-            restored.push('ه');
-            let formal = self.to_formal(&restored, morph);
+            let formal = self.to_formal(base, morph);
             if morph.is_known_noun(&formal) {
-                return Some((Cow::Owned(formal.into_owned()), "است"));
+                return Some((formal, "است"));
             }
         }
         None

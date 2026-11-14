@@ -63,6 +63,77 @@ class PackCacheTest(unittest.TestCase):
                 with self.assertRaises(FileNotFoundError):
                     hub.path("ner-compact")
 
+    def test_remove_and_info_see_a_partial_model_download(self):
+        with tempfile.TemporaryDirectory() as root:
+            with patch.dict(os.environ, {"RISHE_HOME": root}):
+                models = Path(root) / "models"
+                models.mkdir(parents=True)
+                part = models / "rishe-embed-fa-300.vec.part"
+                part.write_bytes(b"half a download")
+
+                # info reports the bytes on disk instead of claiming the model is absent.
+                info = hub.info("rishe-embed-fa-300")
+                self.assertIsNotNone(info)
+                self.assertTrue(info["partial"])
+                self.assertEqual(info["path"], str(part))
+                self.assertEqual(info["bytes"], len(b"half a download"))
+
+                # remove deletes the part file, so the disk space is actually freed.
+                self.assertTrue(hub.remove("rishe-embed-fa-300"))
+                self.assertFalse(part.exists())
+                self.assertIsNone(hub.info("rishe-embed-fa-300"))
+                self.assertFalse(hub.remove("rishe-embed-fa-300"))
+
+    def test_info_always_carries_the_partial_key(self):
+        """A caller writes one check, not `info.get("partial", False)`."""
+        with tempfile.TemporaryDirectory() as root:
+            with patch.dict(os.environ, {"RISHE_HOME": root}):
+                models = Path(root) / "models"
+                models.mkdir(parents=True)
+                cached = models / "rishe-embed-fa-300.vec"
+                cached.write_bytes(b"a cached model")
+
+                info = hub.info("rishe-embed-fa-300")
+                self.assertIsNotNone(info)
+                self.assertIn("partial", info)
+                self.assertFalse(info["partial"])
+                self.assertEqual(
+                    sorted(info), ["bytes", "kind", "name", "partial", "path"]
+                )
+
+    def test_pull_refuses_a_name_that_could_escape_the_cache(self):
+        """The inferred filename is joined onto the cache dir, so it must be one name."""
+        # A traversal collapses to a plain name, which is safe and needs no error.
+        self.assertEqual(hub._safe_filename("..\\..\\escaped.bin"), "escaped.bin")
+        self.assertEqual(hub._safe_filename("../../escaped.bin"), "escaped.bin")
+        # A name with nothing usable in it is refused rather than guessed.
+        for name in ("", ".", ".."):
+            with self.assertRaises(ValueError, msg=name):
+                hub._safe_filename(name)
+
+    def test_pull_drops_a_query_string_from_the_name(self):
+        self.assertEqual(hub._safe_filename("model.vec?download=true"), "model.vec")
+        self.assertEqual(hub._safe_filename("model.vec#frag"), "model.vec")
+        self.assertEqual(hub._safe_filename("a/b/model.vec"), "model.vec")
+
+    def test_remove_and_info_see_a_partial_pack(self):
+        with tempfile.TemporaryDirectory() as root:
+            with patch.dict(os.environ, {"RISHE_HOME": root}):
+                pack = Path(root) / "models" / "pos-compact"
+                pack.mkdir(parents=True)
+                (pack / "labels.json").write_bytes(b"{}")
+
+                # A half-pulled pack directory is not "missing": it occupies disk.
+                info = hub.info("pos-compact")
+                self.assertIsNotNone(info)
+                self.assertTrue(info["partial"])
+                self.assertEqual(info["kind"], "pack")
+                self.assertEqual(info["bytes"], len(b"{}"))
+
+                self.assertTrue(hub.remove("pos-compact"))
+                self.assertFalse(pack.exists())
+                self.assertIsNone(hub.info("pos-compact"))
+
     def test_verify_pack(self):
         with tempfile.TemporaryDirectory() as root:
             with patch.dict(os.environ, {"RISHE_HOME": root}):

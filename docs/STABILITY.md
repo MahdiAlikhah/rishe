@@ -90,6 +90,8 @@ than hanging.
 built and shared across threads. Concurrent calls return what a single thread
 returns, and the same input with the same options gives the same output on every
 run and every instance: no result depends on hash ordering or the clock.
+The augmentation helpers (`keyboard_noise`, `ocr_noise`, `whitespace_noise`)
+are the one exception: they seed from the clock unless you pass `seed`.
 `tests/guarantees.rs` asserts both.
 
 ## Formats

@@ -166,16 +166,13 @@ fn build_graph(
                 if i == j {
                     continue;
                 }
+                let (first, second) = (words[i].clone(), words[j].clone());
                 *graph
-                    .entry(words[i].clone())
+                    .entry(first.clone())
                     .or_default()
-                    .entry(words[j].clone())
+                    .entry(second.clone())
                     .or_insert(0.0) += 1.0;
-                *graph
-                    .entry(words[j].clone())
-                    .or_default()
-                    .entry(words[i].clone())
-                    .or_insert(0.0) += 1.0;
+                *graph.entry(second).or_default().entry(first).or_insert(0.0) += 1.0;
             }
         }
     }
@@ -191,17 +188,18 @@ fn pagerank(graph: &BTreeMap<String, BTreeMap<String, f64>>) -> HashMap<String, 
     let initial = 1.0 / graph.len() as f64;
     let mut scores: HashMap<String, f64> =
         graph.keys().map(|node| (node.clone(), initial)).collect();
+    // Link totals are fixed, so sum them once instead of once per pass per link.
+    let out_weights: HashMap<&String, f64> = graph
+        .iter()
+        .map(|(node, edges)| (node, edges.values().sum::<f64>().max(1.0)))
+        .collect();
 
     for _ in 0..iterations {
         let mut next = HashMap::with_capacity(graph.len());
         for (node, neighbors) in graph {
             let mut rank = 0.0;
             for (neighbor, weight) in neighbors {
-                let out_weight: f64 = graph
-                    .get(neighbor)
-                    .map(|edges| edges.values().sum())
-                    .unwrap_or(1.0)
-                    .max(1.0);
+                let out_weight = out_weights.get(neighbor).copied().unwrap_or(1.0);
                 rank += (weight / out_weight) * scores.get(neighbor).copied().unwrap_or(0.0);
             }
             next.insert(node.clone(), (1.0 - damping) + damping * rank);
@@ -234,6 +232,21 @@ mod tests {
         assert!(keywords.iter().any(|kw| kw == "هوش مصنوعی"));
         assert!(keywords.iter().all(|kw| kw != "از" && kw != "است"));
         assert_eq!(keywords, textrank(TEXT, 5, 3, 2));
+    }
+
+    #[test]
+    fn pagerank_ranks_the_hub_highest() {
+        // a-b, b-c. Hand-computed with damping 0.85 over 30 passes.
+        let mut graph: BTreeMap<String, BTreeMap<String, f64>> = BTreeMap::new();
+        for (from, to) in [("a", "b"), ("b", "a"), ("b", "c"), ("c", "b")] {
+            graph
+                .entry(from.to_string())
+                .or_default()
+                .insert(to.to_string(), 1.0);
+        }
+        let scores = pagerank(&graph);
+        assert!((scores["a"] - 0.7669361095464207).abs() < 1e-12);
+        assert!((scores["b"] - 1.4508662617175787).abs() < 1e-12);
     }
 
     #[test]

@@ -1,7 +1,8 @@
 # Model benchmarks
 
-Phase 0 baselines and the 0.5.0 compact pack results. The baseline numbers are
-what the packs had to beat; the Rishe rows are measured with the published packs.
+Baselines from the pack selection, and the final numbers for the published
+packs. The baseline numbers are what the packs had to beat; the Rishe rows are
+measured with the packs in the Hub.
 
 ## Method
 
@@ -35,10 +36,10 @@ splits is the opening — neither baseline is strong on both.
 
 Exact-span matching is strict (no partial credit, punctuation included), so
 this is a lower bound. Even allowing for that, Shekar's NER is the weakest
-baseline and 4–8× slower than its POS model. This is where a compact ALBERT
-fine-tuned on Arman/Peyma/Naab should win clearly.
+baseline and 4–8× slower than its POS model. This is where the Rishe pack wins
+clearly (94.05 exact-span F1 below).
 
-## Runtime spike: tract vs onnxruntime
+## Runtime: tract vs onnxruntime
 
 Same machine, single thread, 11–13 tokens, steady state:
 
@@ -48,32 +49,22 @@ Same machine, single thread, 11–13 tokens, steady state:
 | Shekar POS, dynamic int8 | 40.2 MB | 48.8 ms | 7.74 ms | argmax 100%, max abs Δ 4.2e-3 |
 | Shekar POS, weight-only int8 | 11.7 MB | fails on symbolic shapes; static 128-token pad 305 ms | — | — |
 
-Decisions:
+Findings:
 
-- **tract is correct but its int8 path is not competitive.** We ship the
-  compact pack as fp32 in 0.5.0: ~45 MB, ~23 ms/sentence, still faster than
-  Shekar's 35–41 ms POS end-to-end.
-- **Do not ship tract int8.** If we need an 11 MB pack, the fallback is `ort`
-  (or a distilled fp32 student), not dynamic int8 under tract.
+- **tract is correct but its int8 path is not competitive.** The compact pack
+  ships as fp32: ~45 MB, ~23 ms/sentence, still faster than Shekar's 35–41 ms
+  POS end-to-end.
+- **tract int8 was rejected.** An 11 MB pack would need `ort` (or a distilled
+  fp32 student), not dynamic int8 under tract.
 - **The size lever is distillation, not quantization.** A 6-layer student
-  (~6.4M params, ~23 MB fp32) is the next compact-pack target; it halves the
-  parameter count and should land near 11 ms/sentence while keeping the compact
-  tier's accuracy.
+  would halve the parameter count; we did not train one.
 
-## Targets for the compact pack
-
-- POS: beat Shekar on PerDT (97.4%) and Hazm on Seraji (90.7%) with one model.
-- NER: ≥ 85 F1 on PEYMA test, trained on the PEYMA/Arman train splits, at
-  ≤ 30 ms/sentence.
-- Ezafe: beat the rule-based baseline by 5 F1 points.
-- Pack: ≤ 50 MB fp32, load ≤ 1 s.
-
-## Rishe compact pack candidate (0.5.0)
+## Rishe compact packs
 
 Trained from `HooshvareLab/albert-fa-zwnj-base-v2` on one GPU (Python 3.13,
 torch 2.11.0+cu130, transformers 5.20.2). The model files are published at
 [`MahdiAlikhah/rishe-models`](https://huggingface.co/MahdiAlikhah/rishe-models).
-The numbers below come from the first training run.
+The numbers below are measured with the released packs.
 
 | task | dataset | Rishe | Shekar | Hazm |
 |---|---|---|---|---|
@@ -98,11 +89,11 @@ tensor input:
 | NER | 25 | 49.1 ms | 35.0 ms | argmax 100%, max Δ 1.1e-5 |
 | Ezafe | 13 | 27.6 ms | 19.1 ms | argmax 100%, max Δ 5.7e-6 |
 
-### End-to-end `ModelPack` latency (0.5.0)
+### End-to-end `ModelPack` latency
 
 Python API, pre-tokenized words, single thread, pack loaded once, first three
 calls warmed up. This includes pack tokenization, ONNX inference and argmax,
-but not Rishe's word tokenizer (use `tag(text)` for that path). Medians are
+but not Rishe's word tokenizer (use `tags(text)` for that path). Medians are
 over 200 sentences:
 
 | task | dataset | sentences | words | load s | median ms | p95 ms | words/s |
@@ -127,9 +118,8 @@ someone who pulls all three. This matches the Hub design: `pos-compact`,
 manifests and checksums.
 
 A shared-backbone pack would save ~90 MB for the all-three user, but it needs
-another training run and risks the measured per-task accuracy. It is deferred
-until there is actual demand for an all-in-one download. The per-task 44.8 MB
-is the number to compare with Shekar's ~11 MB int8 models; the trade is
+another training run and risks the measured per-task accuracy. The per-task
+44.8 MB is the number to compare with Shekar's ~11 MB int8 models; the trade is
 precision (fp32) and accuracy, not install size.
 
 ## Dependency parsing (0.8.0)
@@ -137,7 +127,7 @@ precision (fp32) and accuracy, not install size.
 The compact parser is an ALBERT backbone with a biaffine arc scorer and a
 head-conditioned relation classifier, decoded with single-root MST. It is
 48.1 MB and runs through the same tract pack runtime. Full card:
-[`rishe-depparse-compact`](MODEL_CARDS.md#rishe-depparse-compact).
+[`depparse-compact`](MODEL_CARDS.md#depparse-compact).
 
 | test treebank | UAS | LAS | LAS no punct |
 |---|---:|---:|---:|
@@ -165,7 +155,7 @@ vocabulary (100 pairs, seed 42).
 |---|---:|---:|---:|---:|---:|---:|
 | **Rishe `rishe-embed-fa-300-v2`** | **42 MB** | **68,144** | **0.4740** | **0.1393** | **0.3347** | **11.7 ms** |
 | Rishe `rishe-embed-fa-300` (0.9.x) | 135 MB | 38,864 | 0.4808 | 0.1558 | 0.3250 | 5.5 ms |
-| Rishe `rishe-embed-fa-300-135k` | 475 MB | 135,513 | 0.5055 | 0.2553 | 0.2503 | 23.5 ms |
+| Rishe `rishe-embed-fa-300-135k` (experiment, not published) | 475 MB | 135,513 | 0.5055 | 0.2553 | 0.2503 | 23.5 ms |
 | Hazm `hazm-fasttext-300` | 2.33 GB | 884,790 | 0.5565 | 0.2057 | 0.3509 | 152 ms |
 
 v2 doubles the vocabulary of the 0.9.x pack and lifts ParsiNLU-entailment token

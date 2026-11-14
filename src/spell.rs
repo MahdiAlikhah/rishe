@@ -2,7 +2,7 @@ use crate::detokenizer::Detokenizer;
 use crate::stopwords;
 use crate::tokenizer::{TokenKind, Tokenizer};
 use fst::Map;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 static WORD_FREQ_FST_BYTES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/word_freq.fst"));
 
@@ -33,7 +33,8 @@ impl SpellChecker {
     /// Up to `max` candidates: the known word first, then single-edit neighbours by
     /// descending frequency, ties by text.
     pub fn suggest(&self, word: &str, max: usize) -> Vec<String> {
-        if max == 0 {
+        // The edit set grows with the square of the word; no real word is this long.
+        if max == 0 || word.is_empty() || word.chars().count() > 64 {
             return Vec::new();
         }
 
@@ -70,19 +71,31 @@ impl SpellChecker {
     /// and detokenize the result.
     pub fn correct(&self, text: &str) -> String {
         let mut out = Vec::new();
+        // A repeated misspelling costs the same edit search every time; remember it per call.
+        let mut corrections: HashMap<&str, String> = HashMap::new();
         for token in Tokenizer::tokenize(text) {
             let keep = token.kind != TokenKind::Word
                 || token.text.chars().count() < 3
                 || stopwords::is_stopword(token.text)
-                || self.contains(token.text);
+                || self.contains(token.text)
+                // Edits only add or swap Persian letters, so a token with none of
+                // them can never match a dictionary word.
+                || !token.text.chars().any(|ch| ALPHABET.contains(&ch));
             if keep {
                 out.push(token.text.to_string());
                 continue;
             }
-            match self.suggest(token.text, 1).into_iter().next() {
-                Some(best) => out.push(best),
-                None => out.push(token.text.to_string()),
+            if let Some(best) = corrections.get(token.text) {
+                out.push(best.clone());
+                continue;
             }
+            let best = self
+                .suggest(token.text, 1)
+                .into_iter()
+                .next()
+                .unwrap_or_else(|| token.text.to_string());
+            corrections.insert(token.text, best.clone());
+            out.push(best);
         }
         Detokenizer::detokenize(&out)
     }
@@ -127,4 +140,28 @@ fn edits(word: &[char]) -> HashSet<String> {
     }
 
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_very_long_word_gets_no_suggestions() {
+        assert!(SpellChecker::new().suggest(&"ک".repeat(1000), 5).is_empty());
+    }
+
+    #[test]
+    fn a_repeated_unknown_word_is_corrected_everywhere() {
+        let checker = SpellChecker::new();
+        assert_eq!(checker.correct("سسلام بر سسلام"), "سلام بر سلام");
+    }
+
+    #[test]
+    fn words_without_persian_letters_are_left_alone() {
+        let checker = SpellChecker::new();
+        // Latin words never reach the edit search: nothing Persian can come out.
+        assert_eq!(checker.correct("googel hello"), "googel hello");
+        assert_eq!(checker.correct("سسلام googel"), "سلام googel");
+    }
 }

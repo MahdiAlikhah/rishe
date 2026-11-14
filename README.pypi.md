@@ -109,6 +109,8 @@ No lexicon paths are needed: the classes use Rishe's compiled-in lexicons.
 ### Morphology and utilities
 
 ```python
+import rishe
+pipe = rishe.pipeline()   # the shared default; Pipeline(...) for packs and flags
 pipe.stem("کتاب‌ها")                      # 'کتاب'
 pipe.conjugate("رفت")["present"][:3]      # ['می‌روم', 'می‌روی', 'می‌رود']
 pipe.comparative("بزرگ")                  # 'بزرگ‌تر'
