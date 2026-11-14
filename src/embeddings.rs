@@ -17,6 +17,10 @@ const DTYPE_F16: u8 = 1;
 const HEADER_LEN: usize = 15;
 /// Largest magnitude an `f16` holds exactly; anything above it saturates to infinity.
 const F16_MAX: f32 = 65_504.0;
+/// Ceiling on `vocab * dim` floats admitted from a `.vec` header. A real pack is
+/// far below it (300 dims x ~70k words is ~21M); a corrupt or hostile header is
+/// refused the same way on every platform instead of depending on the allocator.
+const MAX_LOAD_ELEMENTS: usize = 1 << 31;
 
 /// Storage width of an embedding file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -336,8 +340,16 @@ impl Embeddings {
             .try_reserve(declared)
             .map_err(|_| "embedding file is too large for available memory".to_string())?;
         let mut vectors: Vec<f32> = Vec::new();
+        // `try_reserve` alone is not a size check: an overcommitting allocator
+        // (macOS, and Linux under overcommit) reserves a huge block and the
+        // failure then surfaces later as an OOM kill. Reject an impossible
+        // element count up front so the answer is the same on every platform.
+        let elements = declared.saturating_mul(dim);
+        if elements > MAX_LOAD_ELEMENTS {
+            return Err("embedding file is too large for available memory".to_string());
+        }
         vectors
-            .try_reserve(declared.saturating_mul(dim))
+            .try_reserve(elements)
             .map_err(|_| "embedding file is too large for available memory".to_string())?;
 
         for (line_number, line) in lines.enumerate() {

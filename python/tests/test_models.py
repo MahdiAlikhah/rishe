@@ -103,9 +103,14 @@ class PackCacheTest(unittest.TestCase):
 
     def test_pull_refuses_a_name_that_could_escape_the_cache(self):
         """The inferred filename is joined onto the cache dir, so it must be one name."""
-        # A traversal collapses to a plain name, which is safe and needs no error.
-        self.assertEqual(hub._safe_filename("..\\..\\escaped.bin"), "escaped.bin")
+        # A forward-slash traversal collapses to a plain name, which is safe.
         self.assertEqual(hub._safe_filename("../../escaped.bin"), "escaped.bin")
+        # A backslash is only a separator on Windows, so it is refused outright
+        # rather than collapsed: collapsing would make the same URL behave
+        # differently per platform. This matches `infer_filename` in src/hub.rs.
+        for name in ("..\\..\\escaped.bin", "a\\b.bin", "C:\\x.bin", "a:b.bin"):
+            with self.assertRaises(ValueError, msg=name):
+                hub._safe_filename(name)
         # A name with nothing usable in it is refused rather than guessed.
         for name in ("", ".", ".."):
             with self.assertRaises(ValueError, msg=name):

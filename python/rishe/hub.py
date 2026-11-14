@@ -151,7 +151,10 @@ def _safe_filename(inferred: str) -> str:
     ``infer_filename`` in ``src/hub.rs``.
     """
     name = inferred.split("?")[0].split("#")[0]
-    name = Path(name).name
+    # Split on "/" only, like `infer_filename` in src/hub.rs. `Path(name).name`
+    # would split on "\\" on Windows but not on POSIX, so the same URL would be
+    # accepted on one platform and rejected on the other.
+    name = name.rsplit("/", 1)[-1]
     if not name or name in {".", ".."}:
         raise ValueError("cannot infer a filename from the URL; pass filename=")
     if any(character in name for character in ("/", "\\", ":", "\0")):
