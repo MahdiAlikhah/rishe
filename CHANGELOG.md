@@ -9,6 +9,33 @@ in the pack manifest and on the model repository.
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-11-14
+
+No API, output or format change. This release closes three gaps in the release
+process itself, all of which `1.0.0` exposed.
+
+### Fixed
+
+- **The GitHub Release was never created.** `1.0.0` published to both registries
+  and pushed its tag, but the Releases page still showed `0.11.4` as latest
+  because no job created the release. A `publish-release` job now does, using
+  the CHANGELOG section for the tag's version as its notes, so the release page
+  and the file cannot disagree. It fails rather than publishing an empty page
+  when a tag has no section.
+- **The `cuda` and `metal` features were never compiled in CI.** They are opt-in
+  and nobody builds them by default, so a break would reach a GPU user first.
+  A `gpu-features` job now checks both, and `publish-crate` needs it. `metal`
+  runs on macOS: `tract` declares `tract-metal` under
+  `cfg(target_vendor = "apple")`, so checking it on Linux resolves to nothing.
+- **Free-threaded CPython is now a stated decision, not a silence.** Tested on
+  `3.13t` and `3.14t`: `import rishe` fails with `DLL load failed`, and
+  `pip install rishe` falls back to the sdist and fails at link time on a
+  missing `python3.lib`/`python3.dll`. An `abi3` wheel cannot load on a
+  free-threaded build, and pyo3 0.22 has no free-threaded support at all
+  (that arrived in 0.23), so supporting them is a dependency upgrade and a
+  separate release, not a flag. `docs/STABILITY.md` now says this with the
+  reason and the measured failure.
+
 ## [1.0.0] - 2026-11-14
 
 The API freeze. The surface listed in [`docs/STABILITY.md`](docs/STABILITY.md)
@@ -657,7 +684,8 @@ Removed in `1.0.0`; each emits `DeprecationWarning` today.
 - Python bindings (abi3) and a Rust core.
 - Benchmark suite and dual MIT/Apache-2.0 licensing.
 
-[Unreleased]: https://github.com/MahdiAlikhah/rishe/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/MahdiAlikhah/rishe/compare/v1.0.1...HEAD
+[1.0.1]: https://github.com/MahdiAlikhah/rishe/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/MahdiAlikhah/rishe/compare/v0.11.4...v1.0.0
 [0.11.4]: https://github.com/MahdiAlikhah/rishe/compare/v0.11.3...v0.11.4
 [0.11.3]: https://github.com/MahdiAlikhah/rishe/compare/v0.11.2...v0.11.3

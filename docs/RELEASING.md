@@ -52,6 +52,12 @@ cargo check --locked --features python
 cargo check --locked --features models
 cargo check --locked --features python,models
 
+# The GPU features are opt-in and nobody builds them by default, so check them
+# too. `metal` only resolves on macOS: tract declares `tract-metal` under
+# `cfg(target_vendor = "apple")`, so on Linux the feature is a silent no-op.
+cargo check --locked --features cuda
+cargo check --locked --features metal    # macOS only
+
 # Public docs must be warning-free.
 RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps --features python,models
 
@@ -140,9 +146,9 @@ python -m unittest discover -s python/tests -p "test_*.py" -v
    ```
 
 6. **Watch CI** until every job is green: `rust` (three OSes), `rust models`,
-   `msrv`, `features`, `docs`, `examples`, `python tests` (3.9 – 3.14), and
-   the wheel and sdist artifacts. The two publish jobs are tag-gated and run
-   after all of the gates above:
+   `msrv`, `features`, `gpu feature` (cuda and metal), `docs`, `examples`,
+   `python tests` (3.9 – 3.14), and the wheel and sdist artifacts. The publish
+   jobs are tag-gated and run after all of the gates above:
 
    ```bash
    gh run list --limit 2
@@ -156,11 +162,16 @@ python -m unittest discover -s python/tests -p "test_*.py" -v
    curl -s -A "rishe-release-check" https://crates.io/api/v1/crates/rishe/x.y.z
    ```
 
-   Then create the GitHub release with notes from the changelog:
+   The `publish-release` job then creates the GitHub release from the
+   `CHANGELOG.md` section for the tag, so the release page and the file cannot
+   drift. Check it appeared and is marked latest:
 
    ```bash
-   gh release create vx.y.z --title "Rishe x.y.z" --notes-file notes.md
+   gh release view vx.y.z
    ```
+
+   It is idempotent: a release that already exists is left alone, so a re-run
+   never clobbers notes you edited by hand.
 
 ## Model artifacts
 

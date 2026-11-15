@@ -74,6 +74,21 @@ Python package on every listed CPython version and enforces the Rust 1.88 gate o
 every push. A version or platform not listed here is not supported. Dropping a
 platform, a Python version or the MSRV is a major-version change.
 
+Free-threaded CPython (`3.13t`, `3.14t`) and PyPy are not supported, and this is
+a dependency limit rather than a choice:
+
+- An `abi3` wheel links `python3.dll` / `python3.lib`, which a free-threaded
+  install does not ship — it has `python3t.dll` / `python3t.lib`. Measured on
+  `3.13t` and `3.14t`: `import rishe` fails with `DLL load failed`, and
+  `pip install rishe` falls back to the sdist and fails at link time on the
+  missing `python3.lib`. Maturin warns that `abi3` does not support `3.14t`.
+- Even built without `abi3`, pyo3 0.22 has no free-threaded support; that
+  arrived in pyo3 0.23. Supporting these builds therefore means widening the
+  ABI3 floor and upgrading pyo3, which is its own release.
+
+Adding support later is a minor, not a major: it is a new Python version, not
+the removal of one.
+
 ## Failure behaviour
 
 Exit codes, exception types and the serve error shape are part of the surface:
