@@ -109,6 +109,17 @@ jobs:
       - run: cargo doc --locked --no-deps --features python,models
         env:
           RUSTDOCFLAGS: "-D warnings"
+      # A tag whose CHANGELOG section is missing cannot get release notes, and a
+      # published version can never be re-uploaded, so both are checked here —
+      # before anything reaches a registry — rather than in publish-release.
+      - if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          crate=$(grep '^version' Cargo.toml | head -1 | cut -d'"' -f2)
+          [ "$crate" = "$version" ] || {
+            echo "tag $version != Cargo.toml $crate" >&2; exit 1; }
+          python scripts/release_notes.py --selftest
+          python scripts/release_notes.py "$version" > /dev/null
 
   python-tests:
     name: python tests (${{ matrix.python }})
@@ -208,7 +219,11 @@ jobs:
   # Tag-triggered releases. PyPI uses trusted publishing (OIDC): register this
   # repo + workflow "release.yml" as a trusted publisher on pypi.org first.
   publish-pypi:
-    needs: [rust, python-tests, examples, wheels, sdist]
+    # `docs` carries the tag-gated CHANGELOG check, so it gates both publishers.
+    # `gpu-features` is deliberately absent from both publishers: cuda and metal
+    # are not in the published wheel, so a GPU break must not block a release —
+    # it still fails the run loudly.
+    needs: [rust, python-tests, examples, wheels, sdist, docs]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
@@ -223,7 +238,7 @@ jobs:
           skip-existing: true
 
   publish-crate:
-    needs: [rust, rust-models, msrv, features, gpu-features, docs, examples, wheels, sdist]
+    needs: [rust, rust-models, msrv, features, docs, examples, wheels, sdist]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
@@ -275,21 +290,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          version=$(grep '^version' Cargo.toml | head -1 | cut -d'"' -f2)
-          # Everything under `## [<version>]` up to the next `## [`, minus the
-          # heading line itself: the release title already carries the version.
-          awk -v v="$version" '
-            index($0, "## [" v "]") == 1 { found = 1; next }
-            found && index($0, "## [") == 1 { exit }
-            found { print }
-          ' CHANGELOG.md > notes.md
-          # A tag whose CHANGELOG section is missing is a release-process bug,
-          # so fail rather than publish an empty page.
-          if [ ! -s notes.md ]; then
-            echo "no CHANGELOG section for $version" >&2
-            exit 1
-          fi
+          version="${GITHUB_REF_NAME#v}"
+          python scripts/release_notes.py "$version" > notes.md
           gh release create "$GITHUB_REF_NAME" \
             --title "Rishe $version" \
-            --notes-file notes.md \
-            --latest
+            --notes-file notes.md

@@ -73,6 +73,10 @@ python scripts/benchmark_golden.py
 PYTHONIOENCODING=utf-8 python examples/basic.py
 PYTHONIOENCODING=utf-8 python examples/masking_keywords.py
 PYTHONIOENCODING=utf-8 python scripts/check_docs_examples.py
+
+# The release notes come from the CHANGELOG; check the tag has a section.
+python scripts/release_notes.py --selftest
+python scripts/release_notes.py x.y.z
 ```
 
 CI runs the Python suite on CPython 3.9 through 3.14, so check the oldest
@@ -148,7 +152,9 @@ python -m unittest discover -s python/tests -p "test_*.py" -v
 6. **Watch CI** until every job is green: `rust` (three OSes), `rust models`,
    `msrv`, `features`, `gpu feature` (cuda and metal), `docs`, `examples`,
    `python tests` (3.9 – 3.14), and the wheel and sdist artifacts. The publish
-   jobs are tag-gated and run after all of the gates above:
+   jobs are tag-gated; they block on every gate except `gpu feature`, since cuda
+   and metal are not in the published wheel. A GPU break fails the run without
+   stranding one registry on a version the other refused:
 
    ```bash
    gh run list --limit 2
@@ -162,9 +168,11 @@ python -m unittest discover -s python/tests -p "test_*.py" -v
    curl -s -A "rishe-release-check" https://crates.io/api/v1/crates/rishe/x.y.z
    ```
 
-   The `publish-release` job then creates the GitHub release from the
-   `CHANGELOG.md` section for the tag, so the release page and the file cannot
-   drift. Check it appeared and is marked latest:
+   The `docs` job checks that `CHANGELOG.md` has a section for the tag before
+   either registry is touched: a published version can never be re-uploaded, so
+   a missing entry has to fail there, not after publishing. The `publish-release`
+   job then creates the GitHub release from that same section, so the release
+   page and the file cannot drift. Check it appeared:
 
    ```bash
    gh release view vx.y.z
@@ -255,6 +263,7 @@ Network tip: the system proxy may throttle uploads. Bypassing it for HF
       `python scripts/api_surface.py`
 - [ ] offline examples (`basic.py`, `masking_keywords.py`) run
 - [ ] README quick-start blocks run (`python scripts/check_docs_examples.py`)
+- [ ] `python scripts/release_notes.py x.y.z` prints the section for the tag
 - [ ] Python suite green on 3.9 – 3.14
 - [ ] working tree contains only intended files
 - [ ] commit and tag authored solely by Mahdi Alikhah

@@ -9,9 +9,9 @@ in the pack manifest and on the model repository.
 
 ## [Unreleased]
 
-## [1.0.1] - 2026-11-14
+## [1.0.1] - 2026-11-15
 
-No API, output or format change. This release closes three gaps in the release
+No API, output or format change. This release closes the gaps in the release
 process itself, all of which `1.0.0` exposed.
 
 ### Fixed
@@ -20,13 +20,21 @@ process itself, all of which `1.0.0` exposed.
   and pushed its tag, but the Releases page still showed `0.11.4` as latest
   because no job created the release. A `publish-release` job now does, using
   the CHANGELOG section for the tag's version as its notes, so the release page
-  and the file cannot disagree. It fails rather than publishing an empty page
-  when a tag has no section.
+  and the file cannot disagree. The section is read by
+  `scripts/release_notes.py`, which refuses a tag with no section, so a missing
+  entry can never publish an empty page.
+- **A missing CHANGELOG entry failed after publishing, not before.** The check
+  lives in the `docs` job, which both publishers already need, and it also
+  rejects a tag whose version disagrees with `Cargo.toml`. A published version
+  can never be re-uploaded, so this has to fail before either registry is
+  touched rather than in `publish-release` afterwards.
 - **The `cuda` and `metal` features were never compiled in CI.** They are opt-in
   and nobody builds them by default, so a break would reach a GPU user first.
-  A `gpu-features` job now checks both, and `publish-crate` needs it. `metal`
-  runs on macOS: `tract` declares `tract-metal` under
-  `cfg(target_vendor = "apple")`, so checking it on Linux resolves to nothing.
+  A `gpu-features` job now checks both. `metal` runs on macOS: `tract` declares
+  `tract-metal` under `cfg(target_vendor = "apple")`, so checking it on Linux
+  resolves to nothing. Neither publisher blocks on it — cuda and metal are not
+  in the published wheel, so a GPU break fails the run without stranding one
+  registry on a version the other refused.
 - **Free-threaded CPython is now a stated decision, not a silence.** Tested on
   `3.13t` and `3.14t`: `import rishe` fails with `DLL load failed`, and
   `pip install rishe` falls back to the sdist and fails at link time on a
