@@ -7,6 +7,8 @@ __pycache__/
 *.pdb
 *.so
 /dist
+# Links built by scripts/pull_test_packs.py for the env-gated pack tests.
+/.test-packs/
 /data/corpora/
 /data/*.pdf
 

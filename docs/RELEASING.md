@@ -77,6 +77,11 @@ PYTHONIOENCODING=utf-8 python scripts/check_docs_examples.py
 # The release notes come from the CHANGELOG; check the tag has a section.
 python scripts/release_notes.py --selftest
 python scripts/release_notes.py x.y.z
+
+# The default suite skips 12 tests that need a real pack, so run them too: this
+# pulls ~225 MB into the Hub cache and prints the three variables they read.
+eval "$(python scripts/pull_test_packs.py)"
+python -m unittest discover -s python/tests -p "test_*.py" -v
 ```
 
 CI runs the Python suite on CPython 3.9 through 3.14, so check the oldest
@@ -151,9 +156,12 @@ python -m unittest discover -s python/tests -p "test_*.py" -v
 
 6. **Watch CI** until every job is green: `rust` (three OSes), `rust models`,
    `msrv`, `features`, `gpu feature` (cuda and metal), `docs`, `examples`,
-   `python tests` (3.9 – 3.14), and the wheel and sdist artifacts. The publish
-   jobs are tag-gated; they block on every gate except `gpu feature`, since cuda
-   and metal are not in the published wheel. A GPU break fails the run without
+   `pack tests`, `python tests` (3.9 – 3.14), and the wheel and sdist artifacts.
+   `pack tests` downloads the real packs and runs the 12 tests the default suite
+   skips, so it is the only job that exercises ONNX inference; it runs on tags
+   and `workflow_dispatch` only, to keep pull requests cheap. The publish jobs
+   are tag-gated; they block on every gate except `gpu feature`, since cuda and
+   metal are not in the published wheel. A GPU break fails the run without
    stranding one registry on a version the other refused:
 
    ```bash

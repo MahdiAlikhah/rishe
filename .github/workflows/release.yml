@@ -174,6 +174,44 @@ jobs:
       - run: python examples/basic.py
       - run: python examples/masking_keywords.py
 
+  # The suite above skips 12 tests: everything that runs ONNX inference, plus the
+  # real embedding pack. They are gated on env vars, so nothing exercised those
+  # paths in CI and a broken pack could ship green. This runs them for real.
+  # Tag-only on purpose: it downloads ~225 MB, which is not worth paying on every
+  # pull request, but a release must not go out with inference never tested.
+  pack-tests:
+    name: pack tests
+    if: >-
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
+      || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/rishe
+          key: rishe-packs-${{ hashFiles('python/rishe/hub.py') }}
+      - run: python -m pip install maturin
+      - run: maturin build --release --out dist
+      - run: python -m pip install --no-deps dist/*.whl
+      # Exports the three variables the skipped tests look for. The variables are
+      # then checked: a failed pull would leave them empty, the tests would skip
+      # again, and this job would pass green without testing anything. The pull
+      # writes to a file first because `eval "$(...)"` hides a nonzero exit.
+      - run: |
+          set -euo pipefail
+          python scripts/pull_test_packs.py > "$RUNNER_TEMP/env.sh"
+          . "$RUNNER_TEMP/env.sh"
+          for name in RISHE_TEST_PACK RISHE_TEST_DEPPARSE_PACK RISHE_TEST_EMBEDDINGS_PACK; do
+            [ -n "${!name}" ] || { echo "$name is unset: the pull failed" >&2; exit 1; }
+          done
+          python -m unittest discover -s python/tests -v
+
   wheels:
     name: wheel (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
@@ -223,7 +261,7 @@ jobs:
     # `gpu-features` is deliberately absent from both publishers: cuda and metal
     # are not in the published wheel, so a GPU break must not block a release —
     # it still fails the run loudly.
-    needs: [rust, python-tests, examples, wheels, sdist, docs]
+    needs: [rust, python-tests, examples, wheels, sdist, docs, pack-tests]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
@@ -238,7 +276,7 @@ jobs:
           skip-existing: true
 
   publish-crate:
-    needs: [rust, rust-models, msrv, features, docs, examples, wheels, sdist]
+    needs: [rust, rust-models, msrv, features, docs, examples, wheels, sdist, pack-tests]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:

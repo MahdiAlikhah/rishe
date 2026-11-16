@@ -293,7 +293,7 @@ class ModelPackTest(unittest.TestCase):
 
     def test_typed_tokens_and_entities(self):
         pos = ModelPack(str(PACK_ROOT / "pos"))
-        tokens = pos.tag_tokens("کتاب‌های خوب")
+        tokens = pos.tags("کتاب‌های خوب")
         self.assertIsInstance(tokens[0], TaggedToken)
         self.assertEqual(tokens[0].text, "کتاب‌های")
         self.assertEqual(tokens[0].tag, "NOUN")

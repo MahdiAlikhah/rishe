@@ -9,6 +9,26 @@ in the pack manifest and on the model repository.
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-11-16
+
+No API, output or format change. This release closes the largest remaining gap
+in the test suite: model inference was never tested in CI.
+
+### Fixed
+
+- **Nothing in CI ran ONNX inference.** Twelve tests in `python/tests/` are
+  gated on `RISHE_TEST_PACK`, `RISHE_TEST_DEPPARSE_PACK` and
+  `RISHE_TEST_EMBEDDINGS_PACK`, and no workflow set them, so every `pos`, `ner`,
+  `ezafe` and `depparse` path shipped on manual testing alone — a `tract` or
+  pyo3 change could break all four and CI would stay green. A `pack-tests` job
+  now pulls the real packs with `scripts/pull_test_packs.py` and runs them, and
+  both publishers need it. It is tag-gated and cached, because it downloads
+  ~225 MB that a pull request should not pay for.
+- **`test_typed_tokens_and_entities` called a method that does not exist.** It
+  asked for `ModelPack.tag_tokens`, an alias `1.0.0` removed; the surface has
+  `tags`. The test was env-gated, so it had never run since the alias was
+  deleted and the break was invisible. It now calls `tags` and passes.
+
 ## [1.0.1] - 2026-11-15
 
 No API, output or format change. This release closes the gaps in the release
@@ -692,7 +712,8 @@ Removed in `1.0.0`; each emits `DeprecationWarning` today.
 - Python bindings (abi3) and a Rust core.
 - Benchmark suite and dual MIT/Apache-2.0 licensing.
 
-[Unreleased]: https://github.com/MahdiAlikhah/rishe/compare/v1.0.1...HEAD
+[Unreleased]: https://github.com/MahdiAlikhah/rishe/compare/v1.0.2...HEAD
+[1.0.2]: https://github.com/MahdiAlikhah/rishe/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/MahdiAlikhah/rishe/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/MahdiAlikhah/rishe/compare/v0.11.4...v1.0.0
 [0.11.4]: https://github.com/MahdiAlikhah/rishe/compare/v0.11.3...v0.11.4
