@@ -1,4 +1,4 @@
-﻿# Serve protocol, version 1
+# Serve protocol, version 1
 
 `rishe serve` is a JSON-lines server: one request per line on stdin, one response
 per line on stdout. This page documents protocol version 1 for both
@@ -187,7 +187,7 @@ Response:
 | `gregorian` | object | `year`, `month`, `day` integers |
 | `iso` | string | `YYYY-MM-DD` |
 
-Text that is not a Jalali date is an error: `cannot parse date from "not a date"`.
+Text that is not a Jalali date is an error: `cannot parse a Jalali date from 'not a date'`.
 
 ### pos
 

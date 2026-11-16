@@ -331,18 +331,19 @@ pub fn mask_html(text: &str, mask: &str) -> String {
         return text.to_string();
     }
 
-    let unescaped = html_unescape(text);
-    let mut out = String::with_capacity(unescaped.len());
+    // Strip tags before unescaping: `&lt;b&gt;` is text a reader should see, so
+    // unescaping first would make it look like a tag and delete it.
+    let mut out = String::with_capacity(text.len());
     let mut i = 0;
 
-    while i < unescaped.len() {
-        if unescaped.as_bytes()[i] == b'<' {
-            let tag_start = unescaped[i + 1..]
+    while i < text.len() {
+        if text.as_bytes()[i] == b'<' {
+            let tag_start = text[i + 1..]
                 .chars()
                 .next()
                 .is_some_and(|ch| ch.is_ascii_alphabetic() || matches!(ch, '/' | '!' | '?'));
             if tag_start {
-                if let Some(close) = unescaped[i..].find('>') {
+                if let Some(close) = text[i..].find('>') {
                     if close > 1 {
                         out.push_str(mask);
                         i += close + 1;
@@ -351,12 +352,12 @@ pub fn mask_html(text: &str, mask: &str) -> String {
                 }
             }
         }
-        let ch = unescaped[i..].chars().next().unwrap();
+        let ch = text[i..].chars().next().unwrap();
         out.push(ch);
         i += ch.len_utf8();
     }
 
-    finish(text, out)
+    finish(text, html_unescape(&out))
 }
 
 fn html_unescape(text: &str) -> String {
@@ -381,6 +382,15 @@ fn html_unescape(text: &str) -> String {
     out
 }
 
+/// A numeric reference to a control character or noncharacter is an HTML parse
+/// error, so it is left undecoded rather than emitting a NUL into the text.
+fn text_char(code: u32) -> Option<String> {
+    let ch = char::from_u32(code)?;
+    let noncharacter = (0xFDD0..=0xFDEF).contains(&code) || code & 0xFFFE == 0xFFFE;
+    let keep = matches!(ch, '\t' | '\n' | '\r') || (!ch.is_control() && !noncharacter);
+    keep.then(|| ch.to_string())
+}
+
 // ponytail: common HTML entities and numeric references only; add the full
 // HTML5 table if real input needs it.
 fn decode_entity(entity: &str) -> Option<String> {
@@ -401,17 +411,10 @@ fn decode_entity(entity: &str) -> Option<String> {
         .strip_prefix("#x")
         .or_else(|| entity.strip_prefix("#X"))
     {
-        return u32::from_str_radix(hex, 16)
-            .ok()
-            .and_then(char::from_u32)
-            .map(|ch| ch.to_string());
+        return u32::from_str_radix(hex, 16).ok().and_then(text_char);
     }
     if let Some(decimal) = entity.strip_prefix('#') {
-        return decimal
-            .parse::<u32>()
-            .ok()
-            .and_then(char::from_u32)
-            .map(|ch| ch.to_string());
+        return decimal.parse::<u32>().ok().and_then(text_char);
     }
     None
 }
@@ -604,6 +607,17 @@ mod tests {
         assert_eq!(mask_html("a < b > c", ""), "a < b > c");
         assert_eq!(mask_html("اگر 1 < 2 و 3 > 2", ""), "اگر 1 < 2 و 3 > 2");
         assert_eq!(mask_html("&#1587;&#x644;&#x627;&#1605;", ""), "سلام");
+        // Escaped markup is text a reader should see, not a tag to delete.
+        assert_eq!(mask_html("&lt;b&gt;سلام&lt;/b&gt;", ""), "<b>سلام</b>");
+        assert_eq!(mask_html("&lt;script&gt;", ""), "<script>");
+        // Control characters and noncharacters are never decoded.
+        assert_eq!(
+            mask_html("&#0;&#1;&#x1f;&#127;&#xFFFE;&#xFFFF;", ""),
+            "&#0;&#1;&#x1f;&#127;&#xFFFE;&#xFFFF;"
+        );
+        assert_eq!(mask_html("a&#0;b", ""), "a&#0;b");
+        // Whitespace controls are legitimate and still decode.
+        assert_eq!(mask_html("a&#9;&#10;&#13;b", ""), "a\t\n\rb");
     }
 
     #[test]

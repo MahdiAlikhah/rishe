@@ -66,7 +66,7 @@ rishe hub path
 
 ```bash
 rishe date "not a date"
-# stderr: cannot parse a Jalali date from "not a date"
+# stderr: cannot parse a Jalali date from 'not a date'
 
 rishe similar Ú©ØªØ§Ø¨ --model missing.vec
 # stderr: embedding file not found: missing.vec

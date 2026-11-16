@@ -11,8 +11,9 @@ in the pack manifest and on the model repository.
 
 ## [1.0.2] - 2026-11-16
 
-No API, output or format change. This release closes the largest remaining gap
-in the test suite: model inference was never tested in CI.
+No API or format change. This release closes the largest remaining gap in the
+test suite (model inference was never tested in CI) and fixes three latent
+`0.3.0`-era bugs in the HTML masker and the date parser.
 
 ### Fixed
 
@@ -28,6 +29,25 @@ in the test suite: model inference was never tested in CI.
   asked for `ModelPack.tag_tokens`, an alias `1.0.0` removed; the surface has
   `tags`. The test was env-gated, so it had never run since the alias was
   deleted and the break was invisible. It now calls `tags` and passes.
+- **The `html` masker decoded numeric references into control characters.**
+  `&#0;` became a NUL byte and `&#1;`-`&#x1f;`, `&#127;`, `&#xFFFE;` and
+  `&#xFFFF;` came through raw — 30 code points HTML5 treats as parse errors.
+  `mask("&#0;", maskers=["html"])` returned `"\x00"`, and the same text went
+  through `rishe mask --maskers html` to any file or pipe. Control characters
+  and noncharacters are now left encoded. Tab, newline and carriage return
+  still decode.
+- **The `html` masker deleted text that was escaped.** It unescaped first and
+  stripped tags second, so `&lt;b&gt;سلام&lt;/b&gt;` became `سلام` instead of
+  `<b>سلام</b>`: a page discussing markup lost the words inside the escaped
+  brackets. Tags are now stripped before the text is unescaped, so `&lt;b&gt;`
+  stays visible text.
+- **A Gregorian ISO date was silently parsed as a Jalali year.**
+  `parse_date("2023-08-03")` returned `JalaliDate(2023, 8, 3)` — Gregorian
+  2644, 621 years off — because a leading four-digit year is read as Jalali.
+  Since `JalaliDate.iso` emits Gregorian, round-tripping a date through its own
+  ISO string quietly changed it. A numeric date with a year of 1700 or more now
+  returns `None` instead; Jalali text years are 13xx-15xx. A date with a month
+  name (`۱۲ مرداد ۲۰۰۰`) still parses, so a far year can be written unambiguously.
 
 ## [1.0.1] - 2026-11-15
 

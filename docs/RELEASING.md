@@ -80,7 +80,10 @@ python scripts/release_notes.py x.y.z
 
 # The default suite skips 12 tests that need a real pack, so run them too: this
 # pulls ~225 MB into the Hub cache and prints the three variables they read.
-eval "$(python scripts/pull_test_packs.py)"
+# Source the output from a file: `eval "$(...)"` swallows a nonzero exit, and
+# the tests would then skip and the run would look green.
+python scripts/pull_test_packs.py > /tmp/rishe-env.sh
+. /tmp/rishe-env.sh
 python -m unittest discover -s python/tests -p "test_*.py" -v
 ```
 

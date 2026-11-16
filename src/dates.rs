@@ -178,6 +178,10 @@ impl Gregorian {
 /// Parse a Jalali date from `۱۴۰۲/۰۵/۱۲`, `12-5-1402` (day first when the year
 /// is last) or `۱۲ مرداد ۱۴۰۲`.
 ///
+/// A numeric date whose four-digit year is `1700` or more is rejected, because
+/// that is a Gregorian year (Jalali text years are `13xx`-`15xx`) and reading
+/// it as Jalali would be 621 years off. Write such a year with a month name.
+///
 /// ```
 /// use rishe::dates;
 ///
@@ -219,7 +223,15 @@ fn parse_numeric(text: &str) -> Option<Jalali> {
     } else {
         return None;
     };
-    Jalali::new(year.parse().ok()?, month.parse().ok()?, day.parse().ok()?)
+    let year: i32 = year.parse().ok()?;
+    // A 4-digit year from 1700 on is a Gregorian year (Jalali text years are
+    // 13xx-15xx), so `format`'s ISO output would come back 621 years off. A
+    // named-month date still parses, which is how a far-future Jalali date is
+    // written without ambiguity.
+    if year >= 1700 {
+        return None;
+    }
+    Jalali::new(year, month.parse().ok()?, day.parse().ok()?)
 }
 
 fn parse_named(text: &str) -> Option<Jalali> {
@@ -474,6 +486,14 @@ mod tests {
         assert_eq!(parse("۱۲ امرداد ۱۴۰۲"), expected);
         assert_eq!(parse("1402/13/01"), None);
         assert_eq!(parse("not a date"), None);
+        // A Gregorian ISO date is not silently read as a Jalali year.
+        assert_eq!(parse("2023-08-03"), None);
+        assert_eq!(parse("2023/08/03"), None);
+        assert_eq!(parse("03.08.2023"), None);
+        assert_eq!(parse("2023-08-03").and_then(|date| date.to_iso()), None);
+        // A named month proves Jalali intent, so a far year still parses.
+        assert_eq!(parse("۱۲ مرداد ۲۰۰۰").map(|date| date.year), Some(2000));
+        assert_eq!(parse("1402-05-12").map(|date| date.year), Some(1402));
     }
 
     #[test]

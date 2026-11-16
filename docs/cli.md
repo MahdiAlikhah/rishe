@@ -47,7 +47,9 @@ running, so it exits `0` unless it fails to start.
 ## Date parsing
 
 `rishe date` accepts `۱۴۰۲/۰۵/۱۲`, `1402-5-12`, `12.5.1402` and
-`۱۲ مرداد ۱۴۰۲`, and prints the Gregorian ISO date:
+`۱۲ مرداد ۱۴۰۲`, and prints the Gregorian ISO date. A numeric year of `1700` or
+more is rejected rather than read as a Jalali year, so a Gregorian ISO date is a
+clean error instead of a date 621 years off; write a far year with a month name.
 
 ```bash
 rishe date "۱۲ مرداد ۱۴۰۲"                # 2023-08-03
