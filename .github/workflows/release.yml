@@ -137,17 +137,18 @@ jobs:
   audit:
     name: dependency advisories
     runs-on: ubuntu-24.04
-    # Report only: the pinned tract/PyO3 stack carries advisories that need a
-    # dependency migration (pyo3 0.22 -> 0.29, zip 6 -> 9, rustix), tracked as
-    # its own change. A patch release must neither be blocked by them nor hide
-    # them: the job still prints every advisory and creates its check run.
-    continue-on-error: true
     permissions:
       contents: read
       checks: write
     steps:
       - uses: actions/checkout@v4
+      # `continue-on-error` sits on the step, not the job: a job-level one leaves
+      # a red job box in an otherwise passing run. The pinned tract/PyO3 stack
+      # carries known advisories (pyo3 0.22 -> 0.29, zip 6 -> 9, rustix) that are
+      # tracked as their own migration; every advisory is still printed and the
+      # check run is still created, it just cannot paint the run red.
       - uses: rustsec/audit-check@v2
+        continue-on-error: true
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -303,11 +304,6 @@ jobs:
   wheels:
     name: wheel (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
-    # ring 0.17.14 cannot assemble its ARM asm inside the current manylinux
-    # cross image (`ARM assembler must define __ARM_ARCH`), and a broken wheel
-    # must not block a release that shipped: ARM64 Linux falls back to the
-    # sdist until the dependency is updated. Every other target must still pass.
-    continue-on-error: ${{ matrix.target == 'aarch64-unknown-linux-gnu' }}
     strategy:
       fail-fast: false
       matrix:
@@ -320,7 +316,13 @@ jobs:
           # glibc ARM: without this row every Raspberry Pi / Graviton user falls
           # back to the sdist, which needs a Rust toolchain. `container: auto`
           # asks maturin to cross-compile inside a manylinux image.
-          - { target: aarch64-unknown-linux-gnu, os: ubuntu-24.04, manylinux: auto, container: "auto", args: "--release --out dist" }
+          #
+          # `soft: true` because ring 0.17.14 cannot assemble its ARM asm in the
+          # current manylinux cross image (`ARM assembler must define
+          # __ARM_ARCH`): the step is allowed to fail (the job box stays green,
+          # the failure is a warning annotation) and no artifact is uploaded
+          # until the dependency is updated. Every other target must still pass.
+          - { target: aarch64-unknown-linux-gnu, os: ubuntu-24.04, manylinux: auto, container: "auto", args: "--release --out dist", soft: true }
           - { target: x86_64-unknown-linux-musl, os: ubuntu-24.04, manylinux: musllinux_1_2, container: "off", args: "--release --out dist --zig" }
           - { target: aarch64-unknown-linux-musl, os: ubuntu-24.04, manylinux: musllinux_1_2, container: "off", args: "--release --out dist --zig" }
           - { target: x86_64-apple-darwin, os: macos-15, manylinux: "", container: "", args: "--release --out dist" }
@@ -329,6 +331,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: PyO3/maturin-action@v1
+        continue-on-error: ${{ matrix.soft == true }}
         with:
           target: ${{ matrix.target }}
           manylinux: ${{ matrix.manylinux }}
@@ -339,7 +342,9 @@ jobs:
         with:
           name: wheels-${{ matrix.target }}
           path: dist/*.whl
-          if-no-files-found: error
+          # A soft row may legitimately produce nothing; the missing wheel is the
+          # `soft: true` failure above, not a second error here.
+          if-no-files-found: ${{ matrix.soft == true && 'warn' || 'error' }}
 
   # Every wheel is built on its own runner and then never opened, so a broken
   # one could publish green. Each row installs the artifact built for its own
