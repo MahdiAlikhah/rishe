@@ -21,7 +21,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: [ubuntu-24.04, windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
       - run: python scripts/api_surface.py --check
@@ -35,7 +35,7 @@ jobs:
 
   rust-models:
     name: rust models
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -56,7 +56,7 @@ jobs:
   # docs/STABILITY.md.
   msrv:
     name: msrv (1.88.0)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.88.0
@@ -67,7 +67,7 @@ jobs:
   # Every declared feature combination must compile on its own.
   features:
     name: features
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -85,7 +85,11 @@ jobs:
   # more times over.
   build-wheel:
     name: build wheel (linux x86_64)
-    runs-on: ubuntu-latest
+    # The oldest supported glibc (22.04, 2.35) on purpose: this plain
+    # `linux_x86_64` wheel is installed by every Linux test job, so building it
+    # on a newer image makes the old interpreters fail with a missing GLIBC
+    # symbol. The published manylinux wheel comes from the `wheels` matrix.
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -112,7 +116,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { feature: cuda, os: ubuntu-latest }
+          - { feature: cuda, os: ubuntu-24.04 }
           - { feature: metal, os: macos-latest }
     steps:
       - uses: actions/checkout@v4
@@ -126,7 +130,12 @@ jobs:
   # reason to block a release, but it must be visible before the next one.
   audit:
     name: dependency advisories
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    # audit-check publishes a check run; without `checks: write` the job died on
+    # a permission error instead of reporting the advisories it found.
+    permissions:
+      contents: read
+      checks: write
     steps:
       - uses: actions/checkout@v4
       - uses: rustsec/audit-check@v2
@@ -136,7 +145,7 @@ jobs:
   # Public docs must be warning-free: rustdoc warnings are errors here.
   docs:
     name: docs
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -176,14 +185,15 @@ jobs:
         # One job per supported CPython version: README.md and docs/STABILITY.md
         # name 3.9 – 3.14, so every one of them is built and tested here.
         include:
-          # Python 3.9 is no longer in the ubuntu-latest image (Ubuntu 26 from
-          # late 2026), so the oldest supported interpreter runs on 22.04.
+          # Python 3.9 is not in the current runner image (Ubuntu 26 from late
+          # 2026), so the oldest supported interpreter runs on 22.04: its glibc
+          # is also the floor the shared wheel is built against.
           - { python: "3.9", os: ubuntu-22.04 }
-          - { python: "3.10", os: ubuntu-latest }
-          - { python: "3.11", os: ubuntu-latest }
-          - { python: "3.12", os: ubuntu-latest }
-          - { python: "3.13", os: ubuntu-latest }
-          - { python: "3.14", os: ubuntu-latest }
+          - { python: "3.10", os: ubuntu-24.04 }
+          - { python: "3.11", os: ubuntu-24.04 }
+          - { python: "3.12", os: ubuntu-24.04 }
+          - { python: "3.13", os: ubuntu-24.04 }
+          - { python: "3.14", os: ubuntu-24.04 }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -223,7 +233,7 @@ jobs:
   examples:
     name: examples
     needs: build-wheel
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       # The examples print Persian text; pin stdout to UTF-8 instead of relying
       # on the runner's locale.
@@ -253,7 +263,7 @@ jobs:
     if: >-
       (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
       || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -284,17 +294,26 @@ jobs:
   wheels:
     name: wheel (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
+    # ring 0.17.14 cannot assemble its ARM asm inside the current manylinux
+    # cross image (`ARM assembler must define __ARM_ARCH`), and a broken wheel
+    # must not block a release that shipped: ARM64 Linux falls back to the
+    # sdist until the dependency is updated. Every other target must still pass.
+    continue-on-error: ${{ matrix.target == 'aarch64-unknown-linux-gnu' }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { target: x86_64-unknown-linux-gnu, os: ubuntu-latest, manylinux: auto, container: "", args: "--release --out dist" }
+          # ubuntu-24.04, not -latest: the shared test wheel is a plain
+          # `linux_x86_64` build, so it is only importable on the image family
+          # that built it. `latest` began rolling to 26.04 mid-release and the
+          # Python 3.9 job then failed on the newer glibc.
+          - { target: x86_64-unknown-linux-gnu, os: ubuntu-24.04, manylinux: auto, container: "", args: "--release --out dist" }
           # glibc ARM: without this row every Raspberry Pi / Graviton user falls
           # back to the sdist, which needs a Rust toolchain. `container: auto`
           # asks maturin to cross-compile inside a manylinux image.
-          - { target: aarch64-unknown-linux-gnu, os: ubuntu-latest, manylinux: auto, container: "auto", args: "--release --out dist" }
-          - { target: x86_64-unknown-linux-musl, os: ubuntu-latest, manylinux: musllinux_1_2, container: "off", args: "--release --out dist --zig" }
-          - { target: aarch64-unknown-linux-musl, os: ubuntu-latest, manylinux: musllinux_1_2, container: "off", args: "--release --out dist --zig" }
+          - { target: aarch64-unknown-linux-gnu, os: ubuntu-24.04, manylinux: auto, container: "auto", args: "--release --out dist" }
+          - { target: x86_64-unknown-linux-musl, os: ubuntu-24.04, manylinux: musllinux_1_2, container: "off", args: "--release --out dist --zig" }
+          - { target: aarch64-unknown-linux-musl, os: ubuntu-24.04, manylinux: musllinux_1_2, container: "off", args: "--release --out dist --zig" }
           - { target: x86_64-apple-darwin, os: macos-15, manylinux: "", container: "", args: "--release --out dist" }
           - { target: aarch64-apple-darwin, os: macos-15, manylinux: "", container: "", args: "--release --out dist" }
           - { target: x86_64-pc-windows-msvc, os: windows-latest, manylinux: "", container: "", args: "--release --out dist" }
@@ -326,7 +345,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { label: linux-x86_64, os: ubuntu-latest, pattern: "*-manylinux*_x86_64.whl" }
+          - { label: linux-x86_64, os: ubuntu-24.04, pattern: "*-manylinux*_x86_64.whl" }
           - { label: macos-arm64, os: macos-15, pattern: "*-macosx*_arm64.whl" }
           - { label: windows-x86_64, os: windows-latest, pattern: "*-win_amd64.whl" }
     steps:
@@ -350,7 +369,7 @@ jobs:
           python -c "import rishe; print(rishe.normalize('مي كنم')); print(rishe.process('سلام دنیا'))"
 
   sdist:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: PyO3/maturin-action@v1
@@ -374,7 +393,7 @@ jobs:
     # the run loudly.
     needs: [rust, rust-models, msrv, features, python-tests, python-tests-windows, examples, wheels, wheel-smoke, sdist, docs, pack-tests]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       id-token: write
     steps:
@@ -397,7 +416,7 @@ jobs:
   publish-crate:
     needs: [rust, rust-models, msrv, features, python-tests, python-tests-windows, examples, wheels, wheel-smoke, sdist, docs, pack-tests]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -425,7 +444,7 @@ jobs:
   publish-release:
     needs: [publish-pypi, publish-crate]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:

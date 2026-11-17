@@ -11,6 +11,14 @@ in the pack manifest and on the model repository.
 
 ## [1.0.3] - 2026-11-17
 
+### Changed
+
+- **The `aarch64-unknown-linux-gnu` wheel is not part of 1.0.3.** `ring` 0.17.14
+  cannot assemble its ARM asm in the current manylinux cross image, so that
+  build is allowed to fail without blocking the release: ARM64 Linux installs
+  from the sdist, which builds normally with Rust 1.91. Every other wheel is
+  unaffected.
+
 ### Fixed
 
 - **`spell_correct` no longer rewrites forms the morphology knows.** `زدم` (from

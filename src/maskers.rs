@@ -13,7 +13,7 @@ const OFFENSIVE_WORDS: &str = include_str!("../data/offensive_words.txt");
 /// Masker names used, in this order, when a caller gives none.
 ///
 /// One list for the crate, both CLIs and the Python package; a new masker is
-/// added here only if it is safe to run on every text. [`apply_chain`] shields
+/// added here only if it is safe to run on every text. `apply_chain` shields
 /// the `<URL>`/`<EMAIL>` placeholders, so the later maskers cannot eat them.
 pub const DEFAULT_MASKERS: [&str; 10] = [
     "url",
