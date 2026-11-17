@@ -21,7 +21,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, windows-latest, macos-latest]
+        os: [ubuntu-24.04, windows-latest, macos-15-intel]
     steps:
       - uses: actions/checkout@v4
       - run: python scripts/api_surface.py --check
@@ -358,7 +358,10 @@ jobs:
   # one could publish green. Each row installs the artifact built for its own
   # platform and calls into it. The musllinux and aarch64-musl wheels are not
   # covered here: running them needs an emulated Alpine container, where the
-  # `actions/download-artifact` node action is unavailable.
+  # `actions/download-artifact` node action is unavailable. The arm64 macOS
+  # wheel is cross-compiled and not smoked either: its runner is the same
+  # capacity-constrained arm64 pool that kept cancelling jobs, so the Intel
+  # macOS wheel carries the macOS smoke instead.
   wheel-smoke:
     name: wheel smoke (${{ matrix.label }})
     needs: wheels
@@ -368,7 +371,7 @@ jobs:
       matrix:
         include:
           - { label: linux-x86_64, os: ubuntu-24.04, pattern: "*-manylinux*_x86_64.whl" }
-          - { label: macos-arm64, os: macos-15, pattern: "*-macosx*_arm64.whl" }
+          - { label: macos-x86_64, os: macos-15-intel, pattern: "*-macosx*_x86_64.whl" }
           - { label: windows-x86_64, os: windows-latest, pattern: "*-win_amd64.whl" }
     steps:
       - uses: actions/download-artifact@v4
