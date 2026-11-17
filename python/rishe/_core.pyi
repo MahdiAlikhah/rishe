@@ -18,6 +18,15 @@ class JalaliDate:
     def __init__(self, year: int, month: int, day: int) -> None:
         """Create a Jalali date, raising ValueError when it does not exist."""
         ...
+    def __eq__(self, other: object) -> bool:
+        """Compare by year, month and day, not by wrapper identity."""
+        ...
+    def __ne__(self, other: object) -> bool: ...
+    def __lt__(self, other: "JalaliDate") -> bool: ...
+    def __le__(self, other: "JalaliDate") -> bool: ...
+    def __gt__(self, other: "JalaliDate") -> bool: ...
+    def __ge__(self, other: "JalaliDate") -> bool: ...
+    def __hash__(self) -> int: ...
     @staticmethod
     def parse(text: str) -> Optional["JalaliDate"]:
         """Parse a Jalali date, returning None when the text is not a date.
@@ -142,7 +151,8 @@ class ModelPack:
     def tags(self, text: str) -> List[TaggedToken]:
         """Tag text into spans, one per word, with character offsets.
 
-        Words beyond max_len are dropped.
+        Input past max_len pieces is tagged in several passes. A word too long to
+        fit at all is skipped; a call whose only word cannot fit raises ValueError.
         """
         ...
     def tags_batch(self, texts: List[str]) -> List[List[TaggedToken]]:
@@ -151,7 +161,8 @@ class ModelPack:
     def tags_from_words(self, words: List[str]) -> List[Tuple[str, str]]:
         """Tag pre-tokenized words, returning text and label pairs.
 
-        Words beyond max_len are dropped.
+        Input past max_len pieces is tagged in several passes. A word too long to
+        fit at all is skipped; a call whose only word cannot fit raises ValueError.
         """
         ...
     def entities(self, text: str) -> List[Entity]:

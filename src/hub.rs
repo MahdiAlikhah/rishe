@@ -4,7 +4,7 @@ use std::env;
 use std::fs::{self, File};
 use std::io::{IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const MODELS: &[(&str, &str, &str, &str)] = &[
     (
@@ -132,6 +132,17 @@ fn require_name<'a>(args: &'a [String], message: &str) -> Result<&'a str, HubErr
         .ok_or_else(|| HubError::Usage(message.to_string()))
 }
 
+/// Refuse a digest that is not 64 hex digits before anything is downloaded: a
+/// typo would otherwise cost the whole transfer before the checksum rejects it.
+fn validate_sha(sha: &str) -> Result<(), HubError> {
+    if sha.len() != 64 || !sha.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(HubError::Runtime(
+            "--sha256 must be a 64-character hex digest".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 /// Infer a cache file name from a URL, or `None` when it cannot be a plain name.
 ///
 /// The result is joined onto the cache directory, so it must stay one component:
@@ -208,11 +219,7 @@ fn pull(args: &[String]) -> Result<(), HubError> {
                 model_names()
             ))
         })?;
-        if sha.len() != 64 {
-            return Err(HubError::Runtime(
-                "--sha256 must be a 64-character hex digest".to_string(),
-            ));
-        }
+        validate_sha(&sha)?;
         let filename = infer_filename(name).ok_or_else(|| {
             HubError::Runtime(
                 "cannot infer a filename from the URL; it must end in a plain file name"
@@ -298,7 +305,19 @@ fn info(name: &str) -> Result<(), String> {
 }
 
 fn path(name: &str) -> Result<(), String> {
-    match cached_model(name)? {
+    // Unlike `cached_model`, this also resolves packs: `docs/api.md` documents
+    // `hub.path("pos-compact")` and the Python implementation already does.
+    let found = if MODELS.iter().any(|(model, _, _, _)| *model == name) {
+        cached_model(name)?
+    } else if PACKS.iter().any(|(pack, _)| *pack == name) {
+        cached_pack(name)?
+    } else {
+        return Err(format!(
+            "unknown model or pack {name:?}; known models: {}",
+            model_names()
+        ));
+    };
+    match found {
         Some(path) => {
             println!("{}", path.display());
             Ok(())
@@ -332,12 +351,20 @@ fn remove(name: &str) -> Result<(), String> {
     if part.is_file() {
         targets.push(part);
     }
+    // A stale lock from a killed process is invisible to this command, so a
+    // removal clears it too; otherwise the next pull is refused for an hour.
+    let lock = lock_path(&path);
+    if lock.is_file() {
+        targets.push(lock);
+    }
     // An interrupted `load_manifest` leaves a part file in the cache root that no
     // model or pack owns, so a pack removal also clears it.
     if is_pack {
-        let manifest_part = part_path(&cache_dir()?.join("rishe-models-manifest.json"));
-        if manifest_part.is_file() {
-            targets.push(manifest_part);
+        let manifest = cache_dir()?.join("rishe-models-manifest.json");
+        for stale in [part_path(&manifest), lock_path(&manifest)] {
+            if stale.is_file() {
+                targets.push(stale);
+            }
         }
     }
     for file in &targets {
@@ -368,7 +395,10 @@ fn verify(name: &str) -> Result<bool, String> {
 
 fn pull_pack(name: &str, task: &str, force: bool) -> Result<PathBuf, String> {
     let target = cache_dir()?.join(name);
-    if !force && PACK_REQUIRED.iter().all(|file| target.join(file).is_file()) {
+    // A full-looking directory is not a valid pack: an older manifest or an
+    // interrupted download leaves the same three files behind. Verify the hashes
+    // before returning.
+    if !force && verify_pack(name, task)? {
         return Ok(target);
     }
     fs::create_dir_all(&target).map_err(|error| error.to_string())?;
@@ -430,11 +460,13 @@ fn parse_manifest(text: &str) -> Result<Value, String> {
 
 fn load_manifest() -> Result<Value, String> {
     let path = cache_dir()?.join("rishe-models-manifest.json");
+    // The manifest is sha-pinned, so a cached copy with the right digest is the
+    // same file; re-fetching it costs a round trip and fails offline for nothing.
     download(
         &format!("{}/manifest.json", pack_base()),
         &path,
         PACK_MANIFEST_SHA256,
-        true,
+        false,
     )?;
     let text = fs::read_to_string(&path).map_err(|error| error.to_string())?;
     parse_manifest(&text)
@@ -524,6 +556,92 @@ fn part_path(target: &Path) -> PathBuf {
     PathBuf::from(part)
 }
 
+/// Sibling `<name>.lock` file that marks a download in progress.
+fn lock_path(target: &Path) -> PathBuf {
+    let mut lock = target.as_os_str().to_os_string();
+    lock.push(".lock");
+    PathBuf::from(lock)
+}
+
+/// A lock this old was left by a process that died mid-download.
+const STALE_LOCK: Duration = Duration::from_secs(3600);
+
+/// Held for the whole download and removed on drop.
+struct DownloadLock {
+    path: PathBuf,
+    token: String,
+}
+
+impl DownloadLock {
+    /// Refresh the mtime used for stale-lock takeover: a slow download must not
+    /// look like a dead process after the first hour.
+    fn touch(&self) {
+        if let Ok(file) = fs::OpenOptions::new().write(true).open(&self.path) {
+            let _ = file.set_modified(SystemTime::now());
+        }
+    }
+}
+
+impl Drop for DownloadLock {
+    fn drop(&mut self) {
+        // Remove the lock only while it is still ours: a download that ran past
+        // the stale window has already had its lock taken over by another process.
+        if fs::read_to_string(&self.path).is_ok_and(|token| token == self.token) {
+            let _ = fs::remove_file(&self.path);
+        }
+    }
+}
+
+/// Claim `target` so two processes never append to one `.part` file and rename
+/// it out from under each other.
+///
+/// A second pull fails with a clear message instead of corrupting the first. A
+/// lock older than [`STALE_LOCK`] is taken over, so a crash does not block the
+/// download forever.
+fn acquire_download_lock(target: &Path) -> Result<DownloadLock, String> {
+    let path = lock_path(target);
+    let token = format!(
+        "{} {}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_nanos())
+            .unwrap_or(0)
+    );
+    for _ in 0..2 {
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(mut file) => {
+                // The token lets `drop` tell its own lock from one it lost.
+                let _ = file.write_all(token.as_bytes());
+                return Ok(DownloadLock { path, token });
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                let stale = fs::metadata(&path)
+                    .and_then(|metadata| metadata.modified())
+                    .ok()
+                    .and_then(|time| time.elapsed().ok())
+                    .is_some_and(|age| age > STALE_LOCK);
+                if stale {
+                    let _ = fs::remove_file(&path);
+                    continue;
+                }
+                return Err(format!(
+                    "another rishe process is downloading {}; retry when it finishes",
+                    target.display()
+                ));
+            }
+            Err(error) => {
+                return Err(format!("cannot create {}: {error}", path.display()));
+            }
+        }
+    }
+    Err(format!("cannot lock {}", target.display()))
+}
+
 /// Why one download attempt did not finish.
 enum Attempt {
     /// The remote bytes are wrong; another attempt fetches the same bytes again.
@@ -536,10 +654,15 @@ fn download(url: &str, target: &Path, sha: &str, force: bool) -> Result<(), Stri
     if !force && target.is_file() && sha256_file(target)? == sha.to_ascii_lowercase() {
         return Ok(());
     }
-    let part = part_path(target);
     if let Some(parent) = target.parent() {
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
+    let lock = acquire_download_lock(target)?;
+    download_locked(url, target, sha, &lock)
+}
+
+fn download_locked(url: &str, target: &Path, sha: &str, lock: &DownloadLock) -> Result<(), String> {
+    let part = part_path(target);
     let agent = ureq::AgentBuilder::new()
         .timeout_connect(Duration::from_secs(15))
         .timeout_read(Duration::from_secs(120))
@@ -559,6 +682,23 @@ fn download(url: &str, target: &Path, sha: &str, force: bool) -> Result<(), Stri
             let response = match request.call() {
                 Ok(response) => response,
                 Err(ureq::Error::Status(416, _)) if offset > 0 => {
+                    // A complete-but-unrenamed part answers a resume with 416;
+                    // promote it instead of downloading the whole body again.
+                    let complete = fs::metadata(&part)
+                        .map(|metadata| metadata.len() == offset)
+                        .unwrap_or(false);
+                    if complete
+                        && sha256_file(&part).is_ok_and(|actual| actual == sha.to_ascii_lowercase())
+                    {
+                        fs::rename(&part, target).map_err(|error| {
+                            Attempt::Fatal(format!(
+                                "cannot rename {} to {}: {error}",
+                                part.display(),
+                                target.display()
+                            ))
+                        })?;
+                        return Ok(());
+                    }
                     // The prefix does not belong to this remote object; start over.
                     let _ = fs::remove_file(&part);
                     return Err(Attempt::Retry(format!(
@@ -586,7 +726,7 @@ fn download(url: &str, target: &Path, sha: &str, force: bool) -> Result<(), Stri
                 File::create(&part).map_err(|error| io(error.to_string()))?
             };
             let mut reader = response.into_reader();
-            copy_with_progress(&mut reader, &mut file, start, expected).map_err(io)?;
+            copy_with_progress(&mut reader, &mut file, start, expected, lock).map_err(io)?;
             // Flush to disk before the rename promotes the part file to the
             // artifact: without the fsync a crash here leaves the target short or
             // empty, which destroys a file that was good before.
@@ -612,7 +752,16 @@ fn download(url: &str, target: &Path, sha: &str, force: bool) -> Result<(), Stri
                     ))
                 });
             }
-            fs::rename(&part, target).map_err(|error| io(error.to_string()))?;
+            // A rename failure is local (the target is a directory or held by
+            // another program), so retrying re-downloads the body for nothing.
+            // The part stays: it is complete and the next attempt can promote it.
+            fs::rename(&part, target).map_err(|error| {
+                Attempt::Fatal(format!(
+                    "cannot rename {} to {}: {error}",
+                    part.display(),
+                    target.display()
+                ))
+            })?;
             Ok(())
         })();
         match result {
@@ -633,6 +782,7 @@ fn copy_with_progress(
     file: &mut File,
     mut written: u64,
     expected: Option<u64>,
+    lock: &DownloadLock,
 ) -> Result<(), String> {
     let terminal = std::io::stderr().is_terminal();
     let mut report = (written / (64 << 20) + 1) * (64 << 20);
@@ -647,7 +797,14 @@ fn copy_with_progress(
         }
         file.write_all(&buffer[..read])
             .map_err(|error| error.to_string())?;
+        // Keep the lock fresh: `acquire_download_lock` only trusts the mtime.
+        lock.touch();
         written += read as u64;
+        if let Some(total) = expected {
+            if written > total {
+                return Err(format!("server sent more than {total} bytes"));
+            }
+        }
         if terminal && written >= report {
             match expected {
                 Some(total) if total > 0 => eprint!(
@@ -681,15 +838,7 @@ fn sha256_file(path: &Path) -> Result<String, String> {
         }
         digest.update(&buffer[..read]);
     }
-    Ok(encode_hex(&digest.finalize()))
-}
-
-fn encode_hex(bytes: &[u8]) -> String {
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        out.push_str(&format!("{byte:02x}"));
-    }
-    out
+    Ok(format!("{:x}", digest.finalize()))
 }
 
 fn directory_size(path: &Path) -> Result<u64, String> {
@@ -808,7 +957,7 @@ mod tests {
     fn digest(body: &[u8]) -> String {
         let mut hasher = Sha256::new();
         hasher.update(body);
-        encode_hex(&hasher.finalize())
+        format!("{:x}", hasher.finalize())
     }
 
     fn scratch(name: &str) -> std::path::PathBuf {
@@ -845,6 +994,103 @@ mod tests {
             let error = manifest_schema(&manifest(text)).unwrap_err();
             assert!(error.contains("reads schema 1"), "{text}: {error}");
         }
+    }
+
+    #[test]
+    fn a_held_lock_refuses_a_second_download() {
+        let root = scratch("download-lock");
+        let target = root.join("model.bin");
+        std::fs::write(root.join("model.bin.lock"), b"").expect("lock");
+        let error = download("http://127.0.0.1:1/x", &target, &"0".repeat(64), false)
+            .expect_err("a held lock must refuse the download");
+        assert!(
+            error.contains("another rishe process is downloading"),
+            "{error}"
+        );
+        assert!(
+            !root.join("model.bin.part").exists(),
+            "no download may start while another holds the lock"
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn a_sha_that_is_not_hex_is_rejected_before_the_download() {
+        // Length alone used to pass, so a typo paid for the whole transfer.
+        let error = pull(&[
+            "https://example.invalid/model.bin".to_string(),
+            "--sha256".to_string(),
+            "z".repeat(64),
+        ])
+        .expect_err("a non-hex digest must be refused");
+        assert!(error.to_string().contains("hex digest"), "{error}");
+        // A real hex digest gets past validation and fails looking for the host.
+        let valid = "0".repeat(64);
+        let error = pull(&[
+            "https://127.0.0.1:1/model.bin".to_string(),
+            "--sha256".to_string(),
+            valid,
+        ])
+        .expect_err("the download cannot succeed");
+        assert!(!error.to_string().contains("hex digest"), "{error}");
+    }
+
+    #[test]
+    fn a_taken_over_lock_is_not_deleted_by_its_previous_owner() {
+        // The old download kept running past the stale window; on finish it used
+        // to delete the new owner's lock and let a third process in.
+        let root = scratch("download-lock-owner");
+        let target = root.join("model.bin");
+        let first = acquire_download_lock(&target).expect("first lock");
+        let lock = lock_path(&target);
+        let file = fs::File::options().write(true).open(&lock).expect("open");
+        file.set_modified(std::time::SystemTime::now() - Duration::from_secs(7200))
+            .expect("backdate the lock");
+        drop(file);
+        let second = acquire_download_lock(&target).expect("take over the stale lock");
+        drop(first);
+        assert!(lock.exists(), "the previous owner deleted the new lock");
+        drop(second);
+        assert!(!lock.exists(), "the owner left its lock behind");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn a_body_longer_than_its_declared_length_is_refused() {
+        // The length was parsed only to print a percentage, so an endless mirror
+        // wrote until the disk was full.
+        let root = scratch("download-length");
+        let target = root.join("body.bin");
+        let lock = acquire_download_lock(&target).expect("lock");
+        let mut sink = File::create(&target).expect("body");
+        let mut body = std::io::Cursor::new(vec![0_u8; 4096]);
+        let error = copy_with_progress(&mut body, &mut sink, 0, Some(1024), &lock)
+            .expect_err("a body past the declared length must not be written");
+        assert!(error.contains("more than 1024 bytes"), "{error}");
+        drop(lock);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn a_stale_lock_is_taken_over() {
+        let root = scratch("download-stale-lock");
+        let target = root.join("model.bin");
+        let lock = root.join("model.bin.lock");
+        std::fs::write(&lock, b"").expect("lock");
+        let file = fs::File::options()
+            .write(true)
+            .open(&lock)
+            .expect("open the lock");
+        file.set_modified(std::time::SystemTime::now() - Duration::from_secs(7200))
+            .expect("backdate the lock");
+        drop(file);
+
+        let body = b"fresh payload".to_vec();
+        let server = Serve::start(vec![ok_response(&body)]);
+        download(&server.url, &target, &digest(&body), false).expect("download");
+        assert_eq!(std::fs::read(&target).expect("target"), body);
+        assert!(!lock.exists(), "lock left behind");
+        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]

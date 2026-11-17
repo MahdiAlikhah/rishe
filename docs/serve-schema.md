@@ -20,7 +20,9 @@ part of it (see [Envelope](#envelope)).
 - A malformed line or a failed command produces the error envelope for that line
   only. The server keeps reading and answering; per-request errors never change
   the exit status. A line that is not valid UTF-8 is a malformed line: it gets
-  the error envelope and the server keeps serving.
+  the error envelope and the server keeps serving. A request line longer than
+  1 MiB is also malformed: it gets the error envelope, the rest of that line is
+  discarded, and the server keeps serving from the next line.
 - On end of input (EOF) the server exits with status 0, including after lines
   that produced errors.
 
@@ -61,7 +63,7 @@ bytes the Rust binary writes today: compact JSON with the object keys in
 alphabetical order. The console script writes the same objects without the
 compact separators (`{"ok": true, "result": ...}`). Whitespace and object field
 order are not part of the protocol; clients must not depend on them. Error
-message wording is not part of the protocol either â€” the shape is.
+message wording is not part of the protocol either — the shape is.
 
 ## Version handshake
 
@@ -107,13 +109,13 @@ reproduce the response shape; values that come from a model pack
 Request:
 
 ```json
-{"command":"normalize","text":"Ù…ÙŠ ÙƒÙ†Ù…"}
+{"command":"normalize","text":"مي كنم"}
 ```
 
 Response: the normalized text as a string.
 
 ```json
-{"ok":true,"result":"Ù…ÛŒâ€ŒÚ©Ù†Ù…"}
+{"ok":true,"result":"می‌کنم"}
 ```
 
 ### tokenize
@@ -121,14 +123,14 @@ Response: the normalized text as a string.
 Request:
 
 ```json
-{"command":"tokenize","text":"Ø³Ù„Ø§Ù… Ø¯Ù†ÛŒØ§"}
+{"command":"tokenize","text":"سلام دنیا"}
 ```
 
 Response: an array of surface-token strings. This does not normalize; it is the
 same tokenization as `rishe tokenize`.
 
 ```json
-{"ok":true,"result":["Ø³Ù„Ø§Ù…","Ø¯Ù†ÛŒØ§"]}
+{"ok":true,"result":["سلام","دنیا"]}
 ```
 
 ### lemmatize
@@ -136,13 +138,13 @@ same tokenization as `rishe tokenize`.
 Request:
 
 ```json
-{"command":"lemmatize","text":"Ù…ÛŒâ€ŒØ±ÙˆÙ…"}
+{"command":"lemmatize","text":"می‌روم"}
 ```
 
 Response: an array of lemma strings, one per token.
 
 ```json
-{"ok":true,"result":["Ø±ÙØª"]}
+{"ok":true,"result":["رفت"]}
 ```
 
 ### mask
@@ -252,7 +254,7 @@ Response: an array of words with their dependency head.
 Request:
 
 ```json
-{"command":"embed","text":"Ú©ØªØ§Ø¨"}
+{"command":"embed","text":"کتاب"}
 ```
 
 Response: the mean embedding vector, an array of numbers with one entry per
@@ -276,8 +278,8 @@ Request fields:
 Response: up to `n` `{"word","score"}` objects, best score first.
 
 ```json
-{"command":"similar","word":"Ú©ØªØ§Ø¨","n":2}
-{"ok":true,"result":[{"score":0.22518165409564972,"word":"Ø®ÙˆØ§Ù†Ø¯Ù…"},{"score":-0.18090607225894928,"word":"Ø±Ø§"}]}
+{"command":"similar","word":"کتاب","n":2}
+{"ok":true,"result":[{"score":0.22518165409564972,"word":"خواندم"},{"score":-0.18090607225894928,"word":"را"}]}
 ```
 
 A word that is not in the vocabulary is not an error on the server: the response
@@ -293,12 +295,12 @@ Request fields:
 | `b` | string | second word; required |
 
 ```json
-{"command":"similarity","a":"Ú©ØªØ§Ø¨","b":"Ú©ØªØ§Ø¨"}
+{"command":"similarity","a":"کتاب","b":"کتاب"}
 {"ok":true,"result":{"score":1.0000001192092896}}
 ```
 
 If either word is out of vocabulary the response is an error:
-`out of vocabulary: "Ú©ØªØ§Ø¨" or "Ù†Ø§Ù…ÙˆØ¬ÙˆØ¯"`. A missing `b` gives
+`out of vocabulary: "کتاب" or "ناموجود"`. A missing `b` gives
 `similarity needs \`a\` and \`b\``.
 
 ## Failure modes
@@ -306,7 +308,7 @@ If either word is out of vocabulary the response is an error:
 The envelope and the process stay alive in every case below; the error is for the
 one request line that caused it. The `error` column shows the Rust binary's
 wording; the console script's messages differ in places, which this protocol
-allows â€” match on the `ok`/`error` envelope, not on the text.
+allows — match on the `ok`/`error` envelope, not on the text.
 
 | situation | response `error` |
 |---|---|

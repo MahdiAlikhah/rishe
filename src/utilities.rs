@@ -1,4 +1,4 @@
-use crate::normalize_ops::PERSIAN_LETTERS;
+use crate::normalize_ops::is_persian_letter;
 use crate::transliterate::persian_digit;
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder, MatchKind};
 use std::sync::OnceLock;
@@ -70,10 +70,16 @@ pub fn number_to_words(number: i64) -> String {
 /// Render a Persian or ASCII digit string in Persian words, using `ممیز` for
 /// decimals; errors on malformed or out-of-range input.
 pub fn number_to_words_text(text: &str) -> Result<String, String> {
+    // Same separators the tokenizer accepts: `٫` is the decimal point and `٬`
+    // groups thousands. Left alone they made `۱٫۵` unparseable.
     let normalized: String = text
         .trim()
         .chars()
-        .map(|ch| persian_digit(ch).unwrap_or(ch))
+        .filter_map(|ch| match ch {
+            '\u{066B}' => Some('.'),
+            '\u{066C}' | ',' => None,
+            _ => persian_digit(ch).or(Some(ch)),
+        })
         .collect();
 
     let (negative, body) = match normalized.strip_prefix('-') {
@@ -100,10 +106,19 @@ pub fn number_to_words_text(text: &str) -> Result<String, String> {
         if decimal.is_empty() || !decimal.chars().all(|ch| ch.is_ascii_digit()) {
             return Err(format!("invalid numeric input: {text}"));
         }
-        let decimal_value: u64 = decimal
-            .parse()
-            .map_err(|_| format!("number out of range: {text}"))?;
-        words = format!("{words} ممیز {}", unsigned_to_words(decimal_value));
+        // Leading zeros are words of their own: `3.05` is "سه ممیز صفر پنج",
+        // not "سه ممیز پنج". Parsing the stripped part also keeps a run of
+        // zeros from overflowing the value.
+        let stripped = decimal.trim_start_matches('0');
+        let mut decimal_words: Vec<String> =
+            vec![UNITS[0].to_string(); decimal.len() - stripped.len()];
+        if !stripped.is_empty() {
+            let decimal_value: u64 = stripped
+                .parse()
+                .map_err(|_| format!("number out of range: {text}"))?;
+            decimal_words.push(unsigned_to_words(decimal_value));
+        }
+        words = format!("{words} ممیز {}", decimal_words.join(" "));
     }
     if negative {
         words = format!("منفی {words}");
@@ -295,7 +310,7 @@ fn word_boundary(text: &str, start: usize, end: usize) -> bool {
 }
 
 fn is_word_char(ch: char) -> bool {
-    PERSIAN_LETTERS.contains(ch) || ch == '\u{200C}' || ch.is_ascii_alphanumeric()
+    is_persian_letter(ch) || ch.is_ascii_alphanumeric()
 }
 
 #[cfg(test)]
@@ -324,9 +339,22 @@ mod tests {
             "یک هزار و چهارصد و چهار"
         );
         assert_eq!(number_to_words_text("3.14").unwrap(), "سه ممیز چهارده");
+        // A leading zero in the fraction is a word: `3.05` and `3.5` differ.
+        assert_eq!(number_to_words_text("3.05").unwrap(), "سه ممیز صفر پنج");
+        assert_eq!(number_to_words_text("3.5").unwrap(), "سه ممیز پنج");
+        assert_eq!(number_to_words_text("3.00").unwrap(), "سه ممیز صفر صفر");
         assert_eq!(number_to_words_text("-0.5").unwrap(), "منفی صفر ممیز پنج");
         assert!(number_to_words_text("12a").is_err());
         assert!(number_to_words_text("1.").is_err());
+    }
+
+    #[test]
+    fn arabic_number_separators_are_accepted() {
+        // `٬` groups thousands and `٫` is the decimal point; leaving them in the
+        // string made `۱٫۵` unparseable and `۱۲٬۰۰۰` three tokens.
+        assert_eq!(number_to_words_text("۱۲٬۰۰۰").unwrap(), "دوازده هزار");
+        assert_eq!(number_to_words_text("۱٫۵").unwrap(), "یک ممیز پنج");
+        assert_eq!(number_to_words_text("۱,۵").unwrap(), "پانزده");
     }
 
     #[test]

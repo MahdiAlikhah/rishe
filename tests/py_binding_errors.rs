@@ -11,7 +11,7 @@ fn number_to_words_reports_an_out_of_range_int() {
     pyo3::prepare_freethreaded_python();
     Python::with_gil(|py| {
         let pipeline =
-            Pipeline::py_new(true, true, true, None, None, None, None).expect("pipeline");
+            Pipeline::py_new(py, true, true, true, None, None, None, None).expect("pipeline");
         let value = py.eval_bound("10**25", None, None).expect("big int");
         let error = pipeline.py_number_to_words(&value).unwrap_err();
         assert!(

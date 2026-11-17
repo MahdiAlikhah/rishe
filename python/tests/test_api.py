@@ -82,6 +82,30 @@ class FrontDoorTest(unittest.TestCase):
         self.assertIn("N", masked)
         self.assertNotIn("۱۴۰۲", masked)
         self.assertEqual(len(rishe.DEFAULT_MASKERS), 10)
+        # The default chain keeps the placeholders it just wrote: `html` used to
+        # read `<URL>` as a tag and delete it.
+        self.assertEqual(rishe.mask("به https://a.b برو"), "به <URL> برو")
+        self.assertNotIn("http", rishe.mask("به https://a.b برو"))
+
+    def test_process_batch_treats_one_string_as_one_document(self):
+        # A bare string used to be iterated as characters, giving one doc each.
+        self.assertEqual(len(rishe.process_batch("سلام دنیا")), 1)
+        self.assertEqual(len(rishe.process_batch(["سلام", "دنیا"])), 2)
+
+    def test_default_mask_keeps_arabic_coded_persian_letters(self):
+        # `non_persian` is in the default list; deleting these letters shortened
+        # the word on the default path.
+        self.assertEqual(rishe.mask("مصطفى كبيرة"), "مصطفى كبيرة")
+        self.assertEqual(rishe.mask("او كتابي خواند"), "او كتابي خواند")
+
+    def test_textrank_phrases_are_adjacent_words(self):
+        phrases = rishe.keywords("کتاب خوب بود و خانه بزرگ", n=5, method="textrank")
+        self.assertNotIn("کتاب خانه", phrases)
+
+    def test_spell_correct_leaves_known_forms_alone(self):
+        pipe = rishe.pipeline()
+        # `زدم` is a form of `زدن`; the checker used to turn it into `دم`.
+        self.assertEqual(pipe.spell_correct("زنگ زدم"), "زنگ زدم")
 
     def test_keywords(self):
         self.assertLessEqual(len(rishe.keywords("کتاب خوب و مفید است", n=2)), 2)
@@ -90,6 +114,9 @@ class FrontDoorTest(unittest.TestCase):
         )
         with self.assertRaises(ValueError):
             rishe.keywords("کتاب", method="magic")
+        # A negative count is a bad argument, not an OverflowError from Rust.
+        with self.assertRaises(ValueError):
+            rishe.keywords("کتاب", n=0)
 
 class RemovedAliasesTest(unittest.TestCase):
     """The 0.11 aliases are gone in 1.0.0: calling one is an AttributeError."""

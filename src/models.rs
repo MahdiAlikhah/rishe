@@ -12,6 +12,25 @@ use crate::tokenizer::Tokenizer as WordTokenizer;
 
 tract::impl_ndarray_interop!();
 
+/// Counts characters up to a byte offset, continuing from the previous call.
+/// Tokens arrive in text order, so this turns a per-token `text[..at].chars()`
+/// scan into one pass over the text.
+#[derive(Default)]
+struct CharOffset {
+    byte: usize,
+    chars: usize,
+}
+
+impl CharOffset {
+    fn upto(&mut self, text: &str, byte: usize) -> usize {
+        if let Some(slice) = text.get(self.byte..byte) {
+            self.chars += slice.chars().count();
+            self.byte = byte;
+        }
+        self.chars
+    }
+}
+
 /// A word with a POS tag and character offsets.
 #[cfg_attr(
     feature = "python",
@@ -182,19 +201,24 @@ fn maximum_arborescence(node_count: usize, root: usize, edges: &[ArcEdge]) -> Op
     }
     let contracted_root = component[root];
     let mut contracted = Vec::with_capacity(edges.len());
+    // Bucket the contracted edges by head, so putting the original edges back only
+    // looks at one node's incoming edges instead of rescanning every edge per node.
+    let mut incoming_edges: Vec<Vec<ArcEdge>> = vec![Vec::new(); components];
     for edge in edges {
         let from = component[edge.from];
         let to = component[edge.to];
         if from == to {
             continue;
         }
-        contracted.push(ArcEdge {
+        let contracted_edge = ArcEdge {
             from,
             to,
             weight: edge.weight - incoming[edge.to],
             from_original: edge.from,
             to_original: edge.to,
-        });
+        };
+        contracted.push(contracted_edge);
+        incoming_edges[to].push(contracted_edge);
     }
     let contracted_parent = maximum_arborescence(components, contracted_root, &contracted)?;
     let mut result = parent;
@@ -202,9 +226,9 @@ fn maximum_arborescence(node_count: usize, root: usize, edges: &[ArcEdge]) -> Op
         if node == contracted_root {
             continue;
         }
-        if let Some(edge) = contracted
+        if let Some(edge) = incoming_edges[node]
             .iter()
-            .filter(|edge| edge.from == component_parent && edge.to == node)
+            .filter(|edge| edge.from == component_parent)
             .max_by(|left, right| left.weight.total_cmp(&right.weight))
         {
             result[edge.to_original] = edge.from_original;
@@ -269,7 +293,9 @@ pub struct ModelPack {
     runnable: Runnable,
 }
 
-type EncodedWords = (Vec<i64>, Vec<usize>, Vec<String>);
+/// Encoded ids, per-word positions, the words kept, and how many input words
+/// were consumed (which can exceed `kept.len()` when a word has no pieces).
+type EncodedWords = (Vec<i64>, Vec<usize>, Vec<String>, usize);
 
 impl ModelPack {
     /// Load a pack directory holding `model.onnx`, `tokenizer.json` and
@@ -377,6 +403,7 @@ impl ModelPack {
         let words: Vec<&str> = tokens.iter().map(|token| token.text).collect();
         let tagged = self.tags_from_words(&words)?;
         let mut cursor = 0;
+        let mut chars = CharOffset::default();
         let mut result = Vec::with_capacity(tagged.len());
 
         for (word, tag) in tagged {
@@ -390,8 +417,8 @@ impl ModelPack {
             result.push(TaggedToken {
                 text: word,
                 tag,
-                start: text[..token.start].chars().count(),
-                end: text[..token.end].chars().count(),
+                start: chars.upto(text, token.start),
+                end: chars.upto(text, token.end),
             });
             cursor += offset + 1;
         }
@@ -435,6 +462,7 @@ impl ModelPack {
         let mut ids = Vec::with_capacity(self.max_len);
         let mut positions = Vec::new();
         let mut kept = Vec::new();
+        let mut visited = 0usize;
         ids.push(cls);
         for word in words {
             let encoding = self
@@ -445,12 +473,17 @@ impl ModelPack {
             if pieces.is_empty() {
                 match unk {
                     Some(unk) => pieces.push(unk),
-                    None => continue,
+                    None => {
+                        // Consumed but unrepresentable, so it keeps no tag.
+                        visited += 1;
+                        continue;
+                    }
                 }
             }
             if ids.len() + pieces.len() >= self.max_len {
                 break;
             }
+            visited += 1;
             positions.push(ids.len());
             ids.extend(pieces.into_iter().map(i64::from));
             kept.push((*word).to_owned());
@@ -459,15 +492,43 @@ impl ModelPack {
             return Ok(None);
         }
         ids.push(sep);
-        Ok(Some((ids, positions, kept)))
+        Ok(Some((ids, positions, kept, visited)))
     }
 
     /// Word-level single call: tag pre-tokenized words, returning `(word, tag)`.
+    ///
+    /// One model pass holds only the words that fit in `max_len` subword pieces,
+    /// so a longer input is tagged in several passes. It used to come back with
+    /// tags for the first ~190 words and nothing after them, with no error.
     pub fn tags_from_words(&self, words: &[&str]) -> Result<Vec<(String, String)>, String> {
-        let Some((ids, positions, kept)) = self.encode_words(words)? else {
-            return Ok(Vec::new());
-        };
+        let mut result = Vec::with_capacity(words.len());
+        let mut rest = words;
+        while !rest.is_empty() {
+            let Some((ids, positions, kept, visited)) = self.encode_words(rest)? else {
+                // A word whose own pieces do not fit cannot be tagged; skipping it
+                // keeps the words after it. A single such word leaves nothing to
+                // report, so it is an error rather than an empty list.
+                if result.is_empty() && rest.len() == 1 {
+                    return Err(format!(
+                        "one word is longer than the model's max_len ({}): {:?}",
+                        self.max_len, rest[0]
+                    ));
+                }
+                rest = &rest[1..];
+                continue;
+            };
+            result.extend(self.tag_once(ids, positions, kept)?);
+            rest = &rest[visited..];
+        }
+        Ok(result)
+    }
 
+    fn tag_once(
+        &self,
+        ids: Vec<i64>,
+        positions: Vec<usize>,
+        kept: Vec<String>,
+    ) -> Result<Vec<(String, String)>, String> {
         let shape = (1, ids.len());
         let input_ids = Array2::from_shape_vec(shape, ids)
             .map_err(|error| format!("invalid input shape: {error}"))?
@@ -510,12 +571,21 @@ impl ModelPack {
     }
 
     /// Dependency parse of `text`; `head` is zero-based or `None` for the root.
+    ///
+    /// The arc decoder scores a whole sentence at once, so a text past the
+    /// model's `max_len` is refused rather than parsed only up to the limit.
     pub fn depparse(&self, text: &str) -> Result<Vec<Dependency>, String> {
         let tokens = WordTokenizer::tokenize(text);
         let words: Vec<&str> = tokens.iter().map(|token| token.text).collect();
-        let Some((ids, positions, kept)) = self.encode_words(&words)? else {
+        let Some((ids, positions, kept, visited)) = self.encode_words(&words)? else {
             return Ok(Vec::new());
         };
+        if visited < words.len() {
+            return Err(format!(
+                "text is longer than the model's {}-piece limit; split it into shorter sentences",
+                self.max_len
+            ));
+        }
         let word_count = kept.len();
         let token_count = ids.len();
         let pad_id = self.tokenizer.token_to_id("[PAD]").unwrap_or(0) as i64;
@@ -636,6 +706,7 @@ impl ModelPack {
         check_labels("model", label_count, self.labels.len())?;
 
         let mut cursor = 0;
+        let mut chars = CharOffset::default();
         let mut result = Vec::with_capacity(word_count);
         for (index, word) in kept.iter().enumerate() {
             let Some(offset) = tokens[cursor..]
@@ -660,8 +731,8 @@ impl ModelPack {
                     Some(parent)
                 },
                 relation: self.labels[best].clone(),
-                start: text[..token.start].chars().count(),
-                end: text[..token.end].chars().count(),
+                start: chars.upto(text, token.start),
+                end: chars.upto(text, token.end),
             });
             cursor += offset + 1;
         }
@@ -673,6 +744,97 @@ impl ModelPack {
 mod tests {
     use super::*;
 
+    /// The slow, obviously correct answer: try every subset of edges that is a
+    /// legal arborescence and keep the heaviest.
+    fn brute_force_optimum(node_count: usize, root: usize, edges: &[ArcEdge]) -> f64 {
+        let mut best = f64::NEG_INFINITY;
+        for mask in 0u32..1 << edges.len() {
+            let incoming = |node: usize| {
+                (0..edges.len())
+                    .filter(|&index| mask >> index & 1 == 1 && edges[index].to == node)
+                    .count()
+            };
+            if (0..node_count).any(|node| node != root && incoming(node) != 1)
+                || incoming(root) != 0
+            {
+                continue;
+            }
+            let mut acyclic = true;
+            for start in 0..node_count {
+                if start == root {
+                    continue;
+                }
+                let mut node = start;
+                for _ in 0..node_count {
+                    if node == root {
+                        break;
+                    }
+                    let Some(index) = (0..edges.len())
+                        .find(|&index| mask >> index & 1 == 1 && edges[index].to == node)
+                    else {
+                        acyclic = false;
+                        break;
+                    };
+                    node = edges[index].from;
+                }
+                if node != root {
+                    acyclic = false;
+                }
+                if !acyclic {
+                    break;
+                }
+            }
+            if !acyclic {
+                continue;
+            }
+            let total: f64 = (0..edges.len())
+                .filter(|&index| mask >> index & 1 == 1)
+                .map(|index| edges[index].weight)
+                .sum();
+            if total > best {
+                best = total;
+            }
+        }
+        best
+    }
+
+    #[test]
+    fn the_arborescence_matches_a_brute_force_search() {
+        // The heaviest incoming edge of 1, 2 and 3 is the cycle 1 -> 2 -> 3 -> 1, so
+        // the contraction and the reconstruction of the original edges both run.
+        let graph = [
+            (0usize, 1usize, 4.0),
+            (0, 2, 4.5),
+            (0, 3, 3.0),
+            (1, 2, 5.0),
+            (2, 3, 5.0),
+            (3, 1, 5.0),
+            (1, 3, 0.5),
+            (3, 2, 0.25),
+        ];
+        let edges: Vec<ArcEdge> = graph
+            .iter()
+            .map(|&(from, to, weight)| ArcEdge {
+                from,
+                to,
+                weight,
+                from_original: from,
+                to_original: to,
+            })
+            .collect();
+        let parents = maximum_arborescence(4, 0, &edges).expect("every node is reachable");
+        let total: f64 = (1..4)
+            .map(|node| {
+                edges
+                    .iter()
+                    .find(|edge| edge.to == node && edge.from == parents[node])
+                    .expect("the parent edge exists")
+                    .weight
+            })
+            .sum();
+        assert_eq!(total, brute_force_optimum(4, 0, &edges));
+    }
+
     fn token(text: &str, tag: &str, start: usize, end: usize) -> TaggedToken {
         TaggedToken {
             text: text.to_owned(),
@@ -680,6 +842,18 @@ mod tests {
             start,
             end,
         }
+    }
+
+    #[test]
+    fn char_offsets_match_counting_from_the_start() {
+        // The incremental counter replaced `text[..at].chars().count()`; every
+        // boundary must still give the same answer, multi-byte text included.
+        let text = "کتاب\u{200C}ها 😀 خوب، دنیا";
+        let mut counter = CharOffset::default();
+        for (byte, _) in text.char_indices() {
+            assert_eq!(counter.upto(text, byte), text[..byte].chars().count());
+        }
+        assert_eq!(counter.upto(text, text.len()), text.chars().count());
     }
 
     #[test]
@@ -751,6 +925,72 @@ mod tests {
             Ok(tags) => panic!("20 declared labels for a 3-label model must fail, got {tags:?}"),
             Err(error) => assert!(error.contains("labels"), "{error}"),
         }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_long_input_is_tagged_in_chunks_instead_of_cut() {
+        // One pass held only the words that fit in `max_len` pieces, so every
+        // word past the limit came back without a tag and without an error.
+        let source =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/tiny-pack");
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("rishe-chunk-pack");
+        std::fs::create_dir_all(&dir).unwrap();
+        for entry in ["model.onnx", "tokenizer.json"] {
+            std::fs::copy(source.join(entry), dir.join(entry)).unwrap();
+        }
+        std::fs::write(
+            dir.join("labels.json"),
+            r#"{"task":"pos","labels":["A","B","C"],"max_len":8}"#,
+        )
+        .unwrap();
+
+        let pack = ModelPack::load(&dir).expect("the pack itself loads");
+        let words = vec!["کتاب"; 40];
+        let tagged = pack.tags_from_words(&words).expect("tag the long input");
+        assert_eq!(tagged.len(), words.len());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn one_over_long_word_does_not_drop_the_words_after_it() {
+        // `encode_words` refuses a word whose own pieces exceed `max_len`; the
+        // loop used to stop there and return tags only for the words before it.
+        let source =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/tiny-pack");
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("rishe-long-word-pack");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::copy(source.join("model.onnx"), dir.join("model.onnx")).unwrap();
+        std::fs::write(
+            dir.join("tokenizer.json"),
+            r###"{"version":"1.0","truncation":null,"padding":null,"added_tokens":[],"normalizer":null,"pre_tokenizer":{"type":"Whitespace"},"post_processor":null,"decoder":null,"model":{"type":"WordPiece","vocab":{"[PAD]":0,"[UNK]":1,"[CLS]":2,"[SEP]":3,"a":4,"##a":5},"unk_token":"[UNK]","continuing_subword_prefix":"##","max_input_chars_per_word":100}}"###,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("labels.json"),
+            r#"{"task":"pos","labels":["A","B","C"],"max_len":8}"#,
+        )
+        .unwrap();
+
+        let pack = ModelPack::load(&dir).expect("the pack itself loads");
+        let long = "a".repeat(7);
+        // The premise: this word alone needs more pieces than `max_len`.
+        assert!(pack
+            .encode_words(&[long.as_str()])
+            .expect("encode")
+            .is_none());
+        let words = [long.as_str(), "a", "a", "a", "a"];
+        let tagged = pack
+            .tags_from_words(&words)
+            .expect("the words after the long one are still tagged");
+        assert_eq!(tagged.len(), 4);
+        assert!(tagged.iter().all(|(word, _)| word == "a"));
+        // Alone it has nothing to report, so it is an error, not an empty list.
+        assert!(pack.tags_from_words(&[long.as_str()]).is_err());
         std::fs::remove_dir_all(&dir).ok();
     }
 

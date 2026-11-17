@@ -37,18 +37,6 @@ __all__ = [
 #: drift apart.
 DEFAULT_MASKERS: Tuple[str, ...] = tuple(_core.DEFAULT_MASKERS)
 
-#: Keyword arguments accepted by :func:`tokenize`.
-TOKENIZE_OPTIONS: Tuple[str, ...] = (
-    "join_verb_parts",
-    "join_abbreviations",
-    "separate_emoji",
-    "replace_links",
-    "replace_ids",
-    "replace_emails",
-    "replace_numbers",
-    "replace_hashtags",
-)
-
 _lock = threading.Lock()
 _default: Optional[Pipeline] = None
 
@@ -88,9 +76,6 @@ def tokenize(text: str, **options: bool) -> List[str]:
     ``replace_links``, ``replace_ids``, ``replace_emails``,
     ``replace_numbers`` and ``replace_hashtags``.
     """
-    unknown = sorted(set(options) - set(TOKENIZE_OPTIONS))
-    if unknown:
-        raise TypeError(f"tokenize() got an unexpected keyword argument {unknown[0]!r}")
     return pipeline().tokenize(text, **options)
 
 
@@ -117,6 +102,10 @@ def process(text: str, stages: Optional[Sequence[str]] = None) -> ProcessedDoc:
 
 def process_batch(texts: Sequence[str]) -> List[ProcessedDoc]:
     """Run the full pipeline over many inputs, returning one doc per input."""
+    # A bare string used to be iterated as characters, returning one doc per
+    # character; one string is one document.
+    if isinstance(texts, str):
+        texts = [texts]
     return pipeline().process_batch(list(texts))
 
 
@@ -137,6 +126,9 @@ def mask(
 ) -> str:
     """Mask or remove sensitive parts of ``text``.
 
+    The default list is :data:`DEFAULT_MASKERS`; each stage's ``<URL>``/``<EMAIL>``
+    placeholder is kept intact through the later maskers, so a default call
+    reports a URL as ``<URL>`` instead of deleting it.
     ``maskers`` selects and orders the masker names (``url``, ``email``,
     ``mention``, ``hashtag``, ``emoji``, ``html``, ``non_persian``, ``digits``,
     ``diacritics``, ``punctuation``); it defaults to :data:`DEFAULT_MASKERS`.
@@ -150,6 +142,10 @@ def keywords(
     text: str, n: int = 5, method: str = "rake", max_length: int = 3
 ) -> List[str]:
     """Extract up to ``n`` keywords with ``method`` (``"rake"`` or ``"textrank"``)."""
+    # Rust rejects a negative count with OverflowError; validate the documented
+    # range here so callers get ValueError for a bad argument instead.
+    if n < 1:
+        raise ValueError(f"n must be at least 1, got {n}")
     pipe = pipeline()
     if method == "rake":
         return pipe.rake(text, n, max_length)

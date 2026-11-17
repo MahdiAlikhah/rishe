@@ -30,7 +30,10 @@ pub fn to_tajik(text: &str) -> String {
             '\u{062B}' | '\u{0635}' | '\u{0633}' => "с",
             '\u{062C}' => "ҷ",
             '\u{0686}' => "ч",
-            '\u{062D}' | '\u{0647}' => {
+            // `ح` is a consonant everywhere; only `ه` softens to a vowel at the
+            // end of a word (`خانه` → `хона`), so `صبح` keeps its `ҳ`.
+            '\u{062D}' => "ҳ",
+            '\u{0647}' => {
                 if end {
                     "а"
                 } else {
@@ -192,6 +195,9 @@ mod tests {
         assert_eq!(to_tajik("ایران"), "айрон");
         assert_eq!(to_tajik("سال ۱۴۰۴"), "сол 1404");
         assert_eq!(to_tajik("سلام!"), "слом!");
+        // `ح` stays a consonant at a word end; `ه` still softens to a vowel.
+        assert_eq!(to_tajik("صبح"), "сбҳ");
+        assert_eq!(to_tajik("خانه"), "хона");
     }
 
     #[test]

@@ -16,14 +16,14 @@ shapes are the contract.
 | `1` | runtime failure | the command line parsed, but the operation failed: everything from a missing file to a failed download |
 
 `2` covers only parser-level rejections. A value the parser accepts stays on the
-command line and so belongs to `1` when it turns out to be unusable â€” an
+command line and so belongs to `1` when it turns out to be unusable — an
 out-of-vocabulary word, an unknown masker name, a `--top` below 1, a pack that is
 not there, an unknown Hub name.
 
 ### Status 0
 
 ```bash
-rishe normalize "Ù…ÙŠ ÙƒÙ†Ù…"          # stdout: Ù…ÛŒâ€ŒÚ©Ù†Ù…
+rishe normalize "مي كنم"          # stdout: می‌کنم
 rishe --help                      # stdout: usage
 rishe                             # stdout: usage
 rishe -V                          # stdout: rishe 1.0.0
@@ -68,13 +68,13 @@ rishe hub path
 rishe date "not a date"
 # stderr: cannot parse a Jalali date from 'not a date'
 
-rishe similar Ú©ØªØ§Ø¨ --model missing.vec
+rishe similar کتاب --model missing.vec
 # stderr: embedding file not found: missing.vec
 
-rishe similar Ù†Ø§Ù…ÙˆØ¬ÙˆØ¯ --model model.vec
-# stderr: "Ù†Ø§Ù…ÙˆØ¬ÙˆØ¯" is not in the vocabulary
+rishe similar ناموجود --model model.vec
+# stderr: "ناموجود" is not in the vocabulary
 
-rishe similar Ú©ØªØ§Ø¨ --top 0 --model model.vec
+rishe similar کتاب --top 0 --model model.vec
 # stderr: --top must be at least 1
 
 rishe mask text --maskers bogus
@@ -154,15 +154,15 @@ CPython 3.13.15, Windows x86_64:
 
 | operation | exception | example |
 |---|---|---|
-| wrong argument type | `TypeError` | `rishe.normalize(123)` â†’ `argument 'text': 'int' object cannot be converted to 'PyString'` |
-| invalid value | `ValueError` | `rishe.mask("x", ["bogus"])` â†’ `unknown masker: bogus` |
-| missing embedding file | `OSError` | `rishe.Embeddings("missing.vec")` â†’ `cannot open ...: The system cannot find the file specified. (os error 2)` |
-| corrupt embedding file | `OSError` | `rishe.Embeddings(bad)` â†’ `expected a '<vocab> <dim>' header on the first line of the .vec file` |
+| wrong argument type | `TypeError` | `rishe.normalize(123)` → `argument 'text': 'int' object cannot be converted to 'PyString'` |
+| invalid value | `ValueError` | `rishe.mask("x", ["bogus"])` → `unknown masker: bogus` |
+| missing embedding file | `OSError` | `rishe.Embeddings("missing.vec")` → `cannot open ...: The system cannot find the file specified. (os error 2)` |
+| corrupt embedding file | `OSError` | `rishe.Embeddings(bad)` → `expected a '<vocab> <dim>' header on the first line of the .vec file` |
 | empty or malformed embedding | `OSError` | `empty embedding file`, `embedding dimension must be positive` |
 | non-finite embedding value | `OSError` | `rishe.Embeddings(bad)` → `line 2: non-finite value "nan"` |
-| Hub name not registered | `ValueError` | `hub.path("unknown-model")` â†’ `unknown model or pack 'unknown-model'; models: ...; packs: ...` |
-| Hub name registered but not cached | `FileNotFoundError` | `hub.path("rishe-embed-fa-300")` â†’ `'rishe-embed-fa-300' is not cached; run: rishe hub pull ...` |
-| pack load failure | `ValueError` | `Pipeline(pos_pack="missing-dir")` â†’ `model pack is not a directory: ...`; a missing component â†’ `labels.json is missing from ...` |
+| Hub name not registered | `ValueError` | `hub.path("unknown-model")` → `unknown model or pack 'unknown-model'; models: ...; packs: ...` |
+| Hub name registered but not cached | `FileNotFoundError` | `hub.path("rishe-embed-fa-300")` → `'rishe-embed-fa-300' is not cached; run: rishe hub pull ...` |
+| pack load failure | `ValueError` | `Pipeline(pos_pack="missing-dir")` → `model pack is not a directory: ...`; a missing component → `labels.json is missing from ...` |
 | word out of vocabulary | no exception | `Embeddings.similarity(a, b)` returns `None`; `most_similar` returns `[]`; `vector` returns `None` |
 | unparseable date | no exception | `rishe.parse_date("not a date")` returns `None` |
 

@@ -24,6 +24,34 @@ fn a_ten_megabyte_token_finishes() {
     assert!(!doc.tokens.is_empty());
 }
 
+#[test]
+fn a_long_suffixed_token_finishes() {
+    // `to_formal` recurses once per stripped noun suffix, so this used to
+    // overflow the stack and abort the process at about 5000 repetitions.
+    let text = "کتاب".to_string() + &"مون".repeat(20_000);
+    let doc = rishe::Pipeline::create(true, true, true).process(&text);
+    assert!(!doc.tokens.is_empty());
+}
+
+#[test]
+fn unpacking_a_wild_lemma_returns_the_key() {
+    // `unpack_lemma` is a safe `pub fn` taking a caller-supplied u64. A wild
+    // offset used to panic on the slice; an offset splitting a character was
+    // UB through `from_utf8_unchecked`. Both must fall back to the key.
+    use rishe::morphology::MorphologyEngine;
+
+    for packed in [
+        0x007F_FFFF_FF00_0001, // offset far past the blob
+        0x0000_0000_00FF_FFFF, // length far past the blob
+        0x0000_0000_0000_0001, // offset 0, one byte: splits a character
+        0x0000_0000_0000_0003, // offset 0, three bytes: splits a character
+        u64::MAX,              // both fields saturated
+    ] {
+        let lemma = MorphologyEngine::unpack_lemma(packed, "کلید");
+        assert_eq!(lemma, "کلید", "packed {packed:#x} did not fall back");
+    }
+}
+
 #[cfg(feature = "models")]
 #[test]
 fn a_corrupt_model_pack_returns_an_error() {

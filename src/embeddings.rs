@@ -15,8 +15,7 @@ const DTYPE_F32: u8 = 0;
 const DTYPE_F16: u8 = 1;
 /// `RVEC` magic, version, dtype tag, `u32` dim and `u32` vocab size.
 const HEADER_LEN: usize = 15;
-/// Largest magnitude an `f16` holds exactly; anything above it saturates to infinity.
-const F16_MAX: f32 = 65_504.0;
+
 /// Ceiling on `vocab * dim` floats admitted from a `.vec` header. A real pack is
 /// far below it (300 dims x ~70k words is ~21M); a corrupt or hostile header is
 /// refused the same way on every platform instead of depending on the allocator.
@@ -104,18 +103,18 @@ fn write_binary<W: Write>(
         match dtype {
             DType::F32 => buffer.extend_from_slice(&value.to_le_bytes()),
             DType::F16 => {
-                // `f32_to_f16` saturates to infinity, and `checked` refuses a
-                // non-finite value on load, so storing this would write a file
-                // this crate cannot read back. A finite `f32` can reach here
-                // because a text `.vec` allows any finite value.
-                if value.abs() > F16_MAX {
+                // `f32_to_f16` rounds 65504..65520 down to the finite maximum and
+                // saturates only past it, and `checked` refuses a non-finite
+                // value on load, so test the rounded value rather than a bound.
+                let stored = f32_to_f16(*value);
+                if stored & 0x7FFF == 0x7C00 {
                     let word = words.get(index / dim as usize).map_or("?", |word| &**word);
                     return Err(format!(
-                        "cannot store {value} for {word:?} as f16: it is outside ±{F16_MAX} \
-                         and would be stored as infinity; use f32"
+                        "cannot store {value} for {word:?} as f16: it would be stored as \
+                         infinity; use f32"
                     ));
                 }
-                buffer.extend_from_slice(&f32_to_f16(*value).to_le_bytes());
+                buffer.extend_from_slice(&stored.to_le_bytes());
             }
         }
         if buffer.len() >= (1 << 20) {
@@ -165,6 +164,35 @@ fn row_norms(vectors: &[f32], dim: usize) -> Result<Vec<f32>, String> {
             Ok(norm as f32)
         })
         .collect()
+}
+
+/// Sorted, duplicate-free FST over the vocabulary, mapping a word to its row.
+///
+/// A file may list a word twice, so the first row wins; the index is the only
+/// thing the callers share.
+fn build_index(words: &[Box<str>]) -> Result<Map<Vec<u8>>, String> {
+    let mut order: Vec<u32> = (0..words.len() as u32).collect();
+    order.sort_unstable_by(|&a, &b| words[a as usize].cmp(&words[b as usize]));
+
+    let mut builder = MapBuilder::new(Vec::<u8>::with_capacity(words.len() * 16))
+        .map_err(|error| format!("fst error: {error}"))?;
+    let mut previous: Option<&str> = None;
+    for &index in &order {
+        let word = &*words[index as usize];
+        if previous == Some(word) {
+            continue;
+        }
+        builder
+            .insert(word.as_bytes(), index as u64)
+            .map_err(|error| format!("fst error: {error}"))?;
+        previous = Some(word);
+    }
+    Map::new(
+        builder
+            .into_inner()
+            .map_err(|error| format!("fst error: {error}"))?,
+    )
+    .map_err(|error| format!("fst error: {error}"))
 }
 
 /// Convert an IEEE 754 binary16 bit pattern to `f32`.
@@ -266,8 +294,8 @@ impl Embeddings {
                 .map_err(|error| format!("read error: {error}"))?;
             Self::load_binary(file)
         } else {
-            let file = File::open(path)
-                .map_err(|error| format!("cannot open {}: {error}", path.display()))?;
+            file.rewind()
+                .map_err(|error| format!("read error: {error}"))?;
             Self::load_text(file)
         }
     }
@@ -278,7 +306,11 @@ impl Embeddings {
     pub fn save(&self, path: impl AsRef<Path>, dtype: DType) -> Result<(), String> {
         let path = path.as_ref();
         let mut temporary = path.as_os_str().to_os_string();
-        temporary.push(".part");
+        // Per-call temp name: two saves into one path, even from threads, must
+        // not create, truncate and interleave the same `.part` file.
+        static NEXT_TEMP: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let unique = NEXT_TEMP.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        temporary.push(format!(".{}.{unique}.part", std::process::id()));
         let temporary = std::path::PathBuf::from(temporary);
         let file = File::create(&temporary)
             .map_err(|error| format!("cannot create {}: {error}", temporary.display()))?;
@@ -303,7 +335,11 @@ impl Embeddings {
             let _ = std::fs::remove_file(&temporary);
             return Err(error);
         }
-        std::fs::rename(&temporary, path).map_err(|error| error.to_string())
+        std::fs::rename(&temporary, path).map_err(|error| {
+            // A failed rename used to leave the `.part` behind for good.
+            let _ = std::fs::remove_file(&temporary);
+            error.to_string()
+        })
     }
 
     /// Storage width of the file this model was loaded from.
@@ -312,6 +348,10 @@ impl Embeddings {
     }
 
     fn load_text(file: File) -> Result<Self, String> {
+        let file_len = file
+            .metadata()
+            .map_err(|error| format!("read error: {error}"))?
+            .len();
         let reader = BufReader::with_capacity(1 << 20, file);
         let mut lines = reader.lines();
 
@@ -335,19 +375,34 @@ impl Embeddings {
             return Err("embedding dimension must be positive".to_string());
         }
 
+        // Both reservations are sized from an untrusted header, so the header
+        // has to be refused before either is attempted. A cap alone is not
+        // enough: `try_reserve` only fails on a strict allocator, and an
+        // overcommitting one (macOS, Linux under overcommit) grants the request
+        // and turns it into an OOM kill later. `2000000000 1` is under
+        // MAX_LOAD_ELEMENTS yet still asks for 30 GB of pointers.
+        //
+        // A row costs at least one byte for its word and two per value
+        // (separator plus digit), so the file length is a hard ceiling on the
+        // row count. The bound is loose by construction, so a valid file can
+        // never be rejected, and the message names the ceiling reached.
+        let elements = declared.saturating_mul(dim);
+        if elements > MAX_LOAD_ELEMENTS {
+            return Err("embedding file is too large for available memory".to_string());
+        }
+        let min_row = 1_usize.saturating_add(dim.saturating_mul(2));
+        let max_rows = (file_len / min_row as u64).min(usize::MAX as u64) as usize;
+        if declared > max_rows {
+            return Err(format!(
+                "header declares {declared} vectors but the file has at most {max_rows}"
+            ));
+        }
+
         let mut words: Vec<Box<str>> = Vec::new();
         words
             .try_reserve(declared)
             .map_err(|_| "embedding file is too large for available memory".to_string())?;
         let mut vectors: Vec<f32> = Vec::new();
-        // `try_reserve` alone is not a size check: an overcommitting allocator
-        // (macOS, and Linux under overcommit) reserves a huge block and the
-        // failure then surfaces later as an OOM kill. Reject an impossible
-        // element count up front so the answer is the same on every platform.
-        let elements = declared.saturating_mul(dim);
-        if elements > MAX_LOAD_ELEMENTS {
-            return Err("embedding file is too large for available memory".to_string());
-        }
         vectors
             .try_reserve(elements)
             .map_err(|_| "embedding file is too large for available memory".to_string())?;
@@ -394,29 +449,7 @@ impl Embeddings {
             return Err("embedding file contains no vectors".to_string());
         }
 
-        let mut order: Vec<u32> = (0..words.len() as u32).collect();
-        order.sort_unstable_by(|&a, &b| words[a as usize].cmp(&words[b as usize]));
-
-        let mut builder = MapBuilder::new(Vec::<u8>::with_capacity(words.len() * 16))
-            .map_err(|error| format!("fst error: {error}"))?;
-        let mut previous: Option<&str> = None;
-        for &index in &order {
-            let word = &*words[index as usize];
-            if previous == Some(word) {
-                continue;
-            }
-            builder
-                .insert(word.as_bytes(), index as u64)
-                .map_err(|error| format!("fst error: {error}"))?;
-            previous = Some(word);
-        }
-        let index = Map::new(
-            builder
-                .into_inner()
-                .map_err(|error| format!("fst error: {error}"))?,
-        )
-        .map_err(|error| format!("fst error: {error}"))?;
-
+        let index = build_index(&words)?;
         let norms = row_norms(&vectors, dim)?;
 
         Ok(Self {
@@ -430,7 +463,13 @@ impl Embeddings {
     }
 
     /// Read a compact binary `.rvec` file produced by [`Embeddings::save`].
-    fn load_binary(mut file: File) -> Result<Self, String> {
+    fn load_binary(file: File) -> Result<Self, String> {
+        let file_len = file
+            .metadata()
+            .map_err(|error| format!("read error: {error}"))?
+            .len();
+        // Without this the vocabulary loop costs two syscalls per word.
+        let mut file = BufReader::with_capacity(1 << 20, file);
         let mut header = [0_u8; HEADER_LEN];
         file.read_exact(&mut header)
             .map_err(|error| format!("read error: {error}"))?;
@@ -459,10 +498,21 @@ impl Embeddings {
         let count = vocab
             .checked_mul(dim)
             .ok_or_else(|| "embedding file is too large for available memory".to_string())?;
+        let width = dtype.width();
+
+        // Same rule as `load_text`: the header is untrusted, so clamp both
+        // reservations to the file length instead of believing it. The comment
+        // above `MAX_LOAD_ELEMENTS` explains why `try_reserve` is not a size
+        // check. A real file needs `HEADER_LEN + 2 * vocab + width * count`
+        // bytes, so this clamps to a value the file can actually justify.
+        if count > MAX_LOAD_ELEMENTS {
+            return Err("embedding file is too large for available memory".to_string());
+        }
+        let budget = file_len.min(usize::MAX as u64) as usize;
 
         let mut words: Vec<Box<str>> = Vec::new();
         words
-            .try_reserve(vocab)
+            .try_reserve(vocab.min(budget))
             .map_err(|_| "embedding file is too large for available memory".to_string())?;
         let mut scratch = vec![0_u8; u16::MAX as usize + 1];
         for _ in 0..vocab {
@@ -480,12 +530,8 @@ impl Embeddings {
 
         let mut vectors: Vec<f32> = Vec::new();
         vectors
-            .try_reserve(count)
+            .try_reserve(count.min(budget))
             .map_err(|_| "embedding file is too large for available memory".to_string())?;
-        let width = match dtype {
-            DType::F32 => 4,
-            DType::F16 => 2,
-        };
         // Decode in chunks so the raw bytes never sit in memory next to the
         // fully decoded buffer.
         let mut bytes = vec![0_u8; (1 << 20) * width];
@@ -510,29 +556,7 @@ impl Embeddings {
             remaining -= take;
         }
 
-        let mut order: Vec<u32> = (0..words.len() as u32).collect();
-        order.sort_unstable_by(|&a, &b| words[a as usize].cmp(&words[b as usize]));
-
-        let mut builder = MapBuilder::new(Vec::<u8>::with_capacity(words.len() * 16))
-            .map_err(|error| format!("fst error: {error}"))?;
-        let mut previous: Option<&str> = None;
-        for &index in &order {
-            let word = &*words[index as usize];
-            if previous == Some(word) {
-                continue;
-            }
-            builder
-                .insert(word.as_bytes(), index as u64)
-                .map_err(|error| format!("fst error: {error}"))?;
-            previous = Some(word);
-        }
-        let index = Map::new(
-            builder
-                .into_inner()
-                .map_err(|error| format!("fst error: {error}"))?,
-        )
-        .map_err(|error| format!("fst error: {error}"))?;
-
+        let index = build_index(&words)?;
         let norms = row_norms(&vectors, dim)?;
 
         Ok(Self {
@@ -628,11 +652,12 @@ impl Embeddings {
     pub fn sentence_similarity(&self, first: &str, second: &str) -> f32 {
         let first = self.sentence_vector(first);
         let second = self.sentence_vector(second);
-        let denominator = dot(&first, &first).sqrt() * dot(&second, &second).sqrt();
-        if denominator == 0.0 {
+        let first_norm = vector_norm(&first);
+        let second_norm = vector_norm(&second);
+        if first_norm == 0.0 || second_norm == 0.0 {
             return 0.0;
         }
-        dot(&first, &second) / denominator
+        cosine(first_norm, &first, second_norm, &second)
     }
 
     /// Up to `n` nearest words by descending cosine similarity, excluding the query itself.
@@ -660,7 +685,16 @@ impl Embeddings {
             {
                 continue;
             }
-            let score = cosine(query_norm, query, self.norms[index], self.row(index as u64));
+            // One f64 divide per candidate; the sum is the only hot loop, so it
+            // runs in f32 with eight accumulators to let the compiler vectorize.
+            // A row of 1e20 squares to infinity in `f32`, so a non-finite result
+            // falls back to the f64 accumulation that cannot overflow.
+            let row = self.row(index as u64);
+            let product = f64::from(query_norm) * f64::from(self.norms[index]);
+            let mut score = (f64::from(dot8(query, row)) / product) as f32;
+            if !score.is_finite() {
+                score = cosine(query_norm, query, self.norms[index], row);
+            }
             let candidate = Candidate {
                 score,
                 word: candidate.as_ref(),
@@ -707,8 +741,34 @@ impl Ord for Candidate<'_> {
 }
 
 #[inline]
-fn dot(first: &[f32], second: &[f32]) -> f32 {
-    first.iter().zip(second).map(|(a, b)| a * b).sum::<f32>()
+/// L2 norm of one vector, accumulated in `f64` for the same reason as
+/// [`row_norms`]: squaring `1e20` in `f32` overflows, and an infinite norm turns
+/// every cosine into `NaN`.
+fn vector_norm(vector: &[f32]) -> f32 {
+    vector
+        .iter()
+        .map(|&value| f64::from(value) * f64::from(value))
+        .sum::<f64>()
+        .sqrt() as f32
+}
+
+/// Dot product in `f32` with eight independent accumulators, so the compiler can
+/// vectorize the scan. Used for the top-k search, where one rounding step in the
+/// seventh digit cannot change which words come back.
+fn dot8(first: &[f32], second: &[f32]) -> f32 {
+    let mut sums = [0.0_f32; 8];
+    let (left_chunks, left_rest) = first.as_chunks::<8>();
+    let (right_chunks, right_rest) = second.as_chunks::<8>();
+    for (left, right) in left_chunks.iter().zip(right_chunks) {
+        for (slot, (a, b)) in sums.iter_mut().zip(left.iter().zip(right)) {
+            *slot += a * b;
+        }
+    }
+    let mut total: f32 = sums.iter().sum();
+    for (a, b) in left_rest.iter().zip(right_rest) {
+        total += a * b;
+    }
+    total
 }
 
 /// Cosine similarity from two precomputed norms, accumulating in `f64`.
@@ -745,6 +805,21 @@ mod tests {
             .join("rishe-test-tmp");
         std::fs::create_dir_all(&dir).expect("create test scratch dir");
         dir.join(name)
+    }
+
+    #[test]
+    fn a_huge_sentence_vector_is_not_nan() {
+        // The sentence ratio summed in `f32`, so `1e20` squared overflowed to
+        // infinity and the result was `NaN` while `similarity` said 1.0.
+        let path = scratch("embeddings_sentence_huge.vec");
+        std::fs::write(&path, "2 3\nبزرگ 1e20 0 0\nکوچک 0 1 0\n").unwrap();
+        let embeddings = Embeddings::load(&path).unwrap();
+        std::fs::remove_file(&path).ok();
+
+        let same = embeddings.sentence_similarity("بزرگ", "بزرگ");
+        assert!(same.is_finite(), "got {same}");
+        assert!(same > 0.999_9, "got {same}");
+        assert_eq!(embeddings.sentence_similarity("بزرگ", "کوچک"), 0.0);
     }
 
     #[test]
@@ -797,6 +872,64 @@ mod tests {
             .err()
             .expect("a header count mismatch must be an error");
         assert!(error.contains("declares 1000"), "{error}");
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn test_rejects_headers_bigger_than_the_file() {
+        // Both reservations are sized from an untrusted header. `1900000000 1`
+        // is under MAX_LOAD_ELEMENTS but still asks for 30 GB of pointers and
+        // an overcommitting allocator grants it before the read ever fails.
+        let path = scratch("embeddings_huge_vocab.vec");
+        for header in ["1900000000 1\n", "2000000000 1\n", "2000000000 300\n"] {
+            std::fs::write(&path, header).unwrap();
+            let error = Embeddings::load(&path)
+                .err()
+                .unwrap_or_else(|| panic!("{header:?} must be rejected"));
+            assert!(
+                error.contains("the file has at most")
+                    || error.contains("too large for available memory"),
+                "{header:?}: {error}"
+            );
+        }
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn test_rejects_binary_headers_bigger_than_the_file() {
+        let path = scratch("embeddings_huge_vocab.rvec");
+        let write_header = |dim: u32, vocab: u32| {
+            let mut header = Vec::new();
+            header.extend_from_slice(MAGIC);
+            header.extend_from_slice(&VERSION.to_le_bytes());
+            header.push(DTYPE_F32);
+            header.extend_from_slice(&dim.to_le_bytes());
+            header.extend_from_slice(&vocab.to_le_bytes());
+            std::fs::write(&path, &header).unwrap();
+        };
+
+        // `u32::MAX` words is `6e11` floats: past MAX_LOAD_ELEMENTS, so it must
+        // be refused by the cap rather than by the allocator. Without the cap
+        // the reservation succeeds on an overcommitting allocator and the error
+        // only surfaces later as a failed read.
+        write_header(300, u32::MAX);
+        let error = Embeddings::load(&path)
+            .err()
+            .expect("a u32::MAX vocab must be an error");
+        assert!(
+            error.contains("too large for available memory"),
+            "expected the cap to reject it, got: {error}"
+        );
+
+        // These stay under the cap but cannot fit the 15-byte file, so the load
+        // must still fail rather than read them as if they were present.
+        for (dim, vocab) in [(300_u32, 200_000_000), (1, 2_000_000)] {
+            write_header(dim, vocab);
+            assert!(
+                Embeddings::load(&path).is_err(),
+                "dim {dim} vocab {vocab} must be rejected"
+            );
+        }
         std::fs::remove_file(&path).ok();
     }
 
@@ -881,11 +1014,23 @@ mod tests {
         let error = embeddings
             .save(&binary, DType::F16)
             .expect_err("f16 cannot hold 70000");
-        assert!(error.contains("outside"), "{error}");
+        assert!(error.contains("infinity"), "{error}");
         assert!(error.contains("use f32"), "{error}");
         assert!(
             !binary.exists() && !scratch("embeddings_f16_range.rvec.part").exists(),
             "a refused save must not leave a file behind"
+        );
+
+        // The boundary is 65520 (where the rounded value becomes infinity), not
+        // 65504: 65508 rounds down to the finite maximum and must be accepted.
+        std::fs::write(&path, "1 2\nw 65508 0\n").unwrap();
+        let rounded = Embeddings::load(&path).expect("finite f32");
+        rounded
+            .save(&binary, DType::F16)
+            .expect("65508 rounds to 65504");
+        assert_eq!(
+            Embeddings::load(&binary).unwrap().vector("w"),
+            Some([65504.0, 0.0].as_slice())
         );
 
         // The same model still saves as f32, and that file loads back.
@@ -918,6 +1063,20 @@ mod tests {
     }
 
     #[test]
+    fn dot8_matches_the_plain_sum() {
+        // 37 = 4 chunks of 8 plus a 5-element remainder, so both loops run.
+        let first: Vec<f32> = (0..37).map(|i| (i as f32 * 0.37).sin()).collect();
+        let second: Vec<f32> = (0..37).map(|i| (i as f32 * 0.21).cos()).collect();
+        let expected: f64 = first
+            .iter()
+            .zip(&second)
+            .map(|(a, b)| f64::from(*a) * f64::from(*b))
+            .sum();
+        let actual = f64::from(dot8(&first, &second));
+        assert!((actual - expected).abs() < 1e-5, "{actual} vs {expected}");
+    }
+
+    #[test]
     fn most_similar_keeps_every_candidate_when_scores_tie() {
         // TINY gives distinct scores; these rows all match `x` equally, which
         // exercises the heap's `partial_cmp` tie path.
@@ -934,6 +1093,26 @@ mod tests {
         for (_, score) in &nearest {
             assert!(score.is_finite(), "{score}");
         }
+    }
+
+    #[test]
+    fn concurrent_saves_never_leave_a_broken_file() {
+        // Both saves wrote one fixed `.part` name, so one truncated and
+        // interleaved the other's bytes before the rename published them.
+        let text = scratch("embeddings_concurrent.vec");
+        std::fs::write(&text, TINY).unwrap();
+        let target = scratch("embeddings_concurrent.rvec");
+        let (first, second) = (target.clone(), target.clone());
+        let (one, two) = (text.clone(), text.clone());
+        let a =
+            std::thread::spawn(move || Embeddings::load(&one).unwrap().save(&first, DType::F32));
+        let b =
+            std::thread::spawn(move || Embeddings::load(&two).unwrap().save(&second, DType::F32));
+        assert!(a.join().unwrap().is_ok(), "first save failed");
+        assert!(b.join().unwrap().is_ok(), "second save failed");
+        let loaded = Embeddings::load(&target).expect("the surviving file must load");
+        assert_eq!(loaded.dim(), 3);
+        assert_eq!(loaded.len(), 6);
     }
 
     #[test]

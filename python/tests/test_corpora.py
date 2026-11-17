@@ -28,14 +28,23 @@ class CorpusReadersTest(unittest.TestCase):
         sentence = sentences[0]
         self.assertEqual(sentence.id, "1")
         self.assertEqual(sentence.text, "کتاب‌ها را دیدم.")
-        self.assertEqual(len(sentence.tokens), 6)
-        self.assertEqual(sentence.tokens[0].id, "1-2")
-        self.assertEqual(sentence.tokens[1].lemma, "کتاب")
-        self.assertEqual(sentence.tokens[1].upos, "NOUN")
-        self.assertEqual(sentence.tokens[1].feats, {"Number": "Plur"})
-        self.assertEqual(sentence.tokens[4].deprel, "root")
-        self.assertEqual(sentence.tokens[4].misc, {"SpaceAfter": "No"})
-        self.assertIsNone(sentence.tokens[2].lemma)
+        # The `1-2` multiword-token row repeats words 1 and 2, so it is skipped.
+        self.assertEqual(len(sentence.tokens), 5)
+        self.assertEqual(sentence.tokens[0].id, "1")
+        self.assertEqual(sentence.tokens[0].lemma, "کتاب")
+        self.assertEqual(sentence.tokens[0].upos, "NOUN")
+        self.assertEqual(sentence.tokens[0].feats, {"Number": "Plur"})
+        self.assertEqual(sentence.tokens[3].deprel, "root")
+        self.assertEqual(sentence.tokens[3].misc, {"SpaceAfter": "No"})
+        self.assertIsNone(sentence.tokens[1].lemma)
+
+    def test_conllu_byte_order_mark(self):
+        """`utf-8` keeps the BOM, which hides the first `# sent_id` comment."""
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "sample.conllu"
+            path.write_bytes(b"\xef\xbb\xbf" + CONLLU.encode("utf-8"))
+            sentence = list(ConlluReader(path))[0]
+        self.assertEqual(sentence.id, "1")
 
     def test_peyma(self):
         with tempfile.TemporaryDirectory() as directory:

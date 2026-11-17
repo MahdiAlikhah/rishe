@@ -1,18 +1,5 @@
-const PERSIAN_ABBREVIATIONS: &[&str] = &[
-    "ه\u{200C}ش",
-    "ه.ش",
-    "ه\u{200C}ق",
-    "ه.ق",
-    "ق.م",
-    "ص",
-    "صص",
-    "ج",
-    "رک",
-    "ر.ک",
-    "د",
-    "م",
-    "ج.ا",
-];
+// Only the ones the one-letter and dotted rules below cannot recognise.
+const PERSIAN_ABBREVIATIONS: &[&str] = &["ه\u{200C}ش", "ه\u{200C}ق", "صص", "رک"];
 
 /// Rule-based sentence boundary detection.
 pub struct SentenceSplitter;
@@ -160,6 +147,20 @@ mod tests {
             SentenceSplitter::split("سال ۱۴۰۲ ه.ش. بود."),
             ["سال ۱۴۰۲ ه.ش. بود."]
         );
+    }
+
+    #[test]
+    fn the_kept_abbreviations_are_the_ones_the_rules_miss() {
+        // The list only holds forms the one-letter and dotted rules cannot see:
+        // a dot after a two- or three-character word with no dot of its own.
+        for text in [
+            "سال ۱۴۰۲ ه\u{200C}ش. بود.",
+            "سال ۱۴۰۲ ه\u{200C}ق. بود.",
+            "ایشان صص. فرمودند.",
+            "به رک. رجوع کنید.",
+        ] {
+            assert_eq!(SentenceSplitter::split(text), [text], "{text}");
+        }
     }
 
     #[test]

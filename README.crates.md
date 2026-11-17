@@ -29,6 +29,14 @@ The `rishe` binary covers normalization, tokenization, lemmatization, masking
 and Jalali date parsing; add `--features models` for `pos`, `ner`, `ezafe` and
 `depparse` with `--pack <dir>`.
 
+Pack downloading and verification (`rishe hub pull`, `rishe hub verify`) lives
+behind the `hub` feature, which is on by default. A library that never fetches a pack can
+build without `ureq` and `sha2`:
+
+```toml
+rishe = { version = "1.0", default-features = false }
+```
+
 ## What you get
 
 - `Pipeline`: normalization, tokenization, sentence splitting, lemmatization,

@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest import mock
 
 import rishe
+from rishe import cli
 from rishe.cli import main
 
 MODEL = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "mini-embed.vec"
@@ -21,6 +22,13 @@ class CliTest(unittest.TestCase):
         with redirect_stdout(output):
             code = main(argv)
         return code, output.getvalue().strip()
+
+    def test_stdin_keeps_the_document_and_drops_the_shell_newline(self):
+        """`trim()` used to delete the blank line a heredoc starts with."""
+        with mock.patch("sys.stdin", io.StringIO("\n\nمتن\n")):
+            self.assertEqual(cli._read_text([]), "\n\nمتن")
+        with mock.patch("sys.stdin", io.StringIO("  متن  \r\n")):
+            self.assertEqual(cli._read_text([]), "  متن  ")
 
     def test_normalize(self):
         code, output = self.run_cli(["normalize", "مي كنم"])
@@ -49,6 +57,43 @@ class CliTest(unittest.TestCase):
         with self.assertRaises(SystemExit) as caught:
             main(["mask", "x", "--stages", "url"])
         self.assertEqual(caught.exception.code, 2)
+
+    def test_several_positional_words_are_joined(self):
+        """The Rust binary joins the words; Python used to exit 2."""
+        code, output = self.run_cli(["normalize", "مي", "كنم"])
+        self.assertEqual(code, 0)
+        self.assertEqual(output, "می‌کنم")
+
+    def test_every_pack_command_requires_pack(self):
+        """pos/ner/ezafe fell back to the Hub cache while depparse required
+        `--pack`; all four now follow the Rust rule."""
+        for command in ("pos", "ner", "ezafe", "depparse"):
+            code, _ = self.run_cli([command, "متن"])
+            self.assertEqual(code, 1, command)
+
+    def test_a_byte_order_mark_on_stdin_is_ignored(self):
+        """`utf-8` keeps the BOM as part of the first word, so `rishe date` failed."""
+        result = subprocess.run(
+            [sys.executable, "-m", "rishe.cli", "date"],
+            input="\ufeff1402/05/12".encode("utf-8"),
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8", "replace"))
+        self.assertEqual(result.stdout.decode("utf-8").strip(), "2023-08-03")
+
+    def test_invalid_utf8_on_stdin_is_an_error_not_a_traceback(self):
+        """The stdin read used to sit outside the handler and crash; then it
+        silently replaced the bytes while the Rust binary rejected them."""
+        for command in ("date", "tokenize", "normalize"):
+            result = subprocess.run(
+                [sys.executable, "-m", "rishe.cli", command],
+                input=b"\xff\xfe\xff",
+                capture_output=True,
+                check=False,
+            )
+            self.assertNotIn(b"Traceback", result.stderr, command)
+            self.assertEqual(result.returncode, 1, command)
 
     def test_utf8_output_with_non_utf8_stdio(self):
         environment = dict(os.environ, PYTHONIOENCODING="cp1252")
@@ -280,6 +325,28 @@ class ExitCodeContractTest(unittest.TestCase):
                 1, "hub", "pull", "not-a-model", env={"RISHE_HOME": root}
             )
 
+    def test_hub_pull_refuses_a_pin_for_a_task_pack(self):
+        # A pack is verified against the registry manifest, so a caller digest has
+        # nothing to apply to; ignoring it read as a pin that never happened.
+        with tempfile.TemporaryDirectory() as root:
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "rishe.cli",
+                    "hub",
+                    "pull",
+                    "pos-compact",
+                    "--sha256",
+                    "0" * 64,
+                ],
+                capture_output=True,
+                check=False,
+                env={**os.environ, "RISHE_HOME": root},
+            )
+            self.assertEqual(result.returncode, 1)
+            self.assertIn(b"task packs do not accept", result.stderr)
+
     def test_serve_does_not_report_request_errors_as_exit_codes(self):
         request = json.dumps({"command": "nope"}).encode("utf-8") + b"\n"
         result = subprocess.run(
@@ -396,6 +463,34 @@ class ServeProtocolTest(unittest.TestCase):
                 )
                 self.assertEqual(response, {"ok": True, "result": "<EMAIL>"})
 
+    def test_rejects_an_oversized_line_and_keeps_serving(self):
+        # An unbounded line read grows its buffer until it finds a newline, so a
+        # client that never sends one grows the server without bound. The
+        # oversized line gets the error envelope, its remainder is discarded, and
+        # the next real request is still served (docs/serve-schema.md).
+        request = (
+            b"x" * ((1 << 20) + 1)
+            + b"\n"
+            + '{"command":"tokenize","text":"کتاب خوب است"}\n'.encode("utf-8")
+        )
+        result = subprocess.run(
+            [sys.executable, "-m", "rishe.cli", "serve"],
+            input=request,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(
+            result.returncode, 0, result.stderr.decode("utf-8", "replace")
+        )
+        responses = result.stdout.decode("utf-8").splitlines()
+        self.assertEqual(len(responses), 2, responses)
+        first = json.loads(responses[0])
+        self.assertFalse(first["ok"])
+        self.assertIn("too long", first["error"])
+        second = json.loads(responses[1])
+        self.assertTrue(second["ok"])
+        self.assertEqual(second["result"], ["کتاب", "خوب", "است"])
+
     def test_non_utf8_line_is_answered_and_the_server_keeps_going(self):
         request = b"\xff\xfe\n" + b'{"command":"version"}\n'
         result = subprocess.run(
@@ -415,6 +510,24 @@ class ServeProtocolTest(unittest.TestCase):
         second = json.loads(responses[1])
         self.assertTrue(second["ok"])
         self.assertEqual(second["result"]["protocol"], 1)
+
+    def test_lone_surrogate_line_is_answered_and_the_server_keeps_going(self):
+        # A client can send a lone surrogate escape; echoing it back used to raise
+        # UnicodeEncodeError outside the handler and kill the loop with no reply.
+        request = b'{"command":"\\ud800"}\n{"command":"version"}\n'
+        result = subprocess.run(
+            [sys.executable, "-m", "rishe.cli", "serve"],
+            input=request,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(
+            result.returncode, 0, result.stderr.decode("utf-8", "replace")
+        )
+        responses = result.stdout.decode("utf-8").splitlines()
+        self.assertEqual(len(responses), 2, responses)
+        self.assertFalse(json.loads(responses[0])["ok"])
+        self.assertTrue(json.loads(responses[1])["ok"])
 
     def test_errors_and_blank_lines_keep_the_stream_in_sync(self):
         result = self.serve(

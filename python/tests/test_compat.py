@@ -54,6 +54,9 @@ class CompatTest(unittest.TestCase):
         self.assertEqual(Stemmer().stem("کتاب‌ها"), "کتاب")
         self.assertEqual(TokenSplitter().split_token_words("کتاب‌ها"), [("کتاب", "ها")])
         self.assertEqual(TokenSplitter().split_token_words("کتاب"), [])
+        # `بهم` is a clitic key, not a noun stem, so neither API strips `ین`.
+        self.assertEqual(Stemmer().stem("بهمین"), "بهمین")
+        self.assertEqual(TokenSplitter().split_token_words("بهمین"), [])
 
     def test_sentence_tokenizer(self):
         expected = ["یک.", "دو."]
@@ -70,14 +73,25 @@ class CompatTest(unittest.TestCase):
         """The switch must actually change the output, not be silently ignored."""
         off = Normalizer(correct_spacing=False)
         on = Normalizer(correct_spacing=True)
-        for text in ("سلام   دنیا", "کتاب ها"):
-            self.assertEqual(on.normalize(text), on.normalize(text))
-            self.assertNotEqual(
-                on.normalize(text),
-                off.normalize(text),
-                f"correct_spacing=False changed nothing for {text!r}",
-            )
+        self.assertEqual(on.normalize("سلام   دنیا"), "سلام دنیا")
         self.assertEqual(off.normalize("سلام   دنیا"), "سلام   دنیا")
+        self.assertEqual(on.normalize("کتاب ها"), "کتاب‌ها")
+        self.assertNotEqual(off.normalize("کتاب ها"), "کتاب‌ها")
+
+    def test_diacritics_flag_removes_diacritics(self):
+        """`remove_diacritics=True` used to be stored and then never applied."""
+        self.assertEqual(Normalizer(remove_diacritics=True).normalize("کِتاب"), "کتاب")
+        self.assertEqual(Normalizer(remove_diacritics=False).normalize("کِتاب"), "کِتاب")
+
+    def test_special_char_removal_keeps_whitespace_and_format(self):
+        """Every `C*` was dropped, so a newline glued two words together."""
+        normalizer = Normalizer()
+        self.assertEqual(normalizer.normalize("کتاب\nخوب"), "کتاب\nخوب")
+        # The spacing stage turns a tab into a space; the words stay apart.
+        self.assertEqual(normalizer.normalize("کتاب\tخوب"), "کتاب خوب")
+        self.assertEqual(normalizer.normalize("می‌روم"), "می‌روم")
+        # Symbols are what the flag is for, so those still go.
+        self.assertEqual(normalizer.normalize("کتاب © ۲۰۰۰"), "کتاب  ۲۰۰۰")
 
 
 if __name__ == "__main__":

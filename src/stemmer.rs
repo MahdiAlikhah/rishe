@@ -1,3 +1,4 @@
+use crate::colloquial::is_clitic_key;
 use crate::morphology::{MorphologyEngine, ATTACHED_NOUN_SUFFIXES, ZWNJ_NOUN_SUFFIXES};
 use std::borrow::Cow;
 
@@ -21,7 +22,9 @@ impl Stemmer {
 
         for &suffix in ATTACHED_NOUN_SUFFIXES {
             if let Some(stem) = word.strip_suffix(suffix) {
-                if stem.chars().count() >= 2 && morph.is_known_noun(stem) {
+                // A clitic key is not a noun stem: `بهمین` is not `بهم` + `ین`.
+                // The splitter refuses the same word, so both APIs agree.
+                if stem.chars().count() >= 2 && morph.is_known_noun(stem) && !is_clitic_key(stem) {
                     return Cow::Borrowed(stem);
                 }
             }

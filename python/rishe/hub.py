@@ -16,6 +16,7 @@ import json
 import os
 import shutil
 import sys
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -98,10 +99,17 @@ def _manifest_schema(manifest: dict) -> int:
 
 
 def cache_dir() -> Path:
-    """Directory where downloaded models live."""
+    """Directory where downloaded models live.
+
+    Resolved exactly like ``cache_dir`` in ``src/hub.rs``: ``RISHE_HOME`` when it
+    is set (even to an empty string), then ``HOME``, then ``USERPROFILE``.
+    """
     root = os.environ.get("RISHE_HOME")
-    base = Path(root) if root else Path.home() / ".cache" / "rishe"
-    return base / "models"
+    if root is not None:
+        return Path(root) / "models"
+    home = os.environ.get("HOME") or os.environ.get("USERPROFILE")
+    base = Path(home) if home else Path.home()
+    return base / ".cache" / "rishe" / "models"
 
 
 def _unknown(name: str) -> str:
@@ -194,11 +202,45 @@ def pull(
         safe_name = _safe_filename(inferred)
         model = Model(url=source, sha256=sha256.lower(), filename=safe_name)
 
-    if len(model.sha256) != 64:
+    digest = model.sha256.lower()
+    if len(digest) != 64 or any(
+        char not in "0123456789abcdefABCDEF" for char in digest
+    ):
         raise ValueError("sha256 must be a 64-character hex digest")
 
     target = cache_dir() / Path(model.filename).name
     return _download(model.url, target, model.sha256, force=force)
+
+
+# A lock older than this was left by a process that died mid-download.
+_STALE_LOCK_SECONDS = 3600
+
+
+def _acquire_download_lock(target: Path) -> Path:
+    """Claim ``target`` so two processes never share one ``.part`` file.
+
+    A second pull fails with a clear message instead of corrupting the first. A
+    lock older than :data:`_STALE_LOCK_SECONDS` is taken over, so a crash does
+    not block the download forever.
+    """
+    lock = target.with_name(target.name + ".lock")
+    for _ in range(2):
+        try:
+            os.close(os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+            return lock
+        except FileExistsError:
+            try:
+                age = time.time() - lock.stat().st_mtime
+            except OSError:
+                continue
+            if age > _STALE_LOCK_SECONDS:
+                lock.unlink(missing_ok=True)
+                continue
+            raise RuntimeError(
+                f"another rishe process is downloading {target.name}; "
+                "retry when it finishes"
+            ) from None
+    raise RuntimeError(f"cannot lock {target}")
 
 
 def _download(url: str, target: Path, sha256: str, *, force: bool = False) -> Path:
@@ -207,6 +249,15 @@ def _download(url: str, target: Path, sha256: str, *, force: bool = False) -> Pa
     if not force and target.is_file() and _sha256(target) == sha256.lower():
         return target
     target.parent.mkdir(parents=True, exist_ok=True)
+    lock = _acquire_download_lock(target)
+    try:
+        return _download_locked(url, target, sha256, force=force)
+    finally:
+        lock.unlink(missing_ok=True)
+
+
+def _download_locked(url: str, target: Path, sha256: str, *, force: bool = False) -> Path:
+    """The download itself; the caller holds the target's lock."""
     part = target.with_name(target.name + ".part")
     last_error: Optional[Exception] = None
 
@@ -225,6 +276,12 @@ def _download(url: str, target: Path, sha256: str, *, force: bool = False) -> Pa
                     part.unlink()
                     last_error = error
                     continue
+                if 400 <= error.code < 500:
+                    # `HTTPError` is a `URLError`, so without this a 404 below is
+                    # retried twice more; the server will answer the same way.
+                    raise RuntimeError(
+                        f"download failed for {url}: {error.code} {error.reason}"
+                    ) from error
                 raise
             with response:
                 status = getattr(response, "status", 200)
@@ -356,7 +413,7 @@ def remove(name: str) -> bool:
         partial = cache_dir() / name
         if name in PACKS and partial.is_dir():
             shutil.rmtree(partial)
-            return True
+            removed = True
     elif target.is_dir():
         shutil.rmtree(target)
         removed = True
@@ -369,6 +426,22 @@ def remove(name: str) -> bool:
         if part.is_file():
             part.unlink()
             removed = True
+        lock = cache_dir() / (Path(MODELS[name].filename).name + ".lock")
+        if lock.is_file():
+            lock.unlink()
+            removed = True
+    if name in PACKS:
+        # A killed pack pull also leaves the shared manifest's part and lock in
+        # the cache root; `remove` is the only command that can clear them.
+        pack_lock = cache_dir() / (name + ".lock")
+        if pack_lock.is_file():
+            pack_lock.unlink()
+            removed = True
+        manifest = cache_dir() / "rishe-models-manifest.json"
+        for stale in (Path(str(manifest) + ".part"), Path(str(manifest) + ".lock")):
+            if stale.is_file():
+                stale.unlink()
+                removed = True
     return removed
 
 
@@ -387,11 +460,15 @@ def verify(name: str) -> bool:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         _manifest_schema(manifest)
         files = manifest.get("tasks", {}).get(PACKS[name], {}).get("files", {})
+        # An empty `files` object used to make the loop below run zero times and
+        # bless an empty directory as a verified pack.
+        if not files:
+            return False
         for filename, metadata in files.items():
             path = target / Path(filename).name
             if not path.is_file() or _sha256(path) != metadata["sha256"].lower():
                 return False
-        return True
+        return all((target / file).is_file() for file in PACK_REQUIRED)
     raise ValueError(f"unknown model or pack {name!r}")
 
 
@@ -401,16 +478,21 @@ def _pull_pack(name: str, *, force: bool = False) -> Path:
     if task is None:
         raise ValueError(f"unknown pack {name!r}; known packs: {', '.join(PACKS)}")
     target = cache_dir() / name
-    if not force and all((target / file).is_file() for file in PACK_REQUIRED):
+    # A full-looking directory is not a valid pack: an older manifest or an
+    # interrupted download leaves the same three files behind. Verify the hashes
+    # before returning, as the single-file pull already does.
+    if not force and verify(name):
         return target
     target.mkdir(parents=True, exist_ok=True)
 
     manifest_path = cache_dir() / "rishe-models-manifest.json"
+    # The manifest is sha-pinned, so a cached copy with the right digest is the
+    # same file; re-fetching it costs a round trip and fails offline for nothing.
     _download(
         f"{_pack_base()}/manifest.json",
         manifest_path,
         PACK_MANIFEST_SHA256,
-        force=True,
+        force=False,
     )
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     _manifest_schema(manifest)

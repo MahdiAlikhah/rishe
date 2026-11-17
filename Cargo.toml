@@ -1,6 +1,6 @@
 [package]
 name = "rishe"
-version = "1.0.2"
+version = "1.0.3"
 edition = "2021"
 rust-version = "1.88"
 description = "Rishe (ریشه): High-performance Persian NLP engine in Rust — tokenization, SBD, lemmatization, ezafe detection, informal→formal normalization, stemming, spell checking, Jalali date parsing, embeddings"
@@ -31,9 +31,14 @@ crate-type = ["cdylib", "rlib"]
 [[bin]]
 name = "rishe"
 path = "src/bin/rishe.rs"
+# The CLI's `pull`/`verify` commands need the downloader; `--no-default-features`
+# gives a library-only build without ureq and sha2.
+required-features = ["hub"]
 
 [features]
-default = []
+default = ["hub"]
+# Downloading and verifying model packs is the only code that needs ureq and sha2.
+hub = ["dep:sha2", "dep:ureq"]
 python = ["dep:pyo3"]
 # The importable extension needs this; maturin enables it (see pyproject.toml).
 extension-module = ["pyo3/extension-module"]
@@ -46,8 +51,8 @@ aho-corasick = "1.1"
 fst = "0.4"
 rayon = "1.10"
 serde_json = "1"
-sha2 = "0.10"
-ureq = { version = "2.12", default-features = false, features = ["tls"] }
+sha2 = { version = "0.10", optional = true }
+ureq = { version = "2.12", optional = true, default-features = false, features = ["tls"] }
 pyo3 = { version = "0.22", optional = true, features = ["abi3-py39"] }
 tract = { version = "0.23.9", optional = true, default-features = false, features = ["onnx"] }
 tokenizers = { version = "0.23", optional = true, default-features = false, features = ["unstable_wasm"] }

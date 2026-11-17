@@ -27,7 +27,9 @@ pub fn remove_stopwords(tokens: Vec<String>) -> Vec<String> {
         .collect()
 }
 
-/// Every stopword, in unspecified order.
+/// Every stopword, sorted, so the order does not change between runs.
 pub fn stopwords() -> Vec<String> {
-    set().iter().map(|word| (*word).to_string()).collect()
+    let mut words: Vec<String> = set().iter().map(|word| (*word).to_string()).collect();
+    words.sort_unstable();
+    words
 }

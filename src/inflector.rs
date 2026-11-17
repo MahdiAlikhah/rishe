@@ -49,6 +49,17 @@ impl Inflector {
             return Some(format!("{noun}{ZWNJ}{}", suffixes[person]));
         }
 
+        if noun.ends_with('ی') {
+            // A `ی`-final word takes a ZWNJ before the suffix like `ه` does;
+            // without it `ایرانی` + `م` reads as "we are Iranian".
+            let suffix = if person < 3 {
+                ["ام", "ات", "اش"][person]
+            } else {
+                suffixes[person]
+            };
+            return Some(format!("{noun}{ZWNJ}{suffix}"));
+        }
+
         Some(format!("{noun}{}", suffixes[person]))
     }
 }

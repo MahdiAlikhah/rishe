@@ -1,19 +1,43 @@
 use crate::inflector::Inflector;
-use crate::morphology::MorphologyEngine;
+use crate::morphology::{MorphologyEngine, SHARED_VERBAL_PREFIXES};
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
+use std::hash::BuildHasherDefault;
 use std::sync::OnceLock;
+
+/// Hasher for tables keyed by `char`: the key is its own hash. SipHash13 costs
+/// more than the lookup it guards, and these tables are read per character.
+#[derive(Default)]
+struct CharHasher(u64);
+
+impl std::hash::Hasher for CharHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for byte in bytes {
+            self.0 = (self.0 << 8) ^ u64::from(*byte);
+        }
+    }
+
+    fn write_u32(&mut self, value: u32) {
+        self.0 = u64::from(value);
+    }
+}
+
+type CharMap = HashMap<char, &'static str, BuildHasherDefault<CharHasher>>;
 
 const ZWNJ: char = '\u{200C}';
 
 pub(crate) const PERSIAN_LETTERS: &str = "آابپتثجچحخدذرزژسشصضطظعغفقکگلمنوهیءؤۀأئ";
-const NON_LEFT_JOINERS: &str = "دۀذاأآورژز";
+pub(crate) const NON_LEFT_JOINERS: &str = "دۀذاأآورژز";
 const SINGLE_PUNCT: &str = "…،:.؟!؛";
 const OPENER_PUNCT: &str = ">{[(«";
 const CLOSER_PUNCT: &str = "<}])»";
 pub(crate) const ALL_PUNCT: &str = "…،:.؟!؛>{[(«<}])»-٪@/#";
 const INVISIBLE: &str =
-    "\u{200B}\u{200D}\u{200E}\u{200F}\u{2066}\u{2067}\u{202A}\u{202B}\u{202D}\u{FEFF}";
+    "\u{200B}\u{200D}\u{200E}\u{200F}\u{202A}\u{202B}\u{202C}\u{202D}\u{202E}\u{2066}\u{2067}\u{2068}\u{2069}\u{FEFF}";
 
 const VERB_SUFFIXES: &[&str] = &["ام", "ای", "است", "ایم", "اید", "اند"];
 const PERFECT_SUFFIXES: &[&str] = &[
@@ -26,20 +50,6 @@ const PERFECT_SUFFIXES: &[&str] = &[
     "\u{200C}است",
 ];
 const VERB_PERSON_ENDINGS: &[&str] = &["م", "ی", "د", "یم", "ید", "ند"];
-
-const VERBAL_PREFIXES: &[&str] = &[
-    "بر",
-    "باز",
-    "در",
-    "فرو",
-    "وا",
-    "ور",
-    "فرا",
-    "به‌در",
-    "دربر",
-    "پس",
-    "پیش",
-];
 
 const PREFIXES: &[&str] = &[
     "برون", "تک", "درون", "زیست", "میان", "نیم", "سوء", "ضد", "غیر", "بی", "هم", "نصفه", "پاره",
@@ -234,16 +244,25 @@ pub fn apply<'a>(input: &'a str, op: NormalizeOp, morph: &MorphologyEngine) -> C
     }
 }
 
-static ALPHABET_TABLE: OnceLock<HashMap<char, &'static str>> = OnceLock::new();
-static ARABIC_UNICODE_TABLE: OnceLock<HashMap<char, &'static str>> = OnceLock::new();
-static DIGIT_TABLE: OnceLock<HashMap<char, &'static str>> = OnceLock::new();
-static PUNCTUATION_TABLE: OnceLock<HashMap<char, &'static str>> = OnceLock::new();
+static ALPHABET_TABLE: OnceLock<CharMap> = OnceLock::new();
+static ARABIC_UNICODE_TABLE: OnceLock<CharMap> = OnceLock::new();
+static DIGIT_TABLE: OnceLock<CharMap> = OnceLock::new();
+static PUNCTUATION_TABLE: OnceLock<CharMap> = OnceLock::new();
 static WORD_SUFFIXES: OnceLock<HashSet<String>> = OnceLock::new();
 static SORTED_MORPH_SUFFIXES: OnceLock<Vec<&'static str>> = OnceLock::new();
 
 /// Map Arabic presentation forms and letter variants to Persian letters.
 pub fn alphabet(input: &str) -> Cow<'_, str> {
     mapped(input, ALPHABET_TABLE.get_or_init(|| table(ALPHABET_GROUPS)))
+}
+
+/// The `alphabet` replacement for one character, if the table has one.
+#[inline]
+pub(crate) fn alphabet_char(ch: char) -> Option<&'static str> {
+    ALPHABET_TABLE
+        .get_or_init(|| table(ALPHABET_GROUPS))
+        .get(&ch)
+        .copied()
 }
 
 /// Expand Arabic ligature characters into Persian words.
@@ -269,19 +288,30 @@ pub fn punctuation(input: &str) -> Cow<'_, str> {
 
 /// Normalize the word-final `ه‌ی`/`ه ی` ending to the given style.
 pub fn ya(input: &str, style: YaStyle) -> Cow<'_, str> {
-    let (needle, replacement) = match style {
-        YaStyle::Standard => ("ه\u{200C}ی", "ۀ"),
-        YaStyle::Joda => ("ۀ", "ه\u{200C}ی"),
+    // `ه‌ی` is the word-final ending only when the word ends there, so
+    // `خانه‌یی` must stay as it is. `ۀ` is always word-final, so it is replaced
+    // wherever it appears.
+    let (replaced, replacement) = match style {
+        YaStyle::Standard => (replace_at_word_end(input, "ه\u{200C}ی", "ۀ"), "ۀ"),
+        YaStyle::Joda => (
+            if input.contains('ۀ') {
+                Cow::Owned(input.replace('ۀ', "ه\u{200C}ی"))
+            } else {
+                Cow::Borrowed(input)
+            },
+            "ه\u{200C}ی",
+        ),
     };
-    if input.contains(needle) {
-        let replaced = input.replace(needle, replacement);
-        Cow::Owned(ya_ha_yeh_space(&replaced, replacement).into_owned())
-    } else {
-        ya_ha_yeh_space(input, replacement)
+    match replaced {
+        Cow::Borrowed(text) => ya_ha_yeh_space(text, replacement),
+        Cow::Owned(text) => Cow::Owned(ya_ha_yeh_space(&text, replacement).into_owned()),
     }
 }
 
-/// Truncate runs of a character to two, strip kashida and trim the result.
+/// Truncate runs of a letter to two, strip kashida and trim the result.
+///
+/// Only letters: `...` is an ellipsis and `!!!` is emphasis, not a repeated
+/// character, and digits/whitespace were already exempt.
 pub fn repeated_letters(input: &str) -> Cow<'_, str> {
     let mut out = String::with_capacity(input.len());
     let mut prev: Option<char> = None;
@@ -299,7 +329,7 @@ pub fn repeated_letters(input: &str) -> Cow<'_, str> {
             prev = Some(ch);
             run = 1;
         }
-        if run > 2 && !ch.is_whitespace() && !ch.is_numeric() {
+        if run > 2 && ch.is_alphabetic() {
             changed = true;
             continue;
         }
@@ -345,15 +375,37 @@ pub fn orthographic_spacing(input: &str) -> Cow<'_, str> {
         }
     }
 
-    let with_ha = laid_out.replace("هها", "ه\u{200C}ها");
-    let cleaned_zwnj = clean_zwnj(&with_ha);
-    let collapsed = collapse_horizontal(cleaned_zwnj.chars());
-    Cow::Owned(collapsed.trim().to_string())
+    // The first pass already collapses horizontal whitespace, so the extra
+    // `collapse_horizontal` pass only copied the string again. Each later step is
+    // skipped when it cannot change anything, and the input is borrowed when the
+    // result equals it.
+    let mut out = if laid_out.contains("هها") {
+        laid_out.replace("هها", "ه\u{200C}ها")
+    } else {
+        laid_out
+    };
+    if out.contains(ZWNJ) {
+        out = clean_zwnj(&out);
+    }
+    let leading = out.len() - out.trim_start().len();
+    out.drain(..leading);
+    out.truncate(out.trim_end().len());
+    if out == input {
+        return Cow::Borrowed(input);
+    }
+    Cow::Owned(out)
 }
 
 /// Attach punctuation to its neighbouring word without a space.
 pub fn punctuation_spacing(input: &str) -> Cow<'_, str> {
     if input.is_empty() {
+        return Cow::Borrowed(input);
+    }
+    // Every rule below moves a space next to a punctuation character, so text
+    // with none — a single token, say — cannot change.
+    if !input.chars().any(|ch| {
+        OPENER_PUNCT.contains(ch) || CLOSER_PUNCT.contains(ch) || SINGLE_PUNCT.contains(ch)
+    }) {
         return Cow::Borrowed(input);
     }
 
@@ -416,14 +468,24 @@ pub fn verbal_spacing<'a>(input: &'a str, morph: &MorphologyEngine) -> Cow<'a, s
 
 /// Run orthographic, punctuation, word and verbal spacing in that order.
 pub fn spacing<'a>(input: &'a str, morph: &MorphologyEngine) -> Cow<'a, str> {
-    let s = orthographic_spacing(input);
-    let s = punctuation_spacing(&s);
-    let s = word_spacing(&s, morph);
-    let s = verbal_spacing(&s, morph);
-    Cow::Owned(s.into_owned())
+    let first = orthographic_spacing(input);
+    let second = punctuation_spacing(&first);
+    let third = word_spacing(&second, morph);
+    // The last stage owns its result whenever it changed anything, so hand that
+    // buffer back instead of copying it once more.
+    if let Cow::Owned(text) = verbal_spacing(&third, morph) {
+        return Cow::Owned(text);
+    }
+    if matches!(
+        (&first, &second, &third),
+        (Cow::Borrowed(_), Cow::Borrowed(_), Cow::Borrowed(_))
+    ) {
+        return Cow::Borrowed(input);
+    }
+    Cow::Owned(third.into_owned())
 }
 
-fn mapped<'a>(input: &'a str, table: &HashMap<char, &'static str>) -> Cow<'a, str> {
+fn mapped<'a>(input: &'a str, table: &CharMap) -> Cow<'a, str> {
     let mut buf: Option<String> = None;
     for (idx, ch) in input.char_indices() {
         match table.get(&ch) {
@@ -448,8 +510,9 @@ fn mapped<'a>(input: &'a str, table: &HashMap<char, &'static str>) -> Cow<'a, st
     }
 }
 
-fn table(groups: &'static [(&'static str, &'static str)]) -> HashMap<char, &'static str> {
-    let mut map = HashMap::with_capacity(groups.len() * 4);
+fn table(groups: &'static [(&'static str, &'static str)]) -> CharMap {
+    let mut map =
+        CharMap::with_capacity_and_hasher(groups.len() * 4, BuildHasherDefault::default());
     for (chars, replacement) in groups {
         for ch in chars.chars() {
             map.insert(ch, *replacement);
@@ -458,8 +521,7 @@ fn table(groups: &'static [(&'static str, &'static str)]) -> HashMap<char, &'sta
     map
 }
 
-fn ya_ha_yeh_space<'a>(input: &'a str, replacement: &str) -> Cow<'a, str> {
-    let needle = "ه ی";
+fn replace_at_word_end<'a>(input: &'a str, needle: &str, replacement: &str) -> Cow<'a, str> {
     let mut out: Option<String> = None;
     let mut last = 0;
 
@@ -487,6 +549,10 @@ fn ya_ha_yeh_space<'a>(input: &'a str, replacement: &str) -> Cow<'a, str> {
     }
 }
 
+fn ya_ha_yeh_space<'a>(input: &'a str, replacement: &str) -> Cow<'a, str> {
+    replace_at_word_end(input, "ه ی", replacement)
+}
+
 fn clean_zwnj(input: &str) -> String {
     let chars: Vec<char> = input.chars().collect();
     let mut out = String::with_capacity(input.len());
@@ -505,9 +571,11 @@ fn clean_zwnj(input: &str) -> String {
         let next = chars.get(i + 1).copied();
         let between_script =
             prev.is_some_and(is_script_or_digit) && next.is_some_and(is_script_or_digit);
-        let after_non_joiner = prev.is_some_and(|c| NON_LEFT_JOINERS.contains(c));
         let near_space = prev == Some(' ') || next == Some(' ');
-        if between_script && !after_non_joiner && !near_space {
+        // A ZWNJ after a non-joining letter is visually neutral and often the
+        // only separator in a compound (`آذر‌ماه`, `نماز‌جمعه`); deleting it
+        // destroyed lexicon words and fused `آن‌ها‌است` into `آنهااست`.
+        if between_script && !near_space {
             out.push(ZWNJ);
         }
         i += 1;
@@ -607,9 +675,12 @@ fn insert_space_after_singles(chars: Vec<char>) -> Vec<char> {
 }
 
 fn finalize_spacing(chars: Vec<char>) -> String {
-    collapse_horizontal(chars)
-        .trim_matches(is_horizontal)
-        .to_string()
+    // Trim inside the buffer; `collapse(..).trim().to_string()` allocated twice.
+    let mut out = collapse_horizontal(chars);
+    let leading = out.len() - out.trim_start_matches(is_horizontal).len();
+    out.drain(..leading);
+    out.truncate(out.trim_end_matches(is_horizontal).len());
+    out
 }
 
 fn is_horizontal(ch: char) -> bool {
@@ -637,7 +708,7 @@ fn word_spans(input: &str) -> Vec<(usize, usize)> {
 fn split_trailing_punct(token: &str) -> (&str, &str) {
     let mut end = token.len();
     for (i, ch) in token.char_indices().rev() {
-        if ALL_PUNCT.contains(ch) {
+        if is_punctuation(ch) {
             end = i;
         } else {
             break;
@@ -650,9 +721,42 @@ fn is_persian_word(word: &str) -> bool {
     !word.is_empty() && word.chars().all(is_persian_letter)
 }
 
+/// Bitmap of `letters`: the hot loops ask about one character at a time, and
+/// scanning the 38-character string for each of them is the slow way to do it.
+fn letter_bits(letters: &str) -> [bool; 0x3000] {
+    let mut bits = [false; 0x3000];
+    for ch in letters.chars() {
+        if let Some(slot) = bits.get_mut(ch as usize) {
+            *slot = true;
+        }
+    }
+    bits
+}
+
+fn persian_letter_bits() -> &'static [bool; 0x3000] {
+    static BITS: OnceLock<[bool; 0x3000]> = OnceLock::new();
+    BITS.get_or_init(|| letter_bits(PERSIAN_LETTERS))
+}
+
+fn punct_bits() -> &'static [bool; 0x3000] {
+    static BITS: OnceLock<[bool; 0x3000]> = OnceLock::new();
+    BITS.get_or_init(|| letter_bits(ALL_PUNCT))
+}
+
+fn in_bits(bits: &'static [bool; 0x3000], ch: char) -> bool {
+    bits.get(ch as usize).copied().unwrap_or(false)
+}
+
+/// Whether `ch` is one of the punctuation marks the normalizer knows about.
+#[inline]
+pub(crate) fn is_punctuation(ch: char) -> bool {
+    in_bits(punct_bits(), ch)
+}
+
 /// Whether `ch` is a Persian letter or the zero-width non-joiner.
+#[inline]
 pub(crate) fn is_persian_letter(ch: char) -> bool {
-    PERSIAN_LETTERS.contains(ch) || ch == ZWNJ
+    ch == ZWNJ || in_bits(persian_letter_bits(), ch)
 }
 
 fn join_parts(left: &str, right: &str) -> String {
@@ -790,6 +894,12 @@ fn join_attached_morph_suffixes<'a>(input: &'a str, morph: &MorphologyEngine) ->
             if !is_persian_word(stem) || !morph.is_known_noun(stem) {
                 continue;
             }
+            // Only a `ه`-initial suffix or a comparative is unambiguous enough to
+            // re-spell an unknown word: `معانات`/`معافات` end in `ات` with a known
+            // noun stem and used to be split into `معان‌ات`/`معاف‌ات`.
+            if !suffix.starts_with('ه') && !matches!(*suffix, "تر" | "تری" | "ترین") {
+                continue;
+            }
             if matches!(*suffix, "تر" | "تری" | "ترین") && !morph.is_adjective(stem) {
                 continue;
             }
@@ -826,7 +936,8 @@ fn join_preverb_mi<'a>(input: &'a str, morph: &MorphologyEngine) -> Cow<'a, str>
         let (start, end) = spans[i];
         let preverb = &input[start..end];
 
-        if VERBAL_PREFIXES.contains(&preverb) {
+        if SHARED_VERBAL_PREFIXES.contains(&preverb) || matches!(preverb, "به‌در" | "دربر")
+        {
             let joiner = preverb_joiner(preverb);
 
             if i + 2 < spans.len() {
@@ -915,6 +1026,11 @@ fn join_mi_tokens<'a>(input: &'a str, morph: &MorphologyEngine) -> Cow<'a, str> 
     for (start, end) in spans {
         let token = &input[start..end];
         let (core, punct) = split_trailing_punct(token);
+        // `میانجی`/`میگساری` are nouns, not `می` + a verb: the whole token is
+        // already known, so never respell it (`colloquial.rs` has the same guard).
+        if morph.is_known_noun(core) {
+            continue;
+        }
         let (prefix, rest) = if let Some(rest) = core.strip_prefix("نمی") {
             ("نمی", rest)
         } else if let Some(rest) = core.strip_prefix("می") {
@@ -948,7 +1064,11 @@ fn is_verb_form(form: &str, morph: &MorphologyEngine) -> bool {
         return true;
     }
 
-    for prefix in VERBAL_PREFIXES {
+    for prefix in SHARED_VERBAL_PREFIXES
+        .iter()
+        .copied()
+        .chain(["به‌در", "دربر"])
+    {
         if let Some(rest) = form.strip_prefix(prefix) {
             let rest = rest.strip_prefix(ZWNJ).unwrap_or(rest);
             if rest.len() < form.len() && is_verb_form(rest, morph) {
@@ -1011,7 +1131,7 @@ fn fix_ast_spacing(input: &str) -> Cow<'_, str> {
             || input[after..]
                 .chars()
                 .next()
-                .is_some_and(|c| c.is_whitespace() || ALL_PUNCT.contains(c));
+                .is_some_and(|c| c.is_whitespace() || is_punctuation(c));
         if boundary {
             let b = out.get_or_insert_with(|| String::with_capacity(input.len() + 4));
             b.push_str(&input[last..idx]);
@@ -1062,7 +1182,7 @@ const ALPHABET_GROUPS: &[(&str, &str)] = &[
     ("۾ݥݦﻡﻢﻣ", "م"),
     ("ڹںڻڼڽݧݨݩﮞﻥﻧ", "ن"),
     ("ﯝٷﯗﯘﺅٶ", "ؤ"),
-    ("ﯙﯚﯜﯞﯟۄۅۉۊۋۏﯠﻭפ", "و"),
+    ("ﯙﯚﯜﯞﯟۄۅۉۊۋۏﯠﻭ", "و"),
     ("ﮤۂ", "ۀ"),
     ("ھۿہۃەﮦﮧﮨﮩﻩﻫة", "ه"),
     ("ﮰﮱٸۓ", "ئ"),
@@ -1090,9 +1210,9 @@ const ARABIC_UNICODE_GROUPS: &[(&str, &str)] = &[
 
 const DIGIT_GROUPS: &[(&str, &str)] = &[
     ("0٠𝟢𝟬", "۰"),
-    ("1١𝟣𝟭⑴⒈⓵①❶𝟙𝟷ı", "۱"),
-    ("2٢𝟤𝟮⑵⒉⓶②❷²𝟐𝟸𝟚ᒿշ", "۲"),
-    ("3٣𝟥𝟯⑶⒊⓷③❸³ვ", "۳"),
+    ("1١𝟣𝟭⑴⒈⓵①❶𝟙𝟷", "۱"),
+    ("2٢𝟤𝟮⑵⒉⓶②❷²𝟐𝟸𝟚", "۲"),
+    ("3٣𝟥𝟯⑶⒊⓷③❸³", "۳"),
     ("4٤𝟦𝟰⑷⒋⓸④❹⁴", "۴"),
     ("5٥𝟧𝟱⑸⒌⓹⑤❺⁵", "۵"),
     ("6٦𝟨𝟲⑹⒍⓺⑥❻⁶", "۶"),
@@ -1114,9 +1234,11 @@ const DIGIT_GROUPS: &[(&str, &str)] = &[
 
 const PUNCTUATION_GROUPS: &[(&str, &str)] = &[
     ("▕❘❙❚▏│", "|"),
-    ("ㅡ一—–ー̶", "-"),
+    // Em/en dashes and the combining strike only: `ㅡ` (Hangul), `一` (CJK) and
+    // `ー` (katakana) are letters of other scripts, not Persian punctuation.
+    ("—–̶", "-"),
     ("▁_̲", "_"),
-    ("❔?�؟ʕʔ🏻\u{0008}\u{0097}\u{009D}", "؟"),
+    ("❔?�؟", "؟"),
     ("❕！", "!"),
     ("⁉", "!؟"),
     ("‼", "!!"),
@@ -1162,6 +1284,79 @@ mod tests {
     }
 
     #[test]
+    fn tables_leave_letters_and_marks_alone() {
+        // A skin tone modifier, a pharyngeal and a glottal stop are not
+        // question marks; dotless i, Armenian sheh and Georgian vini are not
+        // digits. Each used to be rewritten into one.
+        for ch in [
+            '\u{0295}',
+            '\u{0294}',
+            '\u{1F3FB}',
+            '\u{0008}',
+            '\u{0097}',
+            '\u{009D}',
+        ] {
+            assert_eq!(punctuation(&ch.to_string()), ch.to_string(), "{ch:?}");
+        }
+        for ch in ['\u{0131}', '\u{0577}', '\u{10D5}'] {
+            assert_eq!(digits(&ch.to_string()), ch.to_string(), "{ch:?}");
+        }
+        // The real mappings still happen.
+        assert_eq!(punctuation("👍🏻؟"), "👍🏻؟");
+        assert_eq!(digits("1١①"), "۱۱۱");
+    }
+
+    #[test]
+    fn repeated_letters_leaves_punctuation_and_digits() {
+        // `...` is an ellipsis and `!!!` is emphasis, not a repeated letter.
+        assert_eq!(repeated_letters("سلام..."), "سلام...");
+        assert_eq!(repeated_letters("!!!"), "!!!");
+        assert_eq!(repeated_letters("۱۲۳۳۳"), "۱۲۳۳۳");
+        assert_eq!(repeated_letters("خوببب"), "خوبب");
+    }
+
+    #[test]
+    fn orthographic_spacing_keeps_compound_zwnj() {
+        // A ZWNJ after a non-joining letter is the only separator in a compound;
+        // deleting it turned shipped words into spellings the lexicon lacks.
+        assert_eq!(orthographic_spacing("آذر\u{200C}ماه"), "آذر\u{200C}ماه");
+        assert_eq!(orthographic_spacing("نماز\u{200C}جمعه"), "نماز\u{200C}جمعه");
+        assert_eq!(
+            orthographic_spacing("آن\u{200C}ها\u{200C}است"),
+            "آن\u{200C}ها\u{200C}است"
+        );
+    }
+
+    #[test]
+    fn other_scripts_are_not_rewritten() {
+        // Hebrew pe, Canadian syllabics, Hangul and CJK lookalikes used to be
+        // mapped to Persian letters, digits and punctuation.
+        assert_eq!(alphabet("\u{05E4}"), "\u{05E4}");
+        assert_eq!(digits("\u{14BF}"), "\u{14BF}");
+        for ch in ['\u{3161}', '\u{4E00}', '\u{30FC}'] {
+            assert_eq!(punctuation(&ch.to_string()), ch.to_string(), "{ch:?}");
+        }
+        assert_eq!(punctuation("—"), "-");
+    }
+
+    #[test]
+    fn bidi_controls_are_invisible() {
+        let controls = "\u{202A}\u{202B}\u{202C}\u{202D}\u{202E}\u{2066}\u{2067}\u{2068}\u{2069}";
+        assert_eq!(orthographic_spacing(controls), "");
+    }
+
+    #[test]
+    fn spacing_does_not_respell_nouns_or_split_unknown_words() {
+        let morph = MorphologyEngine::new();
+        // `میانجی`/`میگساری` are nouns, not `می` + a verb.
+        assert_eq!(verbal_spacing("میانجی", &morph), "میانجی");
+        assert_eq!(verbal_spacing("میگساری", &morph), "میگساری");
+        // `ات` inside an unknown word is not an attachable plural.
+        assert_eq!(word_spacing("معانات.", &morph), "معانات.");
+        assert_eq!(word_spacing("مشتها.", &morph), "مشت\u{200C}ها.");
+    }
+
+    #[test]
     fn repeated_letters_collapses_runs() {
         assert_eq!(
             repeated_letters("اینــــجاااا یکــــــ متنــــــ نمونه است."),
@@ -1173,6 +1368,10 @@ mod tests {
     fn ya_styles_round_trip() {
         assert_eq!(ya("خانه‌ی ما", YaStyle::Standard), "خانۀ ما");
         assert_eq!(ya("خانۀ ما", YaStyle::Joda), "خانه‌ی ما");
+        // `ه‌ی` is the ending only at a word end: `خانه‌یی` must not become
+        // `خانۀی`, which is neither spelling.
+        assert_eq!(ya("خانه‌یی", YaStyle::Standard), "خانه‌یی");
+        assert_eq!(ya("خانه‌ی", YaStyle::Standard), "خانۀ");
     }
 
     #[test]
@@ -1182,6 +1381,31 @@ mod tests {
             "سلام دنیا خوب"
         );
         assert_eq!(orthographic_spacing("خانهها"), "خانه‌ها");
+    }
+
+    #[test]
+    fn letter_and_punctuation_bits_match_the_strings() {
+        // The bitmaps are built from the constants, so this pins the half-open
+        // bound: a character past the last slot must read as false, not panic.
+        for ch in PERSIAN_LETTERS.chars() {
+            assert!(is_persian_letter(ch), "{ch:?} missing from the bitmap");
+        }
+        for ch in ALL_PUNCT.chars() {
+            assert!(is_punctuation(ch), "{ch:?} missing from the bitmap");
+        }
+        assert!(is_persian_letter(ZWNJ));
+        assert!(!is_persian_letter('x'));
+        assert!(!is_punctuation('\u{10FFFF}'));
+    }
+
+    #[test]
+    fn orthographic_spacing_borrows_clean_text() {
+        // The point of the Cow: text that needs no fix must not be copied.
+        assert!(matches!(orthographic_spacing("سلام دنیا"), Cow::Borrowed(_)));
+        assert!(matches!(orthographic_spacing("سلام  دنیا"), Cow::Owned(_)));
+        assert!(matches!(orthographic_spacing(" سلام"), Cow::Owned(_)));
+        let morph = MorphologyEngine::new();
+        assert!(matches!(spacing("سلام دنیا", &morph), Cow::Borrowed(_)));
     }
 
     #[test]

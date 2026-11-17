@@ -14,10 +14,10 @@ are rejected rather than silently ignored.
 from __future__ import annotations
 
 import unicodedata
-from functools import cache
 from typing import List, Optional, Tuple
 
 from ._core import Pipeline
+from .api import pipeline as _pipe
 
 __all__ = [
     "Normalizer",
@@ -29,11 +29,6 @@ __all__ = [
     "word_tokenize",
     "sent_tokenize",
 ]
-
-
-@cache
-def _pipe() -> Pipeline:
-    return Pipeline()
 
 
 class Normalizer:
@@ -51,6 +46,7 @@ class Normalizer:
         seperate_mi: bool = True,
     ) -> None:
         self._correct_spacing = correct_spacing
+        self._remove_diacritics = remove_diacritics
         self._remove_specials_chars = remove_specials_chars
         self._decrease_repeated_chars = decrease_repeated_chars
         self._persian_style = persian_style
@@ -92,6 +88,8 @@ class Normalizer:
             stages.append("verbal_spacing")
         if stages:
             text = self._pipe.normalize(text, stages)
+        if self._remove_diacritics:
+            text = self._pipe.mask(text, ["diacritics"])
         if self._remove_specials_chars:
             text = self.remove_specials_chars(text)
         return text
@@ -103,10 +101,14 @@ class Normalizer:
         return self._pipe.mask(text, ["diacritics"])
 
     def remove_specials_chars(self, text: str) -> str:
+        # Whitespace and format characters carry meaning — `\n` and `\t` separate
+        # words, ZWJ joins an emoji, RLM sets the direction — so they stay.
         return "".join(
             ch
             for ch in text
-            if ch == "\u200c" or not unicodedata.category(ch).startswith(("S", "C"))
+            if ch.isspace()
+            or unicodedata.category(ch) == "Cf"
+            or not unicodedata.category(ch).startswith(("S", "C"))
         )
 
     def decrease_repeated_chars(self, text: str) -> str:

@@ -159,7 +159,11 @@ python -m unittest discover -s python/tests -p "test_*.py" -v
 
 6. **Watch CI** until every job is green: `rust` (three OSes), `rust models`,
    `msrv`, `features`, `gpu feature` (cuda and metal), `docs`, `examples`,
-   `pack tests`, `python tests` (3.9 – 3.14), and the wheel and sdist artifacts.
+   `pack tests`, `python tests` (3.9 – 3.14 on Linux, plus Windows), `wheel
+   smoke` (installs and imports the Linux, macOS and Windows wheels), and the
+   wheel and sdist artifacts. The Linux wheel is built once in `build wheel` and
+   the test jobs install that artifact, so the same wheel is not compiled eight
+   times.
    `pack tests` downloads the real packs and runs the 12 tests the default suite
    skips, so it is the only job that exercises ONNX inference; it runs on tags
    and `workflow_dispatch` only, to keep pull requests cheap. The publish jobs

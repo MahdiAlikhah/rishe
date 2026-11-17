@@ -9,6 +9,8 @@ pub mod colloquial;
 /// Verb conjugation from past and present stems.
 pub mod conjugation;
 pub mod dates;
+
+pub use dates::Jalali as JalaliDate;
 /// Joining tokens back into readable text.
 pub mod detokenizer;
 /// Read-only word and sentence embeddings from a memory-mapped vector file.
@@ -16,6 +18,7 @@ pub mod embeddings;
 /// Rule-based ezafe marker prediction.
 pub mod ezafe;
 /// Model hub: cache paths, downloads and checksum verification.
+#[cfg(feature = "hub")]
 pub mod hub;
 /// Comparative, superlative, plural and possessive inflection.
 pub mod inflector;
@@ -32,6 +35,8 @@ pub mod morphology;
 pub mod normalize_ops;
 /// Full normalization pipeline and its configuration.
 pub mod normalizer;
+/// Arabic presentation form to Persian letter table.
+mod presentation;
 /// Sentence boundary detection.
 pub mod sbd;
 /// Frequency-ranked spelling suggestions and correction.
@@ -50,6 +55,13 @@ pub mod transliterate;
 pub mod utilities;
 /// Word-level tokenization options and post-processing.
 pub mod word_tokenizer;
+
+/// Largest `max_n` [`Pipeline::ngrams`] accepts.
+///
+/// The result is `max_n` windows over every token, so letting `max_n` track the
+/// token count makes the output cubic in the input. Ten covers every practical
+/// n-gram use and keeps the result linear in the text length.
+pub(crate) const MAX_NGRAM: usize = 10;
 
 use colloquial::{ColloquialConverter, ExpandedTokens};
 use conjugation::Conjugation;
@@ -211,11 +223,17 @@ impl Pipeline {
     /// Load a pack for `task` (`pos`, `ner`, `ezafe`, `depparse`), erroring when its
     /// task does not match.
     #[cfg(feature = "models")]
-    pub fn load_pack(&mut self, task: &str, path: &str) -> Result<(), String> {
+    pub fn load_pack(
+        &mut self,
+        task: &str,
+        path: impl AsRef<std::path::Path>,
+    ) -> Result<(), String> {
+        let path = path.as_ref();
         let pack = models::ModelPack::load(path)?;
         if pack.task() != task {
             return Err(format!(
-                "pack at {path} is {}, expected {task}",
+                "pack at {} is {}, expected {task}",
+                path.display(),
                 pack.task()
             ));
         }
@@ -352,12 +370,10 @@ impl Pipeline {
 
         let formal_text = Detokenizer::detokenize(&tokens);
         let sentences = if opts.sentences {
-            let source = if tokens.is_empty() {
-                norm_cow.as_ref()
-            } else {
-                formal_text.as_str()
-            };
-            SentenceSplitter::split(source)
+            // Split the normalized text, not `formal_text`: the detokenizer
+            // joins tokens with spaces, so newlines are gone by then and
+            // "a\nb" came back as one sentence.
+            SentenceSplitter::split(norm_cow.as_ref())
                 .into_iter()
                 .map(str::to_owned)
                 .collect()
@@ -408,7 +424,11 @@ impl Pipeline {
         }
         let mut current = text.to_owned();
         for op in ops {
-            current = normalize_ops::apply(&current, op, &self.morphology).into_owned();
+            // A stage that changed nothing hands back the same buffer; copying it
+            // anyway doubles the work per stage.
+            if let Cow::Owned(next) = normalize_ops::apply(&current, op, &self.morphology) {
+                current = next;
+            }
         }
         Ok(current)
     }
@@ -437,11 +457,7 @@ impl Pipeline {
                 None => return Err(format!("unknown masker: {name}")),
             }
         }
-        let mut current = Cow::Borrowed(text);
-        for op in ops {
-            current = Cow::Owned(op.apply(&current, mask_token));
-        }
-        Ok(current.into_owned())
+        Ok(maskers::apply_chain(text, &ops, mask_token))
     }
 
     /// Stem one word, falling back to the lemma when no noun suffix matches.
@@ -579,10 +595,19 @@ impl Pipeline {
     }
 
     /// All word n-grams for `min_n..=max_n` after normalization; errors when the
-    /// range is empty or reversed.
+    /// range is empty or reversed, or when `max_n` is greater than 10.
     pub fn ngrams(&self, text: &str, min_n: usize, max_n: usize) -> Result<Vec<String>, String> {
         if min_n == 0 || max_n < min_n {
             return Err("ngram range must be (min, max) with 1 <= min <= max".to_string());
+        }
+        // The output is `max_n` windows over `tokens`, each holding up to
+        // `max_n` tokens, so allowing `max_n` to track the token count makes the
+        // result cubic in the input: a 2000-word text at `max_n = 2000` builds
+        // 6.7 GB of strings. A fixed ceiling keeps the output linear in the
+        // input. Refuse rather than clamp, so a caller never silently gets fewer
+        // n-grams than it asked for.
+        if max_n > MAX_NGRAM {
+            return Err(format!("max_n must be at most {MAX_NGRAM}, got {max_n}"));
         }
         let normalized = self.normalizer.normalize(text);
         let tokens = self.tokenize(
@@ -608,77 +633,58 @@ mod py_bindings {
     use pyo3::prelude::*;
     use std::path::PathBuf;
 
-    #[pyclass(frozen, get_all, module = "rishe._core")]
-    #[derive(Clone, Copy)]
-    pub struct JalaliDate {
-        pub year: i32,
-        pub month: u8,
-        pub day: u8,
-    }
-
-    impl JalaliDate {
-        fn as_date(self) -> dates::Jalali {
-            dates::Jalali {
-                year: self.year,
-                month: self.month,
-                day: self.day,
-            }
-        }
-    }
-
+    // The Python class is `dates::Jalali` itself (see `dates.rs`), so these
+    // methods are the only place the two views meet: `to_gregorian` and
+    // `from_gregorian` keep their Rust signatures and are renamed for Python.
     #[pymethods]
-    impl JalaliDate {
+    impl dates::Jalali {
+        /// Build a date from a Jalali year, month and day.
         #[new]
         pub fn py_new(year: i32, month: u8, day: u8) -> PyResult<Self> {
-            dates::Jalali::new(year, month, day)
-                .map(|date| Self {
-                    year: date.year,
-                    month: date.month,
-                    day: date.day,
-                })
-                .ok_or_else(|| {
-                    pyo3::exceptions::PyValueError::new_err(format!(
-                        "invalid Jalali date: {year}-{month}-{day}"
-                    ))
-                })
+            Self::new(year, month, day).ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "invalid Jalali date: {year}-{month}-{day}"
+                ))
+            })
         }
 
+        /// Parse a Jalali date out of text, or `None` when there is none.
         #[staticmethod]
         pub fn parse(text: &str) -> Option<Self> {
-            dates::parse(text).map(|date| Self {
-                year: date.year,
-                month: date.month,
-                day: date.day,
-            })
+            dates::parse(text)
         }
 
+        /// Convert a Gregorian year, month and day to a Jalali date.
         #[staticmethod]
-        pub fn from_gregorian(year: i32, month: u8, day: u8) -> Option<Self> {
-            dates::Jalali::from_gregorian(dates::Gregorian { year, month, day }).map(|date| Self {
-                year: date.year,
-                month: date.month,
-                day: date.day,
-            })
+        #[pyo3(name = "from_gregorian")]
+        pub fn py_from_gregorian(year: i32, month: u8, day: u8) -> Option<Self> {
+            Self::from_gregorian(dates::Gregorian { year, month, day })
         }
 
+        /// The ISO 8601 form of the matching Gregorian date.
         #[getter]
         pub fn iso(&self) -> Option<String> {
-            self.as_date().to_iso()
+            self.to_iso()
         }
 
+        /// The Gregorian year, month and day of this date.
         #[allow(clippy::wrong_self_convention)]
-        pub fn to_gregorian(&self) -> Option<(i32, u8, u8)> {
-            self.as_date()
-                .to_gregorian()
+        #[pyo3(name = "to_gregorian")]
+        pub fn py_to_gregorian(&self) -> Option<(i32, u8, u8)> {
+            self.to_gregorian()
                 .map(|date| (date.year, date.month, date.day))
         }
 
-        pub fn format_persian(&self) -> String {
-            self.as_date().format_persian()
+        /// Format with the Persian month name, e.g. `۱۲ مرداد ۱۴۰۲`.
+        #[pyo3(name = "format_persian")]
+        pub fn py_format_persian(&self) -> String {
+            self.format_persian()
         }
 
-        pub fn format_numeric(&self) -> String {
-            self.as_date().format_numeric()
+        /// Format numerically, e.g. `۱۴۰۲/۰۵/۱۲`.
+        #[pyo3(name = "format_numeric")]
+        pub fn py_format_numeric(&self) -> String {
+            self.format_numeric()
         }
 
         fn __repr__(&self) -> String {
@@ -692,7 +698,9 @@ mod py_bindings {
         #[new]
         #[pyo3(signature = (unify_digits=true, strip_diacritics=true, fix_zwnj=true, pos_pack=None, ner_pack=None, ezafe_pack=None, depparse_pack=None))]
         #[allow(unused_variables)]
+        #[allow(clippy::too_many_arguments)]
         pub fn py_new(
+            py: Python<'_>,
             unify_digits: bool,
             strip_diacritics: bool,
             fix_zwnj: bool,
@@ -701,38 +709,40 @@ mod py_bindings {
             ezafe_pack: Option<PathBuf>,
             depparse_pack: Option<PathBuf>,
         ) -> PyResult<Self> {
-            #[cfg(feature = "models")]
-            let mut pipe = Self::create(unify_digits, strip_diacritics, fix_zwnj);
-            #[cfg(not(feature = "models"))]
-            let pipe = Self::create(unify_digits, strip_diacritics, fix_zwnj);
+            py.allow_threads(|| {
+                #[cfg(feature = "models")]
+                let mut pipe = Self::create(unify_digits, strip_diacritics, fix_zwnj);
+                #[cfg(not(feature = "models"))]
+                let pipe = Self::create(unify_digits, strip_diacritics, fix_zwnj);
 
-            #[cfg(feature = "models")]
-            {
-                for (task, path) in [
-                    ("pos", pos_pack),
-                    ("ner", ner_pack),
-                    ("ezafe", ezafe_pack),
-                    ("depparse", depparse_pack),
-                ] {
-                    if let Some(path) = path {
-                        pipe.load_pack(task, &path.to_string_lossy())
-                            .map_err(pyo3::exceptions::PyValueError::new_err)?;
+                #[cfg(feature = "models")]
+                {
+                    for (task, path) in [
+                        ("pos", pos_pack),
+                        ("ner", ner_pack),
+                        ("ezafe", ezafe_pack),
+                        ("depparse", depparse_pack),
+                    ] {
+                        if let Some(path) = path {
+                            pipe.load_pack(task, path)
+                                .map_err(pyo3::exceptions::PyValueError::new_err)?;
+                        }
                     }
                 }
-            }
-            #[cfg(not(feature = "models"))]
-            {
-                if pos_pack.is_some()
-                    || ner_pack.is_some()
-                    || ezafe_pack.is_some()
-                    || depparse_pack.is_some()
+                #[cfg(not(feature = "models"))]
                 {
-                    return Err(pyo3::exceptions::PyValueError::new_err(
-                        "model packs require the `models` feature",
-                    ));
+                    if pos_pack.is_some()
+                        || ner_pack.is_some()
+                        || ezafe_pack.is_some()
+                        || depparse_pack.is_some()
+                    {
+                        return Err(pyo3::exceptions::PyValueError::new_err(
+                            "model packs require the `models` feature",
+                        ));
+                    }
                 }
-            }
-            Ok(pipe)
+                Ok(pipe)
+            })
         }
 
         /// Python `pos`: releases the GIL and maps errors to `ValueError`.
@@ -849,31 +859,39 @@ mod py_bindings {
         #[pyo3(name = "mask", signature = (text, maskers, mask_token=None))]
         pub fn py_mask(
             &self,
+            py: Python<'_>,
             text: &str,
             maskers: Vec<String>,
             mask_token: Option<String>,
         ) -> PyResult<String> {
-            self.mask(text, &maskers, mask_token.as_deref())
+            py.allow_threads(|| self.mask(text, &maskers, mask_token.as_deref()))
                 .map_err(pyo3::exceptions::PyValueError::new_err)
         }
 
         /// Python `sent_tokenize`: one string per sentence.
-        pub fn sent_tokenize(&self, text: &str) -> Vec<String> {
-            SentenceSplitter::split(text)
-                .into_iter()
-                .map(str::to_owned)
-                .collect()
+        pub fn sent_tokenize(&self, py: Python<'_>, text: &str) -> Vec<String> {
+            py.allow_threads(|| {
+                SentenceSplitter::split(text)
+                    .into_iter()
+                    .map(str::to_owned)
+                    .collect()
+            })
         }
 
         /// Python `normalize`: applies `stages` in order when given, else the full normalizer.
         #[pyo3(signature = (text, stages=None))]
-        pub fn normalize(&self, text: &str, stages: Option<Vec<String>>) -> PyResult<String> {
-            match stages {
+        pub fn normalize(
+            &self,
+            py: Python<'_>,
+            text: &str,
+            stages: Option<Vec<String>>,
+        ) -> PyResult<String> {
+            py.allow_threads(|| match stages {
                 Some(stages) => self
                     .normalize_with(text, &stages)
                     .map_err(pyo3::exceptions::PyValueError::new_err),
                 None => Ok(self.normalizer.normalize(text).into_owned()),
-            }
+            })
         }
 
         /// Python `tokenize`: surface tokens with the word-tokenizer switches.
@@ -894,6 +912,7 @@ mod py_bindings {
         #[allow(clippy::too_many_arguments)]
         pub fn py_tokenize(
             &self,
+            py: Python<'_>,
             text: &str,
             join_verb_parts: bool,
             join_abbreviations: bool,
@@ -914,13 +933,13 @@ mod py_bindings {
                 replace_numbers,
                 replace_hashtags,
             };
-            Pipeline::tokenize(self, text, &options)
+            py.allow_threads(|| Pipeline::tokenize(self, text, &options))
         }
 
         /// Python `tokenize_spans`: tokens with character offsets.
         #[pyo3(name = "tokenize_spans")]
-        pub fn py_tokenize_spans(&self, text: &str) -> Vec<(String, usize, usize)> {
-            self.tokenize_char_spans(text)
+        pub fn py_tokenize_spans(&self, py: Python<'_>, text: &str) -> Vec<(String, usize, usize)> {
+            py.allow_threads(|| self.tokenize_char_spans(text))
         }
 
         /// Python `number_to_words`: accepts an int or digit string and raises
@@ -949,27 +968,40 @@ mod py_bindings {
 
         /// Python `ngrams`: maps range errors to `ValueError`.
         #[pyo3(name = "ngrams", signature = (text, min_n=1, max_n=1))]
-        pub fn py_ngrams(&self, text: &str, min_n: usize, max_n: usize) -> PyResult<Vec<String>> {
-            self.ngrams(text, min_n, max_n)
+        pub fn py_ngrams(
+            &self,
+            py: Python<'_>,
+            text: &str,
+            min_n: usize,
+            max_n: usize,
+        ) -> PyResult<Vec<String>> {
+            py.allow_threads(|| self.ngrams(text, min_n, max_n))
                 .map_err(pyo3::exceptions::PyValueError::new_err)
         }
 
         /// Python `rake`: top `n` keywords, normalized first.
         #[pyo3(name = "rake", signature = (text, n=5, max_length=3))]
-        pub fn py_rake(&self, text: &str, n: usize, max_length: usize) -> Vec<String> {
-            self.rake(text, n, max_length)
+        pub fn py_rake(
+            &self,
+            py: Python<'_>,
+            text: &str,
+            n: usize,
+            max_length: usize,
+        ) -> Vec<String> {
+            py.allow_threads(|| self.rake(text, n, max_length))
         }
 
         /// Python `textrank`: top `n` keywords, normalized first.
         #[pyo3(name = "textrank", signature = (text, n=5, max_length=3, window=2))]
         pub fn py_textrank(
             &self,
+            py: Python<'_>,
             text: &str,
             n: usize,
             max_length: usize,
             window: usize,
         ) -> Vec<String> {
-            self.textrank(text, n, max_length, window)
+            py.allow_threads(|| self.textrank(text, n, max_length, window))
         }
 
         /// Python `keyboard_noise`: default options with the optional `seed`.
@@ -1078,8 +1110,8 @@ mod py_bindings {
 
         /// Python `spell_correct`: normalizes then corrects the text.
         #[pyo3(name = "spell_correct")]
-        pub fn py_spell_correct(&self, text: &str) -> String {
-            self.spell_correct(text)
+        pub fn py_spell_correct(&self, py: Python<'_>, text: &str) -> String {
+            py.allow_threads(|| self.spell_correct(text))
         }
 
         /// Python `comparative`: comparative form of an adjective.
@@ -1126,8 +1158,9 @@ mod py_bindings {
     impl embeddings::Embeddings {
         /// Python constructor: loads vectors from `path`.
         #[new]
-        pub fn py_new(path: PathBuf) -> PyResult<Self> {
-            Self::load(path).map_err(pyo3::exceptions::PyIOError::new_err)
+        pub fn py_new(py: Python<'_>, path: PathBuf) -> PyResult<Self> {
+            py.allow_threads(|| Self::load(path))
+                .map_err(pyo3::exceptions::PyIOError::new_err)
         }
 
         fn __len__(&self) -> usize {
@@ -1165,8 +1198,8 @@ mod py_bindings {
 
         /// Python `sentence_vector`: mean vector of the known words.
         #[pyo3(name = "sentence_vector")]
-        pub fn py_sentence_vector(&self, text: &str) -> Vec<f32> {
-            self.sentence_vector(text)
+        pub fn py_sentence_vector(&self, py: Python<'_>, text: &str) -> Vec<f32> {
+            py.allow_threads(|| self.sentence_vector(text))
         }
 
         /// Python `sentence_vectors`: releases the GIL while averaging each text.
@@ -1177,14 +1210,14 @@ mod py_bindings {
 
         /// Python `sentence_similarity`: cosine similarity of the two sentence vectors.
         #[pyo3(name = "sentence_similarity")]
-        pub fn py_sentence_similarity(&self, first: &str, second: &str) -> f32 {
-            self.sentence_similarity(first, second)
+        pub fn py_sentence_similarity(&self, py: Python<'_>, first: &str, second: &str) -> f32 {
+            py.allow_threads(|| self.sentence_similarity(first, second))
         }
 
         /// Python `most_similar`: up to `n` neighbours by descending cosine similarity.
         #[pyo3(name = "most_similar", signature = (word, n=5))]
-        pub fn py_most_similar(&self, word: &str, n: usize) -> Vec<(String, f32)> {
-            self.most_similar(word, n)
+        pub fn py_most_similar(&self, py: Python<'_>, word: &str, n: usize) -> Vec<(String, f32)> {
+            py.allow_threads(|| self.most_similar(word, n))
         }
     }
 
@@ -1214,8 +1247,9 @@ mod py_bindings {
     impl models::ModelPack {
         /// Python constructor: loads a pack directory.
         #[new]
-        pub fn py_new(path: PathBuf) -> PyResult<Self> {
-            Self::load(path).map_err(pyo3::exceptions::PyValueError::new_err)
+        pub fn py_new(py: Python<'_>, path: PathBuf) -> PyResult<Self> {
+            py.allow_threads(|| Self::load(path))
+                .map_err(pyo3::exceptions::PyValueError::new_err)
         }
 
         /// Python `tags_from_words`: tags for pre-tokenized words.
@@ -1290,7 +1324,7 @@ mod py_bindings {
         m.add("DEFAULT_MASKERS", crate::maskers::DEFAULT_MASKERS.to_vec())?;
         m.add_class::<Pipeline>()?;
         m.add_class::<ProcessedDoc>()?;
-        m.add_class::<JalaliDate>()?;
+        m.add_class::<dates::Jalali>()?;
         m.add_class::<embeddings::Embeddings>()?;
         #[cfg(feature = "models")]
         m.add_class::<models::ModelPack>()?;
@@ -1477,6 +1511,25 @@ mod tests {
             stopwords::remove_stopwords(vec!["و".to_string(), "کتاب".to_string()]),
             ["کتاب"]
         );
+        // HashSet order changed from run to run; the list is sorted now.
+        let words = stopwords::stopwords();
+        assert!(words.len() > 100, "{} stopwords", words.len());
+        assert!(
+            words.windows(2).all(|pair| pair[0] <= pair[1]),
+            "not sorted"
+        );
+    }
+
+    #[cfg(feature = "models")]
+    #[test]
+    fn load_pack_accepts_a_plain_path() {
+        // `to_string_lossy` replaced a non-UTF-8 path with U+FFFD before the
+        // loader could open it; the signature now takes any `Path`.
+        let mut nlp = Pipeline::create(true, true, true);
+        let error = nlp
+            .load_pack("pos", std::path::Path::new("missing-pack-dir"))
+            .expect_err("a missing pack must fail");
+        assert!(error.contains("not a directory"), "{error}");
     }
 
     #[test]
@@ -1566,6 +1619,46 @@ mod tests {
     }
 
     #[test]
+    fn process_keeps_newline_sentence_boundaries() {
+        // Sentences used to be split from the detokenized text, where the
+        // detokenizer had already turned newlines into spaces, so this was one
+        // sentence instead of two.
+        let nlp = Pipeline::create(true, true, true);
+        let text = "سطر اول\nسطر دوم";
+        let doc = nlp.process(text);
+        assert_eq!(doc.sentences, ["سطر اول", "سطر دوم"]);
+        // And it agrees with splitting the text directly.
+        assert_eq!(
+            doc.sentences,
+            SentenceSplitter::split(text)
+                .into_iter()
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        );
+        // A blank line separates too, and does not leave an empty sentence.
+        assert_eq!(nlp.process("خط یک\n\nخط سه").sentences, ["خط یک", "خط سه"]);
+    }
+
+    #[test]
+    fn ngrams_refuses_a_wide_range() {
+        // `max_n` tracking the token count made the output cubic in the input:
+        // a 2000-word text at `max_n = 2000` built 6.7 GB of strings over 153 s.
+        // The cap is checked before any work, so a short text proves it and
+        // fails fast if the check is ever removed.
+        let nlp = Pipeline::create(true, true, true);
+        let text = "کتاب خوب است";
+        let error = nlp
+            .ngrams(text, 1, 2000)
+            .expect_err("a range past the cap must be refused");
+        assert!(error.contains("max_n must be at most"), "{error}");
+        assert!(nlp.ngrams(text, 1, MAX_NGRAM).is_ok());
+        assert!(nlp.ngrams(text, MAX_NGRAM + 1, MAX_NGRAM + 1).is_err());
+        // The cap and the existing range check compose: a reversed range past
+        // the cap still reports the range problem first.
+        assert!(nlp.ngrams(text, 3, 2).is_err());
+    }
+
+    #[test]
     fn test_mask() {
         let nlp = Pipeline::create(true, true, true);
         assert_eq!(
@@ -1584,6 +1677,18 @@ mod tests {
         );
         assert!(nlp.mask("x", &["bogus".to_string()], None).is_err());
         assert_eq!(nlp.mask("x", &[], None).unwrap(), "x");
+        let default: Vec<String> = crate::maskers::DEFAULT_MASKERS
+            .iter()
+            .map(|name| name.to_string())
+            .collect();
+        // The default chain used to delete the placeholders it had just written:
+        // `html` read `<URL>` as a tag, `non_persian`/`punctuation` ate its
+        // letters, so the same text came back empty after masking.
+        assert_eq!(
+            nlp.mask("به https://a.b و info@a.co برو", &default, None)
+                .unwrap(),
+            "به <URL> و <EMAIL> برو"
+        );
     }
 
     #[test]
@@ -1607,6 +1712,35 @@ mod tests {
             "سلام (دنیا)! می‌روم"
         );
         assert!(nlp.normalize_with("x", &["bogus".to_string()]).is_err());
+    }
+
+    #[test]
+    fn presentation_forms_reach_the_lexicon() {
+        // Persian from a PDF arrives in Arabic presentation forms, so the
+        // default normalizer used to hand the tokenizer letters no lexicon or
+        // lemma table could match.
+        let nlp = Pipeline::create(true, true, true);
+        let book = "\u{FED9}\u{FE95}\u{FE8D}\u{FE8F} \u{FEA5}\u{FEED}\u{FE8F}";
+        assert_eq!(nlp.normalize_with(book, &[]).unwrap(), "کتاب خوب");
+        assert_eq!(nlp.process(book).tokens, ["کتاب", "خوب"]);
+        // Teh marbuta and heh goal spell the Persian `ه`.
+        assert_eq!(nlp.normalize_with("ة ہ", &[]).unwrap(), "ه ه");
+    }
+
+    #[test]
+    fn zwnj_affix_fix_survives_a_rejected_prefix() {
+        // `"قدیمی"` ends in the `"می"` of the prefix rule, so `"می "` matched
+        // and was rejected as a prefix — but it had eaten the space `" ها"`
+        // needs, so the suffix was never fixed.
+        let nlp = Pipeline::create(true, true, true);
+        let fixed = |text: &str| nlp.normalize_with(text, &[]).unwrap();
+        assert_eq!(fixed("قدیمی ها"), "قدیمی\u{200C}ها");
+        assert_eq!(fixed("علمی تر"), "علمی\u{200C}تر");
+        assert_eq!(fixed("سمی ها"), "سمی\u{200C}ها");
+        // The control case never relied on the fix.
+        assert_eq!(fixed("کتاب ها"), "کتاب\u{200C}ها");
+        // Longest match still wins over the shorter suffix.
+        assert_eq!(fixed("کتاب های من"), "کتاب\u{200C}های من");
     }
 
     #[test]

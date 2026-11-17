@@ -11,6 +11,11 @@ use rishe::{
 };
 use serde_json::{json, Value};
 
+/// Longest request line `serve` accepts, in bytes. A JSON request carries text
+/// to process, so a generous megabyte leaves room for real use while keeping a
+/// client that never sends a newline from growing the process without bound.
+const MAX_LINE: usize = 1 << 20;
+
 const USAGE: &str = "\
 rishe - Persian NLP from the command line
 
@@ -289,13 +294,11 @@ fn embedding_command(command: &str, options: &Options) -> Result<(), CliError> {
                 )));
             }
             if options.json {
-                let rows: Vec<String> = neighbours
+                let rows: Vec<Value> = neighbours
                     .iter()
-                    .map(|(word, score)| {
-                        format!("{{\"word\":{},\"score\":{score}}}", json_string(word))
-                    })
+                    .map(|(word, score)| json!({"word": word, "score": score}))
                     .collect();
-                println!("[{}]", rows.join(","));
+                println!("{}", Value::Array(rows));
             } else {
                 for (word, score) in &neighbours {
                     println!("{word}\t{score:.4}");
@@ -314,7 +317,7 @@ fn embedding_command(command: &str, options: &Options) -> Result<(), CliError> {
                 CliError::Runtime(format!("{missing:?} is not in the vocabulary"))
             })?;
             if options.json {
-                println!("{{\"score\":{score}}}");
+                println!("{}", json!({ "score": score }));
             } else {
                 println!("{score:.6}");
             }
@@ -524,11 +527,42 @@ fn serve(args: &[String]) -> Result<(), CliError> {
     let mut raw = Vec::new();
     loop {
         raw.clear();
+        // `read_until` grows `raw` until it finds a newline, so a client that
+        // streams bytes and never sends one grows the process without bound.
+        // Read one byte past the cap so a line of exactly MAX_LINE still parses;
+        // anything longer is answered with an error and its remainder discarded
+        // so it cannot be mistaken for the next request.
         let read = reader
+            .by_ref()
+            .take(MAX_LINE as u64 + 1)
             .read_until(b'\n', &mut raw)
             .map_err(|error| format!("cannot read stdin: {error}"))?;
         if read == 0 {
             break;
+        }
+        if raw.len() > MAX_LINE && !raw.ends_with(b"\n") {
+            // Oversized. Answer now, before reading to the newline: waiting for
+            // it is exactly what lets a client that never sends one grow the
+            // buffer without bound. The remainder is then discarded so the next
+            // read starts at a request boundary.
+            let response = json!({"ok": false, "error": "request line is too long"});
+            let text = serde_json::to_string(&response).map_err(|error| error.to_string())?;
+            if reply(&text).is_err() {
+                break;
+            }
+            let mut sink = Vec::new();
+            loop {
+                sink.clear();
+                let more = reader
+                    .by_ref()
+                    .take(MAX_LINE as u64)
+                    .read_until(b'\n', &mut sink)
+                    .map_err(|error| format!("cannot read stdin: {error}"))?;
+                if more == 0 || sink.ends_with(b"\n") {
+                    break;
+                }
+            }
+            continue;
         }
         let line = match std::str::from_utf8(&raw) {
             Ok(line) => line.trim(),
@@ -704,7 +738,8 @@ fn read_text(parts: &[String]) -> Result<String, String> {
         std::io::stdin()
             .read_to_string(&mut text)
             .map_err(|error| format!("cannot read stdin: {error}"))?;
-        Ok(text.trim().to_owned())
+        // Strip the newline the shell adds, not the document's own leading space.
+        Ok(text.trim_end_matches(['\r', '\n']).to_owned())
     } else {
         Ok(parts.join(" "))
     }
@@ -712,7 +747,7 @@ fn read_text(parts: &[String]) -> Result<String, String> {
 
 fn emit(value: &str, json: bool) {
     if json {
-        println!("{}", json_string(value));
+        println!("{}", json!(value));
     } else {
         println!("{value}");
     }
@@ -720,7 +755,7 @@ fn emit(value: &str, json: bool) {
 
 fn emit_list(values: &[String], json: bool) {
     if json {
-        println!("{}", json_array(values));
+        println!("{}", json!(values));
     } else {
         println!("{}", values.join(" "));
     }
@@ -740,9 +775,8 @@ fn date_value(text: &str) -> Result<Value, String> {
 }
 
 fn emit_date(text: &str, json: bool) -> Result<(), String> {
-    // The CLI documents this wording (`docs/errors.md`) and this key order
-    // (`tests/cli.rs`), so it formats the line itself. `date_value` reuses the
-    // same fields for `serve`, which is key-order agnostic.
+    // The wording stays the CLI's own (`docs/errors.md`); the payload is the one
+    // `serve` returns, so the two cannot drift.
     let value = date_value(text).map_err(|error| {
         if error.starts_with("cannot parse date from ") {
             format!("cannot parse a Jalali date from {text:?}")
@@ -750,32 +784,14 @@ fn emit_date(text: &str, json: bool) -> Result<(), String> {
             error
         }
     })?;
-    let part = |name: &str, field: &str| -> Result<String, String> {
-        value
-            .get(name)
-            .and_then(|object| object.get(field))
-            .and_then(Value::as_i64)
-            .map(|number| number.to_string())
-            .ok_or_else(|| format!("date payload has no {name}.{field}"))
-    };
-    let iso = value
-        .get("iso")
-        .and_then(Value::as_str)
-        .ok_or("date payload has no iso field")?;
     if json {
-        println!(
-            "{{\"jalali\":{{\"year\":{},\"month\":{},\"day\":{}}},\"gregorian\":{{\"year\":{},\"month\":{},\"day\":{}}},\"iso\":{}}}",
-            part("jalali", "year")?,
-            part("jalali", "month")?,
-            part("jalali", "day")?,
-            part("gregorian", "year")?,
-            part("gregorian", "month")?,
-            part("gregorian", "day")?,
-            json_string(iso)
-        );
-    } else {
-        println!("{iso}");
+        println!("{value}");
+        return Ok(());
     }
+    let iso = value["iso"]
+        .as_str()
+        .ok_or("date payload has no iso field")?;
+    println!("{iso}");
     Ok(())
 }
 
@@ -784,27 +800,14 @@ fn pack_tag(task: &str, pack: Option<&str>, text: &str, json: bool) -> Result<()
     let path = pack.ok_or_else(|| CliError::Runtime(format!("{task} needs --pack <dir>")))?;
     let mut pipe = Pipeline::create(true, true, true);
     pipe.load_pack(task, path)?;
+    if json {
+        println!("{}", model_result(&pipe, task, text)?);
+        return Ok(());
+    }
     match task {
         "ner" => {
-            let items = pipe.ner(text)?;
-            if json {
-                let rows: Vec<String> = items
-                    .iter()
-                    .map(|item| {
-                        format!(
-                            "{{\"text\":{},\"label\":{},\"start\":{},\"end\":{}}}",
-                            json_string(&item.text),
-                            json_string(&item.label),
-                            item.start,
-                            item.end
-                        )
-                    })
-                    .collect();
-                println!("[{}]", rows.join(","));
-            } else {
-                for item in &items {
-                    println!("{}\t{}", item.text, item.label);
-                }
+            for item in &pipe.ner(text)? {
+                println!("{}\t{}", item.text, item.label);
             }
         }
         "pos" | "ezafe" => {
@@ -813,55 +816,17 @@ fn pack_tag(task: &str, pack: Option<&str>, text: &str, json: bool) -> Result<()
             } else {
                 pipe.ezafe(text)?
             };
-            if json {
-                let rows: Vec<String> = items
-                    .iter()
-                    .map(|item| {
-                        format!(
-                            "{{\"text\":{},\"tag\":{},\"start\":{},\"end\":{}}}",
-                            json_string(&item.text),
-                            json_string(&item.tag),
-                            item.start,
-                            item.end
-                        )
-                    })
-                    .collect();
-                println!("[{}]", rows.join(","));
-            } else {
-                for item in &items {
-                    println!("{}\t{}", item.text, item.tag);
-                }
+            for item in &items {
+                println!("{}\t{}", item.text, item.tag);
             }
         }
         "depparse" => {
-            let items = pipe.depparse(text)?;
-            if json {
-                let rows: Vec<String> = items
-                    .iter()
-                    .map(|item| {
-                        let head = item
-                            .head
-                            .map(|head| head.to_string())
-                            .unwrap_or_else(|| "null".to_string());
-                        format!(
-                            "{{\"text\":{},\"head\":{},\"relation\":{},\"start\":{},\"end\":{}}}",
-                            json_string(&item.text),
-                            head,
-                            json_string(&item.relation),
-                            item.start,
-                            item.end
-                        )
-                    })
-                    .collect();
-                println!("[{}]", rows.join(","));
-            } else {
-                for item in &items {
-                    let head = item
-                        .head
-                        .map(|head| head.to_string())
-                        .unwrap_or_else(|| "-".to_string());
-                    println!("{}\t{}\t{}", item.text, head, item.relation);
-                }
+            for item in &pipe.depparse(text)? {
+                let head = item
+                    .head
+                    .map(|head| head.to_string())
+                    .unwrap_or_else(|| "-".to_string());
+                println!("{}\t{}\t{}", item.text, head, item.relation);
             }
         }
         other => {
@@ -878,27 +843,4 @@ fn pack_tag(_task: &str, _pack: Option<&str>, _text: &str, _json: bool) -> Resul
          `cargo install rishe --features models`"
             .to_owned(),
     ))
-}
-
-fn json_string(value: &str) -> String {
-    let mut out = String::with_capacity(value.len() + 2);
-    out.push('"');
-    for ch in value.chars() {
-        match ch {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            ch if (ch as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", ch as u32)),
-            ch => out.push(ch),
-        }
-    }
-    out.push('"');
-    out
-}
-
-fn json_array(values: &[String]) -> String {
-    let items: Vec<String> = values.iter().map(|value| json_string(value)).collect();
-    format!("[{}]", items.join(","))
 }

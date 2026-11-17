@@ -1,3 +1,5 @@
+#![cfg(feature = "hub")]
+
 use std::process::Command;
 
 fn rishe() -> Command {
@@ -59,7 +61,44 @@ fn parses_jalali_dates() {
     );
     assert_eq!(
         stdout(rishe().args(["date", "1402/05/12", "--json"])),
-        "{\"jalali\":{\"year\":1402,\"month\":5,\"day\":12},\"gregorian\":{\"year\":2023,\"month\":8,\"day\":3},\"iso\":\"2023-08-03\"}"
+        "{\"gregorian\":{\"day\":3,\"month\":8,\"year\":2023},\"iso\":\"2023-08-03\",\"jalali\":{\"day\":12,\"month\":5,\"year\":1402}}"
+    );
+}
+
+#[test]
+fn serve_rejects_an_oversized_line_and_keeps_serving() {
+    // `read_until` grows its buffer until it finds a newline, so a client that
+    // streams bytes and never sends one used to grow the server without bound.
+    // The oversized line must be answered with the error envelope, its remainder
+    // discarded, and the next real request still served.
+    use std::io::Write;
+    let mut child = rishe()
+        .arg("serve")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn rishe serve");
+    let mut payload = vec![b'x'; (1 << 20) + 1];
+    payload.push(b'\n');
+    payload.extend_from_slice("{\"command\":\"tokenize\",\"text\":\"کتاب خوب است\"}\n".as_bytes());
+    child
+        .stdin
+        .as_mut()
+        .expect("stdin")
+        .write_all(&payload)
+        .expect("write stdin");
+    drop(child.stdin.take());
+    let output = child.wait_with_output().expect("wait");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(lines.len(), 2, "expected one error and one reply: {stdout}");
+    assert_eq!(
+        lines[0],
+        "{\"error\":\"request line is too long\",\"ok\":false}"
+    );
+    assert_eq!(
+        lines[1],
+        "{\"ok\":true,\"result\":[\"کتاب\",\"خوب\",\"است\"]}"
     );
 }
 
@@ -307,9 +346,15 @@ fn embeds_similar_and_similarity() {
     let identical = stdout(rishe().args(["similarity", "کتاب", "کتاب", "--model", model]));
     assert_eq!(identical, "1.000000");
 
+    let as_json = stdout(rishe().args(["similarity", "کتاب", "کتاب", "--model", model, "--json"]));
+    assert!(
+        as_json.starts_with(r#"{"score":1.0"#),
+        "unexpected JSON: {as_json}"
+    );
+
     let neighbours =
         stdout(rishe().args(["similar", "کتاب", "--model", model, "--top", "2", "--json"]));
-    assert!(neighbours.starts_with("[{\"word\":"));
+    assert!(neighbours.starts_with("[{\"score\":"));
     assert_eq!(neighbours.matches("\"score\"").count(), 2);
 
     let missing = rishe()

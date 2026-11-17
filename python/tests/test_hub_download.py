@@ -1,9 +1,12 @@
 import hashlib
 import http.server
+import os
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from rishe import hub
 
@@ -43,6 +46,51 @@ class RangeHandler(http.server.BaseHTTPRequestHandler):
 
     def log_message(self, *_args):
         pass
+
+
+class NotFoundHandler(http.server.BaseHTTPRequestHandler):
+    """Answer every request with 404; the client must not retry a 4xx."""
+
+    hits = 0
+
+    def do_GET(self):
+        type(self).hits += 1
+        self.send_error(404)
+
+    def log_message(self, *_args):
+        pass
+
+
+class CachePathsTest(unittest.TestCase):
+    def test_cache_dir_prefers_home_like_the_rust_binary(self):
+        # `Path.home()` reads USERPROFILE on Windows; the Rust binary prefers
+        # HOME, and an empty RISHE_HOME is a real path, not "unset".
+        with tempfile.TemporaryDirectory() as root:
+            env = {"HOME": root, "USERPROFILE": str(Path(root) / "profile")}
+            with mock.patch.dict(os.environ, env, clear=False):
+                os.environ["RISHE_HOME"] = root
+                expected = Path(root) / "models"
+                self.assertEqual(hub.cache_dir(), expected)
+                os.environ.pop("RISHE_HOME")
+                self.assertEqual(
+                    hub.cache_dir(), Path(root) / ".cache" / "rishe" / "models"
+                )
+
+    def test_remove_clears_a_stale_pack_lock_and_manifest_part(self):
+        with tempfile.TemporaryDirectory() as root, mock.patch.dict(
+            os.environ, {"RISHE_HOME": root}, clear=False
+        ):
+            models = Path(root) / "models"
+            (models / "pos-compact").mkdir(parents=True)
+            manifest = models / "rishe-models-manifest.json"
+            manifest.write_text("{}", encoding="utf-8")
+            part = Path(str(manifest) + ".part")
+            part.write_bytes(b"x")
+            lock = Path(str(manifest) + ".lock")
+            lock.write_bytes(b"x")
+            self.assertTrue(hub.remove("pos-compact"))
+            self.assertFalse(part.exists())
+            self.assertFalse(lock.exists())
 
 
 class DownloadTest(unittest.TestCase):
@@ -112,6 +160,51 @@ class DownloadTest(unittest.TestCase):
             )
             self.assertEqual(target.read_bytes(), PAYLOAD)
             self.assertFalse(part.exists())
+    def test_a_missing_file_is_not_retried(self):
+        """`HTTPError` is a `URLError`, so a 404 used to be fetched three times."""
+        server = self.serve(NotFoundHandler)
+        NotFoundHandler.hits = 0
+        with tempfile.TemporaryDirectory() as root:
+            with self.assertRaises(RuntimeError) as caught:
+                hub._download(
+                    f"http://127.0.0.1:{server.server_port}/missing.bin",
+                    Path(root) / "missing.bin",
+                    hashlib.sha256(PAYLOAD).hexdigest(),
+                )
+        self.assertEqual(NotFoundHandler.hits, 1)
+        self.assertIn("404", str(caught.exception))
+
+    def test_a_custom_sha256_must_be_hex(self):
+        """Only the length was checked, so `'z' * 64` reached the network."""
+        with self.assertRaises(ValueError) as caught:
+            hub.pull("https://example.com/model.vec", sha256="z" * 64)
+        self.assertIn("hex", str(caught.exception))
+
+    def test_a_held_lock_refuses_a_second_download(self):
+        """Two pulls shared one `.part` file and one renamed it under the other."""
+        with tempfile.TemporaryDirectory() as root:
+            target = Path(root) / "payload.bin"
+            (Path(root) / "payload.bin.lock").write_bytes(b"")
+            with self.assertRaises(RuntimeError) as caught:
+                hub._download("http://127.0.0.1:1/x", target, "0" * 64)
+            self.assertIn("another rishe process is downloading", str(caught.exception))
+            self.assertFalse((Path(root) / "payload.bin.part").exists())
+
+    def test_a_stale_lock_is_taken_over(self):
+        """A crashed process must not block the download forever."""
+        server = self.serve(RangeHandler)
+        with tempfile.TemporaryDirectory() as root:
+            target = Path(root) / "payload.bin"
+            lock = Path(root) / "payload.bin.lock"
+            lock.write_bytes(b"")
+            os.utime(lock, (time.time() - 7200,) * 2)
+            hub._download(
+                f"http://127.0.0.1:{server.server_port}/payload.bin",
+                target,
+                hashlib.sha256(PAYLOAD).hexdigest(),
+            )
+            self.assertEqual(target.read_bytes(), PAYLOAD)
+            self.assertFalse(lock.exists(), "lock left behind")
 
 
 if __name__ == "__main__":

@@ -9,6 +9,128 @@ in the pack manifest and on the model repository.
 
 ## [Unreleased]
 
+## [1.0.3] - 2026-11-17
+
+### Fixed
+
+- **`spell_correct` no longer rewrites forms the morphology knows.** `زدم` (from
+  `زدن`) came back as `دم`; every word the tables can analyse is left alone now,
+  and a suggestion must carry a non-zero frequency to be offered at all.
+- **The `email` masker handles Unicode local parts and IDN domains**:
+  `کاربر@example.com` and `user@مثال.ایران` are masked instead of passing
+  through and being deleted by the default chain.
+- **`non_persian` keeps `ى` and `ة`**: `مصطفى كبيرة` is no longer shortened.
+- **Arabic number separators make one number**: `tokenize("۱۲٬۰۰۰")` is a single
+  token and `number_to_words("۱٫۵")` reads as «یک ممیز پنج» instead of raising.
+- **`textrank` phrases come from adjacent words**: the fabricated
+  `["کتاب خانه"]` is gone and real phrases like `هوش مصنوعی` are found.
+- **CI refuses a truncated license file** (10,000-byte floor for
+  `LICENSE-APACHE`), which is what shipped a 689-byte appendix notice in 1.0.2.
+
+- **`mask()` no longer panics on multi-byte text next to `&` or `<`.** The
+  bounded look-ahead that fixed the quadratic HTML scan used a byte count as a
+  string index, so a window ending inside a Persian letter, `…` or an emoji
+  panicked the slice. The window is now snapped back to a character boundary.
+- **The Python CLI rejects a non-UTF-8 stdin exactly like the Rust binary:**
+  one error line, exit 1. It used to decode with replacement characters and
+  exit 0, so a corrupted file was silently processed as garbled text.
+- **`LICENSE-APACHE` now carries the full Apache-2.0 text.** The file held only
+  the "Licensed under…" appendix, while `Cargo.toml` and `pyproject.toml`
+  declare `MIT OR Apache-2.0` and the sdist ships that file as the license.
+- **A mirror that sends more bytes than it declared is cut off.** The declared
+  length was used only to print a progress percentage, so an endless body filled
+  the cache disk before the checksum ran.
+- **A taken-over download lock is no longer deleted by its previous owner.** The
+  lock carries a token now and is removed only while it is still ours, so a
+  download that runs past the one-hour stale window cannot let a third process
+  into the same `.part` file.
+- **Two saves into one embedding path cannot corrupt it.** `Embeddings::save`
+  used one fixed `.part` name, so concurrent saves truncated and interleaved each
+  other's bytes; the temp name is unique per call now.
+- **One over-long token no longer blanks POS/NER for the rest of the document.**
+  A word whose pieces do not fit the model's `max_len` is skipped and the words
+  after it are still tagged; a call with only such a word raises instead of
+  returning an empty list.
+- **`rishe hub pull <pack> --sha256` is refused instead of silently ignoring the
+  pin** in the Python CLI, matching the Rust binary and `docs/errors.md`.
+- **`--sha256` must be hex, not just 64 characters**, in the Rust binary: a typo
+  is caught before the transfer starts instead of after it.
+- **A lone-surrogate request line no longer kills `serve`**: the reply escapes it,
+  so the line is answered and the loop keeps going.
+- **`mask()` with the default maskers keeps the URLs and emails it just masked.**
+  Each masker ran on the previous one's output, so `html` read `<URL>` as a tag
+  and `non_persian`/`punctuation` ate its letters: text with a link came back
+  with the link deleted. The placeholders are shielded between stages now.
+- **`non_persian` keeps Arabic-coded Persian letters**: `كتاب` no longer becomes
+  `تاب`, since `normalize` already maps those two code points.
+- **The `html` masker no longer deletes Persian prose inside `<!…>` or `<?…>`**
+  (or after an unmatched quote); only real comments, declarations and ASCII
+  processing instructions count as markup.
+- **Presentation forms normalise idempotently and never to a non-Persian
+  letter.** Table targets were pushed verbatim, so a medallion yeh came out as
+  U+0649 and a second `normalize()` changed the string again.
+- **Decomposed hamza/maddah compose:** `ا` + U+0653/0654/0655 becomes
+  `آ`/`أ`/`إ`, and the remaining marks are still stripped.
+- **`spacing` keeps a ZWNJ that is the only separator in a compound**
+  (`آذر‌ماه`, `نماز‌جمعه`, `آن‌ها‌است`); deleting it destroyed shipped words.
+- **`verbal_spacing`/`word_spacing` no longer respell known nouns or split
+  unknown words** (`میانجی`, `میگساری`, `معانات`).
+- **Character tables leave other scripts alone:** Hebrew `פ`, Canadian `ᒿ`,
+  Hangul `ㅡ` and CJK `一`/`ー` are no longer rewritten to Persian letters,
+  digits or punctuation.
+- **`repeated_letters` truncates letters only**, so `...` (ellipsis) and `!!!`
+  keep their characters.
+- **Bidi controls are removed** by `spacing` and the default normalizer
+  (U+202A–202E and U+2066–2069, not only the four previously listed).
+- **The default normalizer's `ها`/`تر` rule respects non-joining letters:**
+  `مرد ها` becomes `مردها`, the spelling the lexicon has, not `مرد‌ها`.
+- **A URL ending in `,`, `;`, `!` or `?` no longer swallows the next word.**
+- **`tokenize` and the maskers share one linear sigil scan**: the boundary test
+  runs before the body scan, removing the quadratic path.
+- **`possessive()` inserts a ZWNJ for `ی`-final nouns**: `ایرانی` →
+  `ایرانی‌ام`, not `ایرانیم`.
+- **f16 conversion accepts every value IEEE rounds to a finite half**, and a
+  failed rename no longer leaves a `.part` file behind.
+- **`hub remove` clears a stale download lock and the shared manifest's
+  `.part`/`.lock`** in both binaries: a killed pack pull no longer blocks every
+  pack for an hour, and a running download refreshes its lock.
+- **A 416 response promotes a complete `.part` instead of re-downloading it**,
+  and a local rename failure is fatal rather than retried three times.
+- **`hub path` resolves task packs** (Rust), matching the Python API and docs.
+- **Python `hub.verify` refuses an empty pack directory**, `hub.remove` clears
+  the manifest part, and the cache root resolves `HOME`/`RISHE_HOME` like Rust.
+- **Python `process_batch("…")` treats a string as one document**, not one per
+  character, and `keywords(n=0)` raises `ValueError`.
+- **The Python `mask --maskers` flag takes one value**, so the documented
+  `--maskers url "متن"` order works.
+- **`docs/errors.md` and `docs/serve-schema.md` are readable UTF-8 again**; their
+  examples had been double-encoded through cp1252.
+
+### Changed
+
+- **`lemmatize` no longer invents a lemma from a clitic form.** `بهمین` came back
+  as `بهم` because `بهم` is a fused preposition+pronoun form, not a noun stem; the
+  suffix is no longer stripped there, so `stem`, `lemmatize` and `split_token` all
+  leave the word alone.
+- **`rishe` reads piped text as the document it is.** Both CLIs used to `trim()`
+  stdin, which deleted the blank lines and indentation a file starts with; they
+  now drop only the newline the shell adds. Single-line input is unchanged.
+- **`ureq` and `sha2` are now behind a `hub` feature (on by default).** They are
+  only used by `src/hub.rs`, which is the pack downloader, so a library build
+  with `default-features = false` no longer compiles a TLS stack it never calls.
+  The `rishe` binary requires the feature; `cargo install rishe` is unchanged.
+- **The CLI and `serve` now emit JSON through one encoder, so object keys come
+  out in one order (alphabetical).** `date --json`, `similar --json` and the
+  `--pack` commands used a hand-written escaper and their own key order, which
+  differed from every other command. The payload is unchanged; only the order of
+  the keys inside an object moved.
+
+### Removed
+
+- **`rishe.api.TOKENIZE_OPTIONS` and `rishe.cli.DEFAULT_MASK_STAGES`.** Neither
+  was used: pyo3's `signature=` already rejects an unknown keyword argument to
+  `tokenize()`, and `DEFAULT_MASKERS` is the one place the masker list lives.
+
 ## [1.0.2] - 2026-11-16
 
 No API or format change. This release closes the largest remaining gap in the
@@ -732,7 +854,8 @@ Removed in `1.0.0`; each emits `DeprecationWarning` today.
 - Python bindings (abi3) and a Rust core.
 - Benchmark suite and dual MIT/Apache-2.0 licensing.
 
-[Unreleased]: https://github.com/MahdiAlikhah/rishe/compare/v1.0.2...HEAD
+[Unreleased]: https://github.com/MahdiAlikhah/rishe/compare/v1.0.3...HEAD
+[1.0.3]: https://github.com/MahdiAlikhah/rishe/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/MahdiAlikhah/rishe/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/MahdiAlikhah/rishe/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/MahdiAlikhah/rishe/compare/v0.11.4...v1.0.0

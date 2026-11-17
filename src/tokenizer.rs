@@ -74,7 +74,7 @@ impl Tokenizer {
                     if next_ch.is_numeric() {
                         end_idx = next_idx + next_ch.len_utf8();
                         chars.next();
-                    } else if matches!(next_ch, '.' | ',' | '٫') {
+                    } else if matches!(next_ch, '.' | ',' | '\u{066B}' | '\u{066C}') {
                         let mut lookahead = chars.clone();
                         lookahead.next();
                         if lookahead.peek().is_some_and(|&(_, c)| c.is_numeric()) {

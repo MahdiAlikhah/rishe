@@ -1,11 +1,17 @@
-use crate::colloquial::CLITIC_LOOKALIKES;
-use crate::colloquial::FUSED_PREP_CLITICS;
-use crate::morphology::{MorphologyEngine, ATTACHED_NOUN_SUFFIXES, ZWNJ_NOUN_SUFFIXES};
+use crate::colloquial::{is_clitic_key, CLITIC_LOOKALIKES, FUSED_PREP_CLITICS};
+use crate::morphology::{
+    MorphologyEngine, ATTACHED_NOUN_SUFFIXES, SHARED_VERBAL_PREFIXES, ZWNJ_NOUN_SUFFIXES,
+};
 
 const ZWNJ: &str = "\u{200C}";
-const PREFIXES: &[&str] = &[
-    "نمی", "می", "بر", "باز", "در", "فرو", "وا", "ور", "فرا", "پس", "پیش",
-];
+
+/// `می`/`نمی` bind a verb root, which only the splitter has to recognise; the
+/// rest come from the table the verbal-spacing rule also uses.
+fn prefixes() -> impl Iterator<Item = &'static str> {
+    ["نمی", "می"]
+        .into_iter()
+        .chain(SHARED_VERBAL_PREFIXES.iter().copied())
+}
 
 /// Splits fused Persian tokens into their morphemes.
 pub struct TokenSplitter;
@@ -37,7 +43,7 @@ impl TokenSplitter {
             return vec![token.to_string()];
         }
 
-        for &prefix in PREFIXES {
+        for prefix in prefixes() {
             if let Some(rest) = token.strip_prefix(prefix) {
                 let rest = rest.strip_prefix(ZWNJ).unwrap_or(rest);
                 if rest.is_empty() {
@@ -94,9 +100,4 @@ impl TokenSplitter {
 
         vec![token.to_string()]
     }
-}
-
-/// Whether `stem` is a fused preposition+pronoun form rather than a noun stem.
-fn is_clitic_key(stem: &str) -> bool {
-    FUSED_PREP_CLITICS.iter().any(|&(colloq, _)| colloq == stem)
 }

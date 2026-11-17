@@ -15,9 +15,11 @@ rishe mask --maskers url "به https://a.b برو"
 # به <URL> برو
 ```
 
-`mask` defaults to all maskers; pass `--maskers` to choose, and `--mask-token`
-to override the per-masker default. The Rust binary takes comma-separated
-maskers (`--maskers url,email`); the Python CLI takes space-separated ones.
+`mask` applies `DEFAULT_MASKERS`, which is every masker except `stopwords` and
+`offensive` (they delete words, so they stay opt-in). Pass `--maskers` to choose,
+and `--mask-token` to override the per-masker default. Both binaries accept
+comma-separated names and repeated flags (`--maskers url,email`); the `<URL>` and
+`<EMAIL>` placeholders survive the later maskers.
 
 `rishe tokenize` prints surface tokens and does not normalize; compose the
 commands for the normalizing path:

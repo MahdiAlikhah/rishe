@@ -26,7 +26,21 @@ const MONTHS: [&str; 12] = [
 ];
 
 /// A Jalali (Solar Hijri) date; [`Jalali::new`] validates the fields.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// The Python class is this type, so there is one representation to keep correct.
+#[cfg_attr(
+    feature = "python",
+    pyo3::pyclass(
+        name = "JalaliDate",
+        frozen,
+        eq,
+        ord,
+        hash,
+        get_all,
+        module = "rishe._core"
+    )
+)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Jalali {
     /// Jalali year, e.g. `1402`.
     pub year: i32,
@@ -262,14 +276,6 @@ fn utf8_digits(text: &str) -> String {
         .collect()
 }
 
-fn div(a: i32, b: i32) -> i32 {
-    a / b
-}
-
-fn modulo(a: i32, b: i32) -> i32 {
-    a % b
-}
-
 fn jal_cal(year: i32) -> Option<JalCal> {
     let last = BREAKS.len() - 1;
     if year < BREAKS[0] || year >= BREAKS[last] {
@@ -286,23 +292,24 @@ fn jal_cal(year: i32) -> Option<JalCal> {
         if year < jm {
             break;
         }
-        leap_j += div(jump, 33) * 8 + div(modulo(jump, 33), 4);
+        leap_j += (jump / 33) * 8 + ((jump % 33) / 4);
         jp = jm;
     }
 
     let mut n = year - jp;
-    leap_j += div(n, 33) * 8 + div(modulo(n, 33) + 3, 4);
-    if modulo(jump, 33) == 4 && jump - n == 4 {
+    leap_j += (n / 33) * 8 + (((n % 33) + 3) / 4);
+    if (jump % 33) == 4 && jump - n == 4 {
         leap_j += 1;
     }
 
-    let leap_g = div(gy, 4) - div((div(gy, 100) + 1) * 3, 4) - 150;
+    let leap_g = (gy / 4) - ((((gy / 100) + 1) * 3) / 4) - 150;
     let march = 20 + leap_j - leap_g;
 
     if jump - n < 6 {
-        n = n - jump + div(jump + 4, 33) * 33;
+        n = n - jump + ((jump + 4) / 33) * 33;
     }
-    let mut leap = modulo(modulo(n + 1, 33) - 1, 4);
+    let mut leap = (n + 1) % 33 - 1;
+    leap %= 4;
     if leap == -1 {
         leap = 4;
     }
@@ -312,25 +319,25 @@ fn jal_cal(year: i32) -> Option<JalCal> {
 
 fn g2d(gy: i32, gm: i32, gd: i32) -> i32 {
     let mut day =
-        div((gy + div(gm - 8, 6) + 100_100) * 1461, 4) + div(153 * modulo(gm + 9, 12) + 2, 5) + gd
+        (((gy + ((gm - 8) / 6) + 100_100) * 1461) / 4) + ((153 * ((gm + 9) % 12) + 2) / 5) + gd
             - 34_840_408;
-    day = day - div(div(gy + 100_100 + div(gm - 8, 6), 100) * 3, 4) + 752;
+    day = day - ((((gy + 100_100 + ((gm - 8) / 6)) / 100) * 3) / 4) + 752;
     day
 }
 
 fn d2g(day_number: i32) -> (i32, i32, i32) {
     let mut j = 4 * day_number + 139_361_631;
-    j = j + div(div(4 * day_number + 183_187_720, 146_097) * 3, 4) * 4 - 3908;
-    let i = div(modulo(j, 1461), 4) * 5 + 308;
-    let day = div(modulo(i, 153), 5) + 1;
-    let month = modulo(div(i, 153), 12) + 1;
-    let year = div(j, 1461) - 100_100 + div(8 - month, 6);
+    j = j + ((((4 * day_number + 183_187_720) / 146_097) * 3) / 4) * 4 - 3908;
+    let i = ((j % 1461) / 4) * 5 + 308;
+    let day = ((i % 153) / 5) + 1;
+    let month = ((i / 153) % 12) + 1;
+    let year = (j / 1461) - 100_100 + ((8 - month) / 6);
     (year, month, day)
 }
 
 fn j2d(year: i32, month: i32, day: i32) -> Option<i32> {
     let cal = jal_cal(year)?;
-    Some(g2d(cal.gy, 3, cal.march) + (month - 1) * 31 - div(month, 7) * (month - 7) + day - 1)
+    Some(g2d(cal.gy, 3, cal.march) + (month - 1) * 31 - (month / 7) * (month - 7) + day - 1)
 }
 
 fn d2j(day_number: i32) -> Option<Jalali> {
@@ -344,8 +351,8 @@ fn d2j(day_number: i32) -> Option<Jalali> {
         if offset <= 185 {
             return Some(Jalali {
                 year,
-                month: (1 + div(offset, 31)) as u8,
-                day: (modulo(offset, 31) + 1) as u8,
+                month: (1 + (offset / 31)) as u8,
+                day: ((offset % 31) + 1) as u8,
             });
         }
         offset -= 186;
@@ -359,8 +366,8 @@ fn d2j(day_number: i32) -> Option<Jalali> {
 
     Some(Jalali {
         year,
-        month: (7 + div(offset, 30)) as u8,
-        day: (modulo(offset, 30) + 1) as u8,
+        month: (7 + (offset / 30)) as u8,
+        day: ((offset % 30) + 1) as u8,
     })
 }
 

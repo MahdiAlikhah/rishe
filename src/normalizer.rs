@@ -68,6 +68,11 @@ impl Normalizer {
     /// Normalize characters and, when `fix_zwnj` is set, affix spacing.
     #[inline]
     pub fn normalize<'a>(&self, input: &'a str) -> Cow<'a, str> {
+        // PDF text often carries the decomposed hamza/maddah instead of `أ`/`آ`;
+        // composing first is what lets the rest of the pipeline match them.
+        if let Some(composed) = compose_decomposed(input) {
+            return Cow::Owned(self.normalize(&composed).into_owned());
+        }
         let char_norm = self.normalize_chars(input);
         if !self.config.fix_zwnj {
             return char_norm;
@@ -106,6 +111,26 @@ impl Normalizer {
                     last_was_space = c == ' ';
                     last_was_zwnj = c == ZWNJ;
                 }
+                CharAction::Expand(replacement) => {
+                    let b = buf.get_or_insert_with(|| {
+                        let mut s = String::with_capacity(input.len());
+                        s.push_str(&input[..byte_idx]);
+                        s
+                    });
+                    // The table's targets used to skip the letter rules, so a
+                    // medallion form came out as U+0649, which is not Persian and
+                    // made `normalize` non-idempotent. Run them through the same
+                    // classifier.
+                    for ch in replacement.chars() {
+                        match self.classify_char(ch, false, false) {
+                            CharAction::Keep(c) | CharAction::Replace(c) => b.push(c),
+                            CharAction::Expand(inner) => b.push_str(inner),
+                            CharAction::Skip => {}
+                        }
+                    }
+                    last_was_space = replacement.ends_with(' ');
+                    last_was_zwnj = replacement.ends_with(ZWNJ);
+                }
                 CharAction::Skip => {
                     buf.get_or_insert_with(|| {
                         let mut s = String::with_capacity(input.len());
@@ -126,20 +151,39 @@ impl Normalizer {
     pub fn fix_affix_zwnj<'a>(&self, input: &'a str) -> Cow<'a, str> {
         let mut buf: Option<String> = None;
         let mut last_end = 0;
+        let mut search_at = 0;
 
-        for mat in self.affix_matcher.find_iter(input) {
-            let start = mat.start();
-            let end = mat.end();
+        while search_at < input.len() {
+            let Some(mat) = self.affix_matcher.find(&input[search_at..]) else {
+                break;
+            };
+            let start = search_at + mat.start();
+            let end = search_at + mat.end();
             let pat_id = mat.pattern().as_usize();
 
-            if !self.is_valid_affix_boundary(input, start, end, pat_id) {
-                continue;
+            if self.is_valid_affix_boundary(input, start, end, pat_id) {
+                let b = buf.get_or_insert_with(|| String::with_capacity(input.len() + 16));
+                b.push_str(&input[last_end..start]);
+                let mut replacement = self.affix_replacements[pat_id];
+                // A ZWNJ after a non-joining letter is invisible, and the lexicon
+                // spells those words solid: `مرد ها` is `مردها`, not `مردها`.
+                if pat_id >= 2
+                    && input[..start]
+                        .chars()
+                        .next_back()
+                        .is_some_and(|ch| crate::normalize_ops::NON_LEFT_JOINERS.contains(ch))
+                {
+                    replacement = replacement.trim_start_matches(ZWNJ);
+                }
+                b.push_str(replacement);
+                last_end = end;
+                search_at = end;
+            } else {
+                // A rejected `"می "` inside `"قدیمی "` ends on the very space the
+                // `" ها"` match begins with, so skipping to its end hid that
+                // match. Resume one character in instead.
+                search_at = start + input[start..].chars().next().map_or(1, char::len_utf8);
             }
-
-            let b = buf.get_or_insert_with(|| String::with_capacity(input.len() + 16));
-            b.push_str(&input[last_end..start]);
-            b.push_str(self.affix_replacements[pat_id]);
-            last_end = end;
         }
 
         match buf {
@@ -199,10 +243,29 @@ impl Normalizer {
                     CharAction::Replace(' ')
                 }
             }
-            '\u{0640}' | '\u{200B}' | '\u{200D}' | '\u{200E}' | '\u{200F}' | '\u{FEFF}' => {
-                CharAction::Skip
+            // Bidi controls: the overrides and the terminated/isolate forms.
+            '\u{0640}'
+            | '\u{200B}'
+            | '\u{200D}'
+            | '\u{200E}'
+            | '\u{200F}'
+            | '\u{202A}'..='\u{202E}'
+            | '\u{2066}'..='\u{2069}'
+            | '\u{FEFF}' => CharAction::Skip,
+            // Presentation forms: text copied out of PDFs and old documents keeps
+            // these, so `ﻛﺘﺎﺏ` never matched the lexicon. The `alphabet` stage
+            // decides the letter when it has an opinion, so both paths agree;
+            // the generated table decomposes the rest. Teh marbuta and heh goal
+            // land here too because they spell the Persian `ه`.
+            '\u{FB50}'..='\u{FDFF}' | '\u{FE70}'..='\u{FEFC}' | '\u{0629}' | '\u{06C1}' => {
+                match crate::normalize_ops::alphabet_char(ch)
+                    .or_else(|| crate::presentation::expand(ch))
+                {
+                    Some(replacement) => CharAction::Expand(replacement),
+                    None => CharAction::Keep(ch),
+                }
             }
-            '\u{064B}'..='\u{0652}' | '\u{0670}' if self.config.strip_diacritics => {
+            '\u{064B}'..='\u{0656}' | '\u{0670}' if self.config.strip_diacritics => {
                 CharAction::Skip
             }
             '0'..='9' if self.config.unify_digits => {
@@ -219,5 +282,85 @@ impl Normalizer {
 enum CharAction {
     Keep(char),
     Replace(char),
+    /// A presentation form that stands for one or more letters.
+    Expand(&'static str),
     Skip,
+}
+
+/// Compose `ا` + combining hamza/maddah/subscript-alef into `أ`/`آ`/`إ`.
+/// Returns `None` when there is nothing to compose.
+fn compose_decomposed(input: &str) -> Option<String> {
+    const MARKS: [(char, char); 3] = [
+        ('\u{0653}', '\u{0622}'),
+        ('\u{0654}', '\u{0623}'),
+        ('\u{0655}', '\u{0625}'),
+    ];
+    if !input.contains(['\u{0653}', '\u{0654}', '\u{0655}']) {
+        return None;
+    }
+
+    let mut out = String::with_capacity(input.len());
+    let mut chars = input.chars().peekable();
+    let mut changed = false;
+    while let Some(ch) = chars.next() {
+        if ch == '\u{0627}' {
+            if let Some((_, letter)) = MARKS.iter().find(|(mark, _)| chars.peek() == Some(mark)) {
+                out.push(*letter);
+                chars.next();
+                changed = true;
+                continue;
+            }
+        }
+        out.push(ch);
+    }
+    changed.then_some(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn presentation_forms_normalize_once() {
+        let n = Normalizer::new(NormalizerConfig::default());
+        // The generated table's targets skipped the letter rules, so a medallion
+        // yeh came out as U+0649 and a second pass changed the string again.
+        for form in [
+            "\u{FEF4}",
+            "\u{FC09}",
+            "\u{FE93}",
+            "\u{FEDB}\u{FEF4}\u{FEF2}",
+        ] {
+            let once = n.normalize(form).into_owned();
+            let twice = n.normalize(&once).into_owned();
+            assert_eq!(once, twice, "{form:?}");
+            assert!(
+                !once.chars().any(|ch| matches!(
+                    ch,
+                    '\u{0649}' | '\u{0629}' | '\u{06C1}' | '\u{064A}' | '\u{0643}'
+                )),
+                "{form:?} -> {once:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn decomposed_hamza_composes() {
+        let n = Normalizer::new(NormalizerConfig::default());
+        assert_eq!(n.normalize("ا\u{0654}حمد"), "أحمد");
+        assert_eq!(n.normalize("ا\u{0653}ب"), "آب");
+        assert_eq!(n.normalize("ا\u{0655}"), "إ");
+        // The marks themselves are still stripped when nothing composes.
+        assert_eq!(n.normalize("ا\u{064E}"), "ا");
+    }
+
+    #[test]
+    fn zwnj_affix_respects_non_joiners() {
+        let n = Normalizer::new(NormalizerConfig::default());
+        // The same rule as `word_spacing`: no ZWNJ after a non-joining letter.
+        assert_eq!(n.normalize("مرد ها"), "مردها");
+        assert_eq!(n.normalize("سبز تر"), "سبزتر");
+        assert_eq!(n.normalize("کتاب ها"), "کتاب‌ها");
+        assert_eq!(n.normalize("می روم"), "می‌روم");
+    }
 }

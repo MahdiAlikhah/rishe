@@ -7,6 +7,11 @@ use std::collections::{BTreeMap, HashMap};
 const MIN_RAKE_WORD_CHARS: usize = 3;
 const MIN_TEXTRANK_WORD_CHARS: usize = 2;
 
+/// Whether a token can be part of a TextRank phrase.
+fn is_keyword_word(word: &str) -> bool {
+    word.chars().count() >= MIN_TEXTRANK_WORD_CHARS && !stopwords::is_stopword(word)
+}
+
 /// Top `top_n` RAKE phrases of at most `max_length` words, ordered by word degree score.
 pub fn rake(text: &str, top_n: usize, max_length: usize) -> Vec<String> {
     if top_n == 0 {
@@ -97,16 +102,27 @@ pub fn textrank(text: &str, top_n: usize, max_length: usize, window: usize) -> V
 
     let mut candidates: Vec<(String, f64)> = Vec::new();
     let mut positions: HashMap<String, usize> = HashMap::new();
-    for words in &sentences {
+    // Phrases come from the sentence as written: `stopwords::is_stopword` words
+    // are boundaries, not deletions, so two words either side of one never join.
+    for sentence in SentenceSplitter::split(text) {
+        let words: Vec<String> = Tokenizer::tokenize(sentence)
+            .into_iter()
+            .filter(|token| token.kind == TokenKind::Word)
+            .map(|token| token.text.to_string())
+            .collect();
         let mut i = 0;
         while i < words.len() {
-            if !scores.contains_key(&words[i]) {
+            if !is_keyword_word(&words[i]) || !scores.contains_key(words[i].as_str()) {
                 i += 1;
                 continue;
             }
             let mut phrase = vec![words[i].as_str()];
             let mut j = i + 1;
-            while j < words.len() && j - i < max_length && scores.contains_key(&words[j]) {
+            while j < words.len()
+                && phrase.len() < max_length
+                && is_keyword_word(&words[j])
+                && scores.contains_key(words[j].as_str())
+            {
                 phrase.push(words[j].as_str());
                 j += 1;
             }
@@ -123,7 +139,7 @@ pub fn textrank(text: &str, top_n: usize, max_length: usize, window: usize) -> V
                 positions.insert(candidate.clone(), candidates.len());
                 candidates.push((candidate, score));
             }
-            i = (i + 1).max(j);
+            i += 1;
         }
     }
 
@@ -142,9 +158,7 @@ fn textrank_sentences(text: &str) -> Vec<Vec<String>> {
             .into_iter()
             .filter(|token| token.kind == TokenKind::Word)
             .map(|token| token.text.to_string())
-            .filter(|word| {
-                word.chars().count() >= MIN_TEXTRANK_WORD_CHARS && !stopwords::is_stopword(word)
-            })
+            .filter(|word| is_keyword_word(word))
             .collect();
         if !words.is_empty() {
             sentences.push(words);
@@ -153,11 +167,13 @@ fn textrank_sentences(text: &str) -> Vec<Vec<String>> {
     sentences
 }
 
-fn build_graph(
-    sentences: &[Vec<String>],
+/// The graph never outlives `sentences`, so its keys borrow the words and a
+/// co-occurrence pair costs no allocation.
+fn build_graph<'a>(
+    sentences: &'a [Vec<String>],
     window: usize,
-) -> BTreeMap<String, BTreeMap<String, f64>> {
-    let mut graph: BTreeMap<String, BTreeMap<String, f64>> = BTreeMap::new();
+) -> BTreeMap<&'a str, BTreeMap<&'a str, f64>> {
+    let mut graph: BTreeMap<&'a str, BTreeMap<&'a str, f64>> = BTreeMap::new();
     for words in sentences {
         for i in 0..words.len() {
             let start = i.saturating_sub(window);
@@ -166,12 +182,8 @@ fn build_graph(
                 if i == j {
                     continue;
                 }
-                let (first, second) = (words[i].clone(), words[j].clone());
-                *graph
-                    .entry(first.clone())
-                    .or_default()
-                    .entry(second.clone())
-                    .or_insert(0.0) += 1.0;
+                let (first, second) = (words[i].as_str(), words[j].as_str());
+                *graph.entry(first).or_default().entry(second).or_insert(0.0) += 1.0;
                 *graph.entry(second).or_default().entry(first).or_insert(0.0) += 1.0;
             }
         }
@@ -179,19 +191,21 @@ fn build_graph(
     graph
 }
 
-fn pagerank(graph: &BTreeMap<String, BTreeMap<String, f64>>) -> HashMap<String, f64> {
+/// PageRank over the co-occurrence graph. The scores borrow the graph's keys, so
+/// the 30 passes copy no words; iterating the `BTreeMap` keeps the summation
+/// order (and so the result) identical to the owned-key version.
+fn pagerank<'a>(graph: &'a BTreeMap<&'a str, BTreeMap<&'a str, f64>>) -> HashMap<&'a str, f64> {
     if graph.is_empty() {
         return HashMap::new();
     }
     let damping = 0.85;
     let iterations = 30;
     let initial = 1.0 / graph.len() as f64;
-    let mut scores: HashMap<String, f64> =
-        graph.keys().map(|node| (node.clone(), initial)).collect();
+    let mut scores: HashMap<&str, f64> = graph.keys().map(|node| (*node, initial)).collect();
     // Link totals are fixed, so sum them once instead of once per pass per link.
-    let out_weights: HashMap<&String, f64> = graph
+    let out_weights: HashMap<&str, f64> = graph
         .iter()
-        .map(|(node, edges)| (node, edges.values().sum::<f64>().max(1.0)))
+        .map(|(node, edges)| (*node, edges.values().sum::<f64>().max(1.0)))
         .collect();
 
     for _ in 0..iterations {
@@ -199,10 +213,10 @@ fn pagerank(graph: &BTreeMap<String, BTreeMap<String, f64>>) -> HashMap<String, 
         for (node, neighbors) in graph {
             let mut rank = 0.0;
             for (neighbor, weight) in neighbors {
-                let out_weight = out_weights.get(neighbor).copied().unwrap_or(1.0);
-                rank += (weight / out_weight) * scores.get(neighbor).copied().unwrap_or(0.0);
+                let out_weight = out_weights.get(*neighbor).copied().unwrap_or(1.0);
+                rank += (weight / out_weight) * scores.get(*neighbor).copied().unwrap_or(0.0);
             }
-            next.insert(node.clone(), (1.0 - damping) + damping * rank);
+            next.insert(*node, (1.0 - damping) + damping * rank);
         }
         scores = next;
     }
@@ -237,16 +251,31 @@ mod tests {
     #[test]
     fn pagerank_ranks_the_hub_highest() {
         // a-b, b-c. Hand-computed with damping 0.85 over 30 passes.
-        let mut graph: BTreeMap<String, BTreeMap<String, f64>> = BTreeMap::new();
+        let mut graph: BTreeMap<&str, BTreeMap<&str, f64>> = BTreeMap::new();
         for (from, to) in [("a", "b"), ("b", "a"), ("b", "c"), ("c", "b")] {
-            graph
-                .entry(from.to_string())
-                .or_default()
-                .insert(to.to_string(), 1.0);
+            graph.entry(from).or_default().insert(to, 1.0);
         }
         let scores = pagerank(&graph);
         assert!((scores["a"] - 0.7669361095464207).abs() < 1e-12);
         assert!((scores["b"] - 1.4508662617175787).abs() < 1e-12);
+    }
+
+    #[test]
+    fn textrank_phrases_come_from_adjacent_words() {
+        // A stopword is a phrase boundary, not a deletion: `کتاب` and `خانه` are
+        // not neighbours, and the old fixed-window scan joined them anyway.
+        let phrases = textrank("کتاب خوب بود و خانه بزرگ", 5, 3, 2);
+        assert!(
+            !phrases.iter().any(|phrase| phrase == "کتاب خانه"),
+            "{phrases:?}"
+        );
+        // Both halves of the real phrase must be candidates.
+        let phrases = textrank("ایران هوش مصنوعی", 6, 2, 2);
+        assert!(
+            phrases.iter().any(|phrase| phrase == "هوش مصنوعی"),
+            "{phrases:?}"
+        );
+        assert!(phrases.iter().all(|phrase| phrase.split(' ').count() <= 2));
     }
 
     #[test]

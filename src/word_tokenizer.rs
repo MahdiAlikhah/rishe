@@ -1,7 +1,7 @@
-use crate::maskers::{email_spans, is_emoji_base, is_regional, is_skin_tone};
-use crate::morphology::MorphologyEngine;
+use std::collections::VecDeque;
 
-const VS16: char = '\u{FE0F}';
+use crate::maskers::{email_spans, emoji_end};
+use crate::morphology::MorphologyEngine;
 
 /// Switches for [`crate::Pipeline::tokenize`]; all default to `false`.
 #[derive(Debug, Clone, Copy, Default)]
@@ -67,29 +67,13 @@ fn separate_emoji(text: &str) -> String {
     let mut i = 0;
 
     while i < chars.len() {
-        let ch = chars[i];
-        if is_regional(ch) && i + 1 < chars.len() && is_regional(chars[i + 1]) {
-            out.push(ch);
-            out.push(chars[i + 1]);
+        if let Some(end) = emoji_end(&chars, i) {
+            out.extend(&chars[i..end]);
             out.push(' ');
-            i += 2;
+            i = end;
             continue;
         }
-        if is_emoji_base(ch) {
-            out.push(ch);
-            i += 1;
-            if i < chars.len() && is_skin_tone(chars[i]) {
-                out.push(chars[i]);
-                i += 1;
-            }
-            if i < chars.len() && chars[i] == VS16 {
-                out.push(chars[i]);
-                i += 1;
-            }
-            out.push(' ');
-            continue;
-        }
-        out.push(ch);
+        out.push(chars[i]);
         i += 1;
     }
     out
@@ -111,32 +95,58 @@ fn replace_emails(text: &str) -> String {
     out
 }
 
+/// Prefixes that begin a URL.
+const URL_PREFIXES: [&str; 4] = ["https://", "http://", "ftp://", "www."];
+
+/// Punctuation that ends the sentence rather than the URL.
+const URL_TRAILING: [char; 8] = [')', '،', '.', '»', ',', ';', '!', '?'];
+
+/// The end byte index of the URL starting at `start`, or `None` when no URL
+/// starts there.
+///
+/// Shared by [`replace_links`] and the `url` masker so the two cannot disagree,
+/// and so both agree that `(https://a.com)` is a URL followed by `)`.
+pub(crate) fn url_end(text: &str, start: usize) -> Option<usize> {
+    let rest = &text[start..];
+    let prefix_len = URL_PREFIXES
+        .iter()
+        .find(|prefix| rest.starts_with(**prefix))
+        .map(|prefix| prefix.len())?;
+    // A URL does not start inside a word.
+    if start > 0
+        && text[..start]
+            .chars()
+            .next_back()
+            .is_some_and(char::is_alphanumeric)
+    {
+        return None;
+    }
+    let mut end = text.len();
+    for (offset, ch) in rest.char_indices() {
+        if ch.is_whitespace() {
+            end = start + offset;
+            break;
+        }
+    }
+    // Trailing punctuation belongs to the sentence around the URL.
+    while let Some(ch) = text[..end].chars().next_back() {
+        if !URL_TRAILING.contains(&ch) {
+            break;
+        }
+        end -= ch.len_utf8();
+    }
+    // Trimming must not leave nothing but the prefix, as in a bare `www.`.
+    (end > start + prefix_len).then_some(end)
+}
+
 fn replace_links(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut i = 0;
     while i < text.len() {
-        let rest = &text[i..];
-        let prefix = ["https://", "http://", "ftp://", "www."]
-            .into_iter()
-            .find(|candidate| rest.starts_with(candidate));
-        if let Some(prefix) = prefix {
-            let previous_ok = i == 0
-                || text[..i]
-                    .chars()
-                    .next_back()
-                    .is_some_and(|ch| !ch.is_alphanumeric());
-            if previous_ok {
-                let mut end = i + prefix.len();
-                for (offset, ch) in rest[prefix.len()..].char_indices() {
-                    if ch.is_whitespace() {
-                        break;
-                    }
-                    end = i + prefix.len() + offset + ch.len_utf8();
-                }
-                out.push_str(" LINK ");
-                i = end;
-                continue;
-            }
+        if let Some(end) = url_end(text, i) {
+            out.push_str(" LINK ");
+            i = end;
+            continue;
         }
         let ch = text[i..].chars().next().unwrap();
         out.push(ch);
@@ -145,24 +155,39 @@ fn replace_links(text: &str) -> String {
     out
 }
 
+/// End of the `sigil` token starting at `i`, or `None` when the sigil is part of
+/// a word or has no body. The maskers and the tokenizer share this scan and pass
+/// their own boundary rules, so `@name` and `#tag` cannot drift apart again.
+pub(crate) fn sigil_end(
+    chars: &[char],
+    i: usize,
+    sigil: char,
+    previous: fn(char) -> bool,
+    body: fn(char) -> bool,
+) -> Option<usize> {
+    if chars[i] != sigil || (i > 0 && !previous(chars[i - 1])) {
+        return None;
+    }
+    let mut end = i + 1;
+    while end < chars.len() && body(chars[end]) {
+        end += 1;
+    }
+    (end > i + 1).then_some(end)
+}
+
 fn replace_ids(text: &str) -> String {
     let chars: Vec<char> = text.chars().collect();
     let mut out = String::with_capacity(text.len());
     let mut i = 0;
 
     while i < chars.len() {
-        if chars[i] == '@' {
-            let previous_ok =
-                i == 0 || !(chars[i - 1].is_alphanumeric() || matches!(chars[i - 1], '_' | '.'));
-            let mut end = i + 1;
-            while end < chars.len() && (chars[end].is_alphanumeric() || chars[end] == '_') {
-                end += 1;
-            }
-            if previous_ok && end > i + 1 {
-                out.push_str(" ID ");
-                i = end;
-                continue;
-            }
+        let previous = |ch: char| !(ch.is_alphanumeric() || matches!(ch, '_' | '.'));
+        if let Some(end) = sigil_end(&chars, i, '@', previous, |ch| {
+            ch.is_alphanumeric() || ch == '_'
+        }) {
+            out.push_str(" ID ");
+            i = end;
+            continue;
         }
         out.push(chars[i]);
         i += 1;
@@ -176,20 +201,15 @@ fn replace_hashtags(text: &str) -> String {
     let mut i = 0;
 
     while i < chars.len() {
-        if chars[i] == '#' {
-            let mut end = i + 1;
-            while end < chars.len() && !chars[end].is_whitespace() {
-                end += 1;
+        let previous = |ch: char| !(ch.is_alphanumeric() || matches!(ch, '_' | '.'));
+        if let Some(end) = sigil_end(&chars, i, '#', previous, |ch| !ch.is_whitespace()) {
+            out.push_str(" TAG ");
+            for &ch in &chars[i + 1..end] {
+                out.push(if ch == '_' { ' ' } else { ch });
             }
-            if end > i + 1 {
-                out.push_str(" TAG ");
-                for &ch in &chars[i + 1..end] {
-                    out.push(if ch == '_' { ' ' } else { ch });
-                }
-                out.push(' ');
-                i = end;
-                continue;
-            }
+            out.push(' ');
+            i = end;
+            continue;
         }
         out.push(chars[i]);
         i += 1;
@@ -214,7 +234,9 @@ pub(crate) fn replace_numbers(text: &str) -> String {
                     && end + 1 < chars.len()
                     && is_digit(chars[end + 1])
                 {
-                    decimal = true;
+                    // Only a decimal point makes this a fraction; a thousands
+                    // separator keeps it an integer, so `۱٬۰۰۰` is NUM4.
+                    decimal = decimal || is_decimal_separator(chars[end]);
                     end += 1;
                 } else {
                     break;
@@ -249,6 +271,12 @@ fn is_number_separator(ch: char) -> bool {
     matches!(ch, '.' | '\u{066B}' | '\u{066C}' | ',')
 }
 
+/// The separators that mark a decimal point: ASCII `.` and Arabic `٫`. `,` and
+/// `٬` group thousands and must not turn `۱٬۰۰۰` into a fraction.
+fn is_decimal_separator(ch: char) -> bool {
+    matches!(ch, '.' | '\u{066B}')
+}
+
 fn is_word_char(ch: char) -> bool {
     ch.is_alphanumeric() || ch == '_'
 }
@@ -257,19 +285,20 @@ const ABBREVIATIONS: &[&str] = &["ع", "ص", "س", "ره", "قدس", "ط", "ق",
 
 fn join_abbreviations(tokens: Vec<String>) -> Vec<String> {
     let mut out = Vec::with_capacity(tokens.len());
-    let mut i = 0;
-    while i < tokens.len() {
-        if i + 2 < tokens.len()
-            && tokens[i] == "("
-            && tokens[i + 2] == ")"
-            && ABBREVIATIONS.contains(&tokens[i + 1].as_str())
+    // A queue rather than index-and-clone: the tokens are already owned here.
+    let mut rest: VecDeque<String> = tokens.into();
+    while let Some(token) = rest.pop_front() {
+        if token == "("
+            && rest.len() >= 2
+            && rest[1] == ")"
+            && ABBREVIATIONS.contains(&rest[0].as_str())
         {
-            out.push(format!("({})", tokens[i + 1]));
-            i += 3;
+            out.push(format!("({})", rest[0]));
+            rest.pop_front();
+            rest.pop_front();
             continue;
         }
-        out.push(tokens[i].clone());
-        i += 1;
+        out.push(token);
     }
     out
 }
@@ -413,7 +442,8 @@ fn join_verb_parts(tokens: Vec<String>, morph: &MorphologyEngine) -> Vec<String>
     let mut result: Vec<String> = Vec::with_capacity(tokens.len());
     for token in tokens.into_iter().rev() {
         let join = !result.is_empty()
-            && (BEFORE_VERBS.contains(&token.as_str())
+            && ((BEFORE_VERBS.contains(&token.as_str())
+                && result.last().is_some_and(|last| is_verb_after(last, morph)))
                 || (result
                     .last()
                     .is_some_and(|last| AFTER_VERBS.contains(&last.as_str()))
@@ -427,6 +457,12 @@ fn join_verb_parts(tokens: Vec<String>, morph: &MorphologyEngine) -> Vec<String>
     }
     result.reverse();
     result
+}
+
+/// A future auxiliary (`خواهد`) joins the verb it governs, not whatever token
+/// happens to follow it, so `خواهد .` and `خواهم که` stay apart.
+fn is_verb_after(token: &str, morph: &MorphologyEngine) -> bool {
+    morph.is_past_stem(token) || is_participle(token, morph)
 }
 
 fn is_participle(token: &str, morph: &MorphologyEngine) -> bool {
@@ -479,6 +515,18 @@ mod tests {
     }
 
     #[test]
+    fn joins_future_auxiliary_to_its_verb_only() {
+        let morph = MorphologyEngine::new();
+        let tok =
+            |text: &str| join_verb_parts(text.split(' ').map(str::to_string).collect(), &morph);
+        assert_eq!(tok("خواهم رفت"), ["خواهم_رفت"]);
+        // A bare auxiliary joined anything that followed it.
+        assert_eq!(tok("او خواهد ."), ["او", "خواهد", "."]);
+        assert_eq!(tok("خواهم که بروم"), ["خواهم", "که", "بروم"]);
+        assert_eq!(tok("خواهد شد"), ["خواهد_شد"]);
+    }
+
+    #[test]
     fn a_trailing_verb_prefix_is_not_joined() {
         let morph = MorphologyEngine::new();
         assert_eq!(
@@ -490,11 +538,31 @@ mod tests {
     #[test]
     fn preprocesses_tokenizer_options() {
         assert_eq!(separate_emoji("سلام😊دنیا"), "سلام😊 دنیا");
+        // A ZWJ joins the parts into one emoji, so the family stays one token
+        // exactly as the `emoji` masker keeps it.
+        assert_eq!(
+            separate_emoji("x\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}y"),
+            "x\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467} y"
+        );
         assert_eq!(replace_emails("info@a.co"), " EMAIL ");
         assert_eq!(replace_links("به https://a.b برو"), "به  LINK  برو");
+        // The same span rule the `url` masker uses.
+        assert_eq!(replace_links("(https://a.com) بعد"), "( LINK ) بعد");
+        assert_eq!(replace_links("www.a.com"), " LINK ");
+        assert_eq!(replace_links("ftp://a.com"), " LINK ");
+        assert_eq!(replace_links("abchttps://a.com"), "abchttps://a.com");
         assert_eq!(replace_ids("@user سلام"), " ID  سلام");
         assert_eq!(replace_hashtags("#خبر_فوری سلام"), " TAG خبر فوری  سلام");
+        // A `#` inside a word is not a tag, matching how `@` is handled.
+        assert_eq!(replace_hashtags("abc#def"), "abc#def");
+        assert_eq!(replace_ids("abc@def"), "abc@def");
         assert_eq!(replace_numbers("سال ۱۴۰۴ و 3.14"), "سال  NUM4  و  NUMF ");
+        // A thousands separator is not a decimal point: four digits, not a
+        // fraction. `٬` (U+066C) and `,` group; `.` and `٫` (U+066B) divide.
+        assert_eq!(replace_numbers("۱٬۰۰۰ تومان"), " NUM4  تومان");
+        assert_eq!(replace_numbers("1,000"), " NUM4 ");
+        assert_eq!(replace_numbers("۳٫۱۴"), " NUMF ");
+        assert_eq!(replace_numbers("1,234.5"), " NUMF ");
     }
 
     #[test]

@@ -11,6 +11,24 @@ const OFFSET_MASK: u64 = 0x007F_FFFF_FF00_0000;
 const LEN_MASK: u64 = 0x0000_0000_00FF_FFFF;
 pub(crate) const ZWNJ: &str = "\u{200C}";
 
+/// Preverbs the token splitter and the verbal-spacing rule both treat as a
+/// prefix. Each feature adds its own extras beside this list.
+pub(crate) const SHARED_VERBAL_PREFIXES: &[&str] =
+    &["بر", "باز", "در", "فرو", "وا", "ور", "فرا", "پس", "پیش"];
+
+/// The lemma `packed` points at, when the range and the encoding are both valid.
+///
+/// `packed` can come from a caller, so neither the slice nor the UTF-8 may be
+/// assumed: `build.rs` only writes valid lemmas, but it cannot stop someone
+/// passing an arbitrary `u64`.
+#[inline]
+fn lemma_from_blob(packed: u64) -> Option<&'static str> {
+    let offset = ((packed & OFFSET_MASK) >> 24) as usize;
+    let len = (packed & LEN_MASK) as usize;
+    let bytes = LEMMAS_BLOB.get(offset..offset.checked_add(len)?)?;
+    std::str::from_utf8(bytes).ok()
+}
+
 // Stage A: Unambiguous ZWNJ suffixes (safe to strip BEFORE lexicon lookup)
 pub(crate) const ZWNJ_NOUN_SUFFIXES: &[&str] = &[
     "\u{200C}هایمان",
@@ -266,11 +284,10 @@ impl MorphologyEngine {
         if (packed & FLAG_IDENTITY) != 0 {
             Cow::Borrowed(key)
         } else {
-            let offset = ((packed & OFFSET_MASK) >> 24) as usize;
-            let len = (packed & LEN_MASK) as usize;
-            let bytes = &LEMMAS_BLOB[offset..offset + len];
-            // SAFETY: build.rs only writes valid UTF-8 lemmas into LEMMAS_BLOB
-            Cow::Borrowed(unsafe { std::str::from_utf8_unchecked(bytes) })
+            // A packed value is caller-supplied, so the range and the encoding
+            // must both be checked: the old slice panicked on a wild offset and
+            // `from_utf8_unchecked` was UB when an offset split a character.
+            lemma_from_blob(packed).map_or(Cow::Borrowed(key), Cow::Borrowed)
         }
     }
 
@@ -356,7 +373,8 @@ impl MorphologyEngine {
         // 5. Fallback: Strip attached suffixes ONLY when the surface word wasn't in noun_lexicon
         for suffix in ATTACHED_NOUN_SUFFIXES {
             if let Some(stem) = token.strip_suffix(suffix) {
-                if stem.chars().count() >= 2 {
+                // A clitic key is not a noun stem: `بهمین` is not `بهم` + `ین`.
+                if stem.chars().count() >= 2 && !crate::colloquial::is_clitic_key(stem) {
                     if *suffix == "گان" {
                         let restored = format!("{}ه", stem);
                         if let Some(packed) = self.noun_lexicon.get(&restored) {
@@ -399,10 +417,9 @@ impl MorphologyEngine {
         for ending in VERB_PERSON_ENDINGS {
             if let Some(cand) = body.strip_suffix(ending) {
                 if let Some(packed) = self.verb_stems.get(cand) {
-                    let offset = ((packed & OFFSET_MASK) >> 24) as usize;
-                    let len = (packed & LEN_MASK) as usize;
-                    let bytes = &LEMMAS_BLOB[offset..offset + len];
-                    return Some(unsafe { std::str::from_utf8_unchecked(bytes) });
+                    if let Some(lemma) = lemma_from_blob(packed) {
+                        return Some(lemma);
+                    }
                 }
             }
         }

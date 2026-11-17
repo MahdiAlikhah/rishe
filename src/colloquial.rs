@@ -5,6 +5,14 @@ use std::borrow::Cow;
 static INFORMAL_WORDS_FST: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/informal_words.fst"));
 static INFORMAL_VERBS_FST: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/informal_verbs.fst"));
 
+/// Whether `stem` is a fused preposition+pronoun form rather than a noun stem.
+///
+/// The splitter and the stemmer both strip `ATTACHED_NOUN_SUFFIXES`, and both
+/// must refuse a clitic form: `بهمین` is not `بهم` + `ین`.
+pub(crate) fn is_clitic_key(stem: &str) -> bool {
+    FUSED_PREP_CLITICS.iter().any(|&(colloq, _)| colloq == stem)
+}
+
 /// Result of formalizing one colloquial token.
 pub enum ExpandedTokens<'a> {
     /// One formal token.
@@ -81,6 +89,11 @@ const COLLOQUIAL_VERB_ENDINGS: &[(&str, &str)] = &[
     ("ند", "ند"),
 ];
 
+/// `to_formal` recurses once per stripped noun suffix and the recursion cannot be
+/// bounded any other way, so a long token overflows the stack and aborts the
+/// process. Real words are far shorter than this.
+const MAX_FORMALIZE_LEN: usize = 64;
+
 /// Colloquial-to-formal converter backed by bundled FSTs.
 pub struct ColloquialConverter {
     informal_words: Map<&'static [u8]>,
@@ -120,6 +133,9 @@ impl ColloquialConverter {
     /// when nothing matches.
     #[inline]
     pub fn to_formal<'a>(&self, token: &'a str, morph: &MorphologyEngine) -> Cow<'a, str> {
+        if token.len() > MAX_FORMALIZE_LEN {
+            return Cow::Borrowed(token);
+        }
         if let Some(packed) = self.informal_words.get(token) {
             return MorphologyEngine::unpack_lemma(packed, token);
         }

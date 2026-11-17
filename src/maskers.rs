@@ -1,9 +1,8 @@
-use crate::normalize_ops::{is_persian_letter, ALL_PUNCT, PERSIAN_LETTERS};
+use crate::normalize_ops::{is_persian_letter, is_punctuation};
 use crate::stopwords;
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder, MatchKind};
 use std::sync::OnceLock;
 
-const ZWNJ: char = '\u{200C}';
 const PERSIAN_DIGITS: &str = "۰۱۲۳۴۵۶۷۸۹";
 const ARABIC_DIGITS: &str = "٠١٢٣٤٥٦٧٨٩";
 const DIACRITICS: &str = "ًٌٍَُِّْ";
@@ -14,7 +13,8 @@ const OFFENSIVE_WORDS: &str = include_str!("../data/offensive_words.txt");
 /// Masker names used, in this order, when a caller gives none.
 ///
 /// One list for the crate, both CLIs and the Python package; a new masker is
-/// added here only if it is safe to run on every text.
+/// added here only if it is safe to run on every text. [`apply_chain`] shields
+/// the `<URL>`/`<EMAIL>` placeholders, so the later maskers cannot eat them.
 pub const DEFAULT_MASKERS: [&str; 10] = [
     "url",
     "email",
@@ -107,6 +107,32 @@ impl MaskOp {
     }
 }
 
+/// Placeholders `url`/`email` write, and the stand-in used between maskers.
+///
+/// A masker only sees a string, so `html` read `<URL>` as a tag and deleted it,
+/// and `non_persian`/`punctuation` ate its letters. No Persian word doubles `ژ`
+/// or `چ`, so these two shields cannot occur in real text.
+const SHIELDS: [(&str, &str); 2] = [("<URL>", "ژژ"), ("<EMAIL>", "چچ")];
+
+/// Run `ops` in order, keeping each stage's placeholders out of the next stage.
+pub(crate) fn apply_chain(text: &str, ops: &[MaskOp], mask: Option<&str>) -> String {
+    let mut current = text.to_string();
+    for op in ops {
+        for (placeholder, shield) in SHIELDS {
+            if current.contains(placeholder) {
+                current = current.replace(placeholder, shield);
+            }
+        }
+        current = op.apply(&current, mask);
+        for (placeholder, shield) in SHIELDS {
+            if current.contains(shield) {
+                current = current.replace(shield, placeholder);
+            }
+        }
+    }
+    current
+}
+
 /// Trim only when masking changed the text; a pass with no matches leaves it alone.
 fn finish(text: &str, out: String) -> String {
     if out == text {
@@ -117,7 +143,7 @@ fn finish(text: &str, out: String) -> String {
 
 /// Replace links up to the next whitespace with `mask`.
 pub fn mask_urls(text: &str, mask: &str) -> String {
-    if !text.contains("http") {
+    if !text.contains("http") && !text.contains("www.") && !text.contains("ftp") {
         return text.to_string();
     }
 
@@ -125,14 +151,9 @@ pub fn mask_urls(text: &str, mask: &str) -> String {
     let mut i = 0;
 
     while i < text.len() {
-        if text[i..].starts_with("http://") || text[i..].starts_with("https://") {
-            let mut end = text.len();
-            for (offset, ch) in text[i..].char_indices() {
-                if ch.is_whitespace() {
-                    end = i + offset;
-                    break;
-                }
-            }
+        // The same span rule the tokenizer uses, so `(https://a.com)` keeps its
+        // `)`, and `www.`/`ftp://` are URLs here too.
+        if let Some(end) = crate::word_tokenizer::url_end(text, i) {
             out.push_str(mask);
             i = end;
         } else {
@@ -168,32 +189,33 @@ pub fn mask_emails(text: &str, mask: &str) -> String {
 }
 
 pub(crate) fn email_spans(text: &str) -> Vec<(usize, usize)> {
-    let bytes = text.as_bytes();
+    // Char-based: a Persian local part or an IDN domain is multi-byte, and
+    // indexing bytes by `start - 1` used to step back into the middle of one.
+    let chars: Vec<(usize, char)> = text.char_indices().collect();
     let mut spans = Vec::new();
     let mut i = 0;
 
-    while i < bytes.len() {
-        if bytes[i] == b'@' {
+    while i < chars.len() {
+        if chars[i].1 == '@' {
+            // Stop at the previous span, or the local part of `a@b.cc@d.ee` overlaps it.
+            let last_end = spans.last().map_or(0, |&(_, end)| end);
             let mut start = i;
-            while start > 0 && is_email_local(bytes[start - 1] as char) {
+            while start > 0 && chars[start - 1].0 >= last_end && is_email_local(chars[start - 1].1)
+            {
                 start -= 1;
             }
-            while start < i && !text.is_char_boundary(start) {
-                start += 1;
-            }
-
             let mut domain_end = i + 1;
-            while domain_end < bytes.len() && is_email_domain(bytes[domain_end] as char) {
+            while domain_end < chars.len() && is_email_domain(chars[domain_end].1) {
                 domain_end += 1;
             }
 
             let mut match_end = None;
             for dot in (i + 1..domain_end).rev() {
-                if bytes[dot] != b'.' || dot == i + 1 {
+                if chars[dot].1 != '.' || dot == i + 1 {
                     continue;
                 }
                 let mut run_end = dot + 1;
-                while run_end < domain_end && bytes[run_end].is_ascii_alphabetic() {
+                while run_end < domain_end && chars[run_end].1.is_alphabetic() {
                     run_end += 1;
                 }
                 if run_end - (dot + 1) >= 2 {
@@ -204,7 +226,8 @@ pub(crate) fn email_spans(text: &str) -> Vec<(usize, usize)> {
 
             if start < i {
                 if let Some(end) = match_end {
-                    spans.push((start, end));
+                    let end_byte = chars.get(end).map_or(text.len(), |&(offset, _)| offset);
+                    spans.push((chars[start].0, end_byte));
                     i = end;
                     continue;
                 }
@@ -216,11 +239,11 @@ pub(crate) fn email_spans(text: &str) -> Vec<(usize, usize)> {
 }
 
 fn is_email_local(ch: char) -> bool {
-    ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '%' | '+' | '-')
+    ch.is_alphanumeric() || matches!(ch, '.' | '_' | '%' | '+' | '-')
 }
 
 fn is_email_domain(ch: char) -> bool {
-    ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-')
+    ch.is_alphanumeric() || matches!(ch, '.' | '-')
 }
 
 /// Replace `sigil` tokens up to the next whitespace with `mask`.
@@ -229,21 +252,25 @@ pub fn mask_sigil(text: &str, sigil: char, mask: &str) -> String {
         return text.to_string();
     }
 
+    let chars: Vec<char> = text.chars().collect();
     let mut out = String::with_capacity(text.len());
-    let mut chars = text.chars().peekable();
-    let mut previous: Option<char> = None;
-
-    while let Some(ch) = chars.next() {
-        // A sigil inside a word (`info@example.com`) is not a mention or hashtag.
-        if ch == sigil && previous.is_none_or(|prev: char| !prev.is_alphanumeric()) {
-            while chars.peek().is_some_and(|next| !next.is_whitespace()) {
-                chars.next();
-            }
+    let mut i = 0;
+    while i < chars.len() {
+        // A mask differs from the tokenizer on one point: a sigil after `.` or `_`
+        // still starts a mention here, because masking should not leave it behind.
+        if let Some(end) = crate::word_tokenizer::sigil_end(
+            &chars,
+            i,
+            sigil,
+            |prev| !prev.is_alphanumeric(),
+            |ch| !ch.is_whitespace(),
+        ) {
             out.push_str(mask);
-        } else {
-            out.push(ch);
+            i = end;
+            continue;
         }
-        previous = Some(ch);
+        out.push(chars[i]);
+        i += 1;
     }
 
     finish(text, out)
@@ -260,47 +287,61 @@ pub fn mask_emojis(text: &str, mask: &str) -> String {
     let mut i = 0;
 
     while i < chars.len() {
-        let ch = chars[i];
-
-        if is_regional(ch) && i + 1 < chars.len() && is_regional(chars[i + 1]) {
+        if let Some(end) = emoji_end(&chars, i) {
             out.push_str(mask);
-            i += 2;
+            i = end;
             continue;
         }
-
-        if is_emoji_base(ch) {
-            out.push_str(mask);
-            i += 1;
-            if i < chars.len() && is_skin_tone(chars[i]) {
-                i += 1;
-            }
-            if i < chars.len() && chars[i] == VS16 {
-                i += 1;
-            }
-            while i + 1 < chars.len() && chars[i] == ZWJ && is_emoji_base(chars[i + 1]) {
-                i += 2;
-                if i < chars.len() && is_skin_tone(chars[i]) {
-                    i += 1;
-                }
-                if i < chars.len() && chars[i] == VS16 {
-                    i += 1;
-                }
-            }
-            continue;
-        }
-
-        out.push(ch);
+        out.push(chars[i]);
         i += 1;
     }
 
     finish(text, out)
 }
 
+/// End of the emoji cluster starting at `i`: a regional pair, or a base with its
+/// skin tone, variation selector and ZWJ-joined continuation. The tokenizer splits
+/// tokens on exactly these clusters, so both share this walk.
+pub(crate) fn emoji_end(chars: &[char], i: usize) -> Option<usize> {
+    let ch = chars[i];
+    if is_regional(ch) && i + 1 < chars.len() && is_regional(chars[i + 1]) {
+        return Some(i + 2);
+    }
+    if !is_emoji_base(ch) {
+        return None;
+    }
+    let mut end = i + 1;
+    if end < chars.len() && is_skin_tone(chars[end]) {
+        end += 1;
+    }
+    if end < chars.len() && chars[end] == VS16 {
+        end += 1;
+    }
+    while end + 1 < chars.len() && chars[end] == ZWJ && is_emoji_base(chars[end + 1]) {
+        end += 2;
+        if end < chars.len() && is_skin_tone(chars[end]) {
+            end += 1;
+        }
+        if end < chars.len() && chars[end] == VS16 {
+            end += 1;
+        }
+    }
+    Some(end)
+}
+
 pub(crate) fn is_emoji_base(ch: char) -> bool {
+    // ❶..➓ are pictographs of numbers, not emoji, so they must survive.
+    if matches!(ch as u32, 0x2776..=0x2793) {
+        return false;
+    }
     matches!(
         ch as u32,
-        0x2600..=0x26FF
-            | 0x2700..=0x27BF
+        0x231A..=0x231B
+            | 0x23E9..=0x23F3
+            | 0x2600..=0x26FF
+            | 0x2700..=0x2775
+            | 0x2794..=0x27BF
+            | 0x2B50
             | 0x1F000..=0x1F02F
             | 0x1F0A0..=0x1F0FF
             | 0x1F100..=0x1F1FF
@@ -325,6 +366,65 @@ pub(crate) fn is_skin_tone(ch: char) -> bool {
     matches!(ch as u32, 0x1F3FB..=0x1F3FF)
 }
 
+/// `&CounterClockwiseContourIntegral;` is the longest HTML5 named entity at 33
+/// bytes including the `&`; one byte of slack keeps the window a hard bound.
+const MAX_ENTITY_LEN: usize = 34;
+
+/// Real tags are short and never contain a newline, so a `>` beyond this is not
+/// a closing bracket.
+const MAX_TAG_LEN: usize = 1024;
+
+/// End of a look-ahead window from `start`, snapped back to a character boundary
+/// so a byte count cannot split a character and panic the slice.
+fn bounded_end(text: &str, start: usize, max: usize) -> usize {
+    let mut end = (start + max).min(text.len());
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    end
+}
+
+/// Whether the text between `<` and `>` is markup rather than prose.
+///
+/// `"a<b و c>d"` used to lose `"<b و c>"` because any `>` closed a tag. Real
+/// tags are ASCII markup; non-ASCII is allowed only inside a quoted attribute
+/// value, where scraped pages carry Persian. A tag also never spans a newline.
+fn looks_like_tag(content: &str) -> bool {
+    if content.contains('\n') || content.contains('\r') {
+        return false;
+    }
+    // `<!-- ... -->`, `<!DOCTYPE ...>`, `<?xml ...?>` and `<!\[CDATA\[` are
+    // markup with no prose reading. A bare `<!`/`<?` in front of Persian prose is
+    // not: `<!مهم>` used to be deleted as a tag.
+    if let Some(rest) = content.strip_prefix('!') {
+        return rest.starts_with("--")
+            || rest.starts_with("[CDATA[")
+            || rest
+                .get(..7)
+                .is_some_and(|head| head.eq_ignore_ascii_case("DOCTYPE"))
+            || content.is_ascii();
+    }
+    if content.starts_with('?') {
+        return content.is_ascii();
+    }
+    let mut quote = None;
+    for ch in content.chars() {
+        match quote {
+            Some(open) => {
+                if ch == open {
+                    quote = None;
+                }
+            }
+            None => match ch {
+                '"' | '\'' => quote = Some(ch),
+                _ if !ch.is_ascii() => return false,
+                _ => {}
+            },
+        }
+    }
+    true
+}
+
 /// Decode HTML entities and replace tags with `mask`.
 pub fn mask_html(text: &str, mask: &str) -> String {
     if !text.contains('<') && !text.contains('&') {
@@ -343,8 +443,11 @@ pub fn mask_html(text: &str, mask: &str) -> String {
                 .next()
                 .is_some_and(|ch| ch.is_ascii_alphabetic() || matches!(ch, '/' | '!' | '?'));
             if tag_start {
-                if let Some(close) = text[i..].find('>') {
-                    if close > 1 {
+                // Only look for the `>` of an unterminated tag nearby: scanning
+                // the whole rest of the text made this quadratic in `<` count.
+                let window_end = bounded_end(text, i, MAX_TAG_LEN);
+                if let Some(close) = text[i..window_end].find('>') {
+                    if close > 1 && looks_like_tag(&text[i + 1..i + close]) {
                         out.push_str(mask);
                         i += close + 1;
                         continue;
@@ -366,7 +469,10 @@ fn html_unescape(text: &str) -> String {
 
     while i < text.len() {
         if text.as_bytes()[i] == b'&' {
-            if let Some(semi) = text[i..].find(';').filter(|semi| *semi <= 32) {
+            // Bound the `;` search: an unterminated `&` used to scan the whole
+            // rest of the text, making this quadratic in `&` count.
+            let window_end = bounded_end(text, i, MAX_ENTITY_LEN);
+            if let Some(semi) = text[i..window_end].find(';').filter(|semi| *semi <= 32) {
                 if let Some(replacement) = decode_entity(&text[i + 1..i + semi]) {
                     out.push_str(&replacement);
                     i += semi + 1;
@@ -429,13 +535,19 @@ pub fn mask_non_persian(
     let mut out = String::with_capacity(text.len());
 
     for ch in text.chars() {
-        let allowed = PERSIAN_LETTERS.contains(ch)
-            || ch == ZWNJ
-            || ch == ' '
+        let allowed = is_persian_letter(ch)
+            // The same letters with an Arabic code point: `normalize` maps them,
+            // so deleting them here shortened `كتاب` to `تاب` and `مصطفى` to `مصطف`.
+            || matches!(ch, 'ي' | 'ك' | 'ى' | 'ة')
+            // Every whitespace, not just `' '`: deleting a newline joined lines
+            // and deleting a space joined words (`سلام\nدنیا,خوب` -> `سلامدنیاخوب`).
+            || ch.is_whitespace()
             || PERSIAN_DIGITS.contains(ch)
-            || ALL_PUNCT.contains(ch)
+            || ch.is_ascii_digit()
+            || is_punctuation(ch)
+            || ch.is_ascii_punctuation()
             || (keep_diacritics && DIACRITICS.contains(ch))
-            || (keep_english && (ch.is_ascii_alphanumeric() || ch.is_ascii_punctuation()));
+            || (keep_english && ch.is_ascii_alphabetic());
 
         if allowed {
             out.push(ch);
@@ -545,7 +657,7 @@ pub fn mask_diacritics(text: &str, mask: &str) -> String {
 pub fn mask_punctuation(text: &str, mask: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for ch in text.chars() {
-        if ALL_PUNCT.contains(ch) || ch.is_ascii_punctuation() {
+        if is_punctuation(ch) || ch.is_ascii_punctuation() {
             out.push_str(mask);
         } else {
             out.push(ch);
@@ -564,6 +676,17 @@ mod tests {
             MaskOp::Url.apply("برای اطلاعات بیشتر به https://shekar.io مراجعه کنید.", None),
             "برای اطلاعات بیشتر به <URL> مراجعه کنید."
         );
+        // The URL ends where the sentence does: the closing bracket, comma,
+        // full stop and guillemet are not part of it.
+        assert_eq!(mask_urls("(https://a.com) بعد", "<URL>"), "(<URL>) بعد");
+        assert_eq!(mask_urls("«https://a.com»", "<URL>"), "«<URL>»");
+        assert_eq!(mask_urls("به https://a.com، برو", "<URL>"), "به <URL>، برو");
+        assert_eq!(mask_urls("پایان https://a.com.", "<URL>"), "پایان <URL>.");
+        // The masker and the tokenizer scan the same prefixes and the same
+        // word-start rule.
+        assert_eq!(mask_urls("www.example.com", "<URL>"), "<URL>");
+        assert_eq!(mask_urls("ftp://files.example.com", "<URL>"), "<URL>");
+        assert_eq!(mask_urls("abchttps://a.com", "<URL>"), "abchttps://a.com");
         assert_eq!(
             MaskOp::Email.apply("برای تماس با ما به info@shekar.io ایمیل بزنید.", None),
             "برای تماس با ما به <EMAIL> ایمیل بزنید."
@@ -579,12 +702,36 @@ mod tests {
     }
 
     #[test]
+    fn overlapping_emails_do_not_panic() {
+        // The backwards scan from the second `@` used to cross the first
+        // span's end, giving overlapping spans and a reversed byte range.
+        assert_eq!(mask_emails("a@b.cc@d.ee", "<EMAIL>"), "<EMAIL>@d.ee");
+        assert_eq!(mask_emails("x@y.com@z.org", "<EMAIL>"), "<EMAIL>@z.org");
+        assert_eq!(mask_emails("a@b.cc", "<EMAIL>"), "<EMAIL>");
+        assert_eq!(mask_emails("a@b@c.dd", "<EMAIL>"), "a@<EMAIL>");
+    }
+
+    #[test]
+    fn emails_with_unicode_parts_and_idn_domains_are_masked() {
+        // Byte-based scanning treated the UTF-8 bytes of a Persian letter as
+        // separators, so the address came back untouched.
+        assert_eq!(mask_emails("x کاربر@example.com", "<EMAIL>"), "x <EMAIL>");
+        assert_eq!(mask_emails("x user@مثال.ایران", "<EMAIL>"), "x <EMAIL>");
+        assert_eq!(mask_emails("x a@b.cc@d.ee", "<EMAIL>"), "x <EMAIL>@d.ee");
+    }
+
+    #[test]
     fn masks_social_tokens() {
         assert_eq!(
             MaskOp::Mention.apply("سلام @user! چطوری؟", None),
             "سلام   چطوری؟"
         );
         assert_eq!(MaskOp::Hashtag.apply("#سلام #خوش_آمدید", None), "");
+        // A sigil with nothing after it is punctuation, not a mention or tag.
+        assert_eq!(MaskOp::Mention.apply("خالص @ و", None), "خالص @ و");
+        assert_eq!(MaskOp::Hashtag.apply("خالص # و", None), "خالص # و");
+        // A sigil inside a word stays.
+        assert_eq!(MaskOp::Hashtag.apply("abc#def", None), "abc#def");
     }
 
     #[test]
@@ -595,6 +742,94 @@ mod tests {
         );
         assert_eq!(MaskOp::Emoji.apply("family 👨‍👩‍👧‍👦", None), "family");
         assert_eq!(MaskOp::Emoji.apply("flag 🇮🇷", None), "flag");
+        // Star, watch and alarm are emoji and must go.
+        for ch in ['\u{2B50}', '\u{231A}', '\u{23F0}'] {
+            assert_eq!(
+                MaskOp::Emoji.apply(&format!("x{ch}y"), None),
+                "xy",
+                "{ch:?}"
+            );
+        }
+        // A circled digit is a number, not an emoji, and must stay.
+        for ch in ['\u{2776}', '\u{2777}'] {
+            assert_eq!(
+                MaskOp::Emoji.apply(&format!("x{ch}y"), None),
+                format!("x{ch}y"),
+                "{ch:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn html_ignores_prose_between_angle_brackets() {
+        // Any `>` used to close a tag, so the Persian words between `<` and `>`
+        // were deleted: this came back as "اگر ad باشد".
+        assert_eq!(mask_html("اگر a<b و c>d باشد", ""), "اگر a<b و c>d باشد");
+        // Real markup still goes: an ASCII tag, one with Persian inside a quoted
+        // attribute value, and a comment.
+        assert_eq!(mask_html("<p>متن</p>", ""), "متن");
+        assert_eq!(mask_html("<a title=\"سلام\">متن</a>", ""), "متن");
+        assert_eq!(mask_html("<!-- یادداشت -->متن", ""), "متن");
+        // A tag never spans a newline.
+        assert_eq!(mask_html("a<b\nc>d", ""), "a<b\nc>d");
+        // `<!`/`<?` before Persian prose is not markup: `<!مهم>` used to be
+        // deleted as if it were a comment or a processing instruction.
+        assert_eq!(mask_html("این <!مهم> است", ""), "این <!مهم> است");
+        assert_eq!(mask_html("این <?مهم> است", ""), "این <?مهم> است");
+        // The real declarations and comments still go.
+        assert_eq!(mask_html("<!DOCTYPE html>متن", ""), "متن");
+        assert_eq!(mask_html("<?xml version=\"1.0\"?>متن", ""), "متن");
+        assert_eq!(mask_html("<!CDATA[ x ]]>متن", ""), "متن");
+    }
+
+    #[test]
+    fn chain_keeps_placeholders() {
+        let text = "به https://a.b برو";
+        // Each later masker used to treat `<URL>` as ordinary text.
+        for later in [
+            MaskOp::Html,
+            MaskOp::NonPersian,
+            MaskOp::Punctuation,
+            MaskOp::Digits,
+            MaskOp::Diacritics,
+            MaskOp::Emoji,
+        ] {
+            assert_eq!(
+                apply_chain(text, &[MaskOp::Url, later], None),
+                "به <URL> برو",
+                "{later:?}"
+            );
+        }
+        assert_eq!(
+            apply_chain("x info@a.co y", &[MaskOp::Email, MaskOp::Html], None),
+            "x <EMAIL> y"
+        );
+    }
+
+    #[test]
+    fn non_persian_keeps_arabic_coded_persian_letters() {
+        // `normalize` maps these to `ی`/`ک`/`ه`; deleting them shortened words.
+        assert_eq!(
+            mask_non_persian("او كتابي خواند", "", false, false),
+            "او كتابي خواند"
+        );
+        assert_eq!(
+            mask_non_persian("مصطفى كبيرة", "", false, false),
+            "مصطفى كبيرة"
+        );
+        assert_eq!(MaskOp::NonPersian.apply("سلام hello", None), "سلام");
+    }
+
+    #[test]
+    fn a_byte_cap_inside_a_character_is_not_a_panic() {
+        // The window end is a byte offset; it used to land inside a character and
+        // panic the slice, which every default `mask()` call could reach.
+        let entity = format!("&ab{}", "ب".repeat(20));
+        assert_eq!(mask_html(&entity, "[MASK]"), entity);
+        let tag = format!("<a{}z{}>", "ب".repeat(510), "ب".repeat(10));
+        assert_eq!(mask_html(&tag, "[MASK]"), tag);
+        // The cap still masks ordinary tags, so the bound did not disable it.
+        assert_eq!(mask_html("<b>سلام</b>", ""), "سلام");
     }
 
     #[test]
@@ -622,10 +857,33 @@ mod tests {
 
     #[test]
     fn masks_non_persian_letters() {
-        assert_eq!(MaskOp::NonPersian.apply("سلام hello 123!", None), "سلام  !");
+        // Digits and punctuation survive: `digits` and `punctuation` are the
+        // maskers that remove those, and this one is `non_persian_letters`.
+        assert_eq!(
+            MaskOp::NonPersian.apply("سلام hello 123!", None),
+            "سلام  123!"
+        );
         assert_eq!(
             mask_non_persian("سلام hello 123!", "", true, false),
             "سلام hello 123!"
+        );
+    }
+
+    #[test]
+    fn non_persian_keeps_separators() {
+        // Deleting the newline and the comma joined two lines and two words.
+        assert_eq!(
+            MaskOp::NonPersian.apply("سلام\nدنیا,خوب", None),
+            "سلام\nدنیا,خوب"
+        );
+        assert_eq!(
+            MaskOp::NonPersian.apply("سلام دنیا\tخوب", None),
+            "سلام دنیا\tخوب"
+        );
+        assert_eq!(MaskOp::NonPersian.apply("a-b_c", None), "-_");
+        assert_eq!(
+            MaskOp::NonPersian.apply("قیمت 123 تومان", None),
+            "قیمت 123 تومان"
         );
     }
 
@@ -672,5 +930,30 @@ mod tests {
         assert_eq!(MaskOp::from_name("url"), Some(MaskOp::Url));
         assert_eq!(MaskOp::from_name("stopwords"), Some(MaskOp::Stopwords));
         assert_eq!(MaskOp::from_name("nope"), None);
+    }
+
+    #[test]
+    fn unterminated_entities_and_tags_stay_linear() {
+        use std::time::Instant;
+
+        // Both searches used to scan to the end of the text per `&` or `<`,
+        // so 160k characters took 0.6s and every doubling quadrupled the time.
+        // Compare 20k against 160k: linear is 8x, quadratic would be 64x.
+        let time = |n: usize, ch: &str| {
+            let text = ch.repeat(n);
+            let start = Instant::now();
+            mask_html(&text, "<MASK>");
+            start.elapsed()
+        };
+
+        for ch in ["&", "<a"] {
+            let small = time(20_000, ch).as_nanos().max(1);
+            let large = time(160_000, ch).as_nanos();
+            assert!(
+                large < small * 32,
+                "{ch:?}: 8x the input took {}x the time, so the scan is not linear",
+                large / small
+            );
+        }
     }
 }

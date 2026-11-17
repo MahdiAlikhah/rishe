@@ -79,6 +79,28 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y python3-dev
       - run: cargo test --locked --features python --test py_binding_errors
 
+  # The wheel is abi3 (cp39-abi3), so one build serves every supported CPython
+  # version. Building it here once and installing the artifact everywhere else
+  # keeps `python-tests`, `examples` and `pack-tests` from compiling Rust six
+  # more times over.
+  build-wheel:
+    name: build wheel (linux x86_64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: python -m pip install maturin
+      - run: maturin build --release --locked --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-linux-x86_64
+          path: dist/*.whl
+          if-no-files-found: error
+
   # `cuda` and `metal` are opt-in features nobody builds by default, so without
   # this job they can rot unnoticed. `metal` is Apple-only: tract declares
   # `tract-metal` under `cfg(target_vendor = "apple")`, so on Linux the feature
@@ -96,7 +118,20 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo check --locked --features ${{ matrix.feature }}
+      # `check` never links, so a broken link config stayed green for these two.
+      - run: cargo build --locked --features ${{ matrix.feature }}
+
+  # A RustSec advisory in a dependency must fail the run. Like `gpu-features` it is
+  # absent from `publish-pypi.needs`: an advisory in a transitive crate is not a
+  # reason to block a release, but it must be visible before the next one.
+  audit:
+    name: dependency advisories
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
 
   # Public docs must be warning-free: rustdoc warnings are errors here.
   docs:
@@ -109,6 +144,16 @@ jobs:
       - run: cargo doc --locked --no-deps --features python,models
         env:
           RUSTDOCFLAGS: "-D warnings"
+      # 1.0.2 shipped a 689-byte LICENSE-APACHE that was only the appendix
+      # notice, which no test could see; the size floor is the check for that.
+      - name: License files carry the full text
+        run: |
+          [ "$(wc -c < LICENSE-APACHE)" -ge 10000 ] || {
+            echo "LICENSE-APACHE is truncated: $(wc -c < LICENSE-APACHE) bytes" >&2
+            exit 1; }
+          [ "$(wc -c < LICENSE-MIT)" -ge 900 ] || {
+            echo "LICENSE-MIT is truncated: $(wc -c < LICENSE-MIT) bytes" >&2
+            exit 1; }
       # A tag whose CHANGELOG section is missing cannot get release notes, and a
       # published version can never be re-uploaded, so both are checked here —
       # before anything reaches a registry — rather than in publish-release.
@@ -123,6 +168,7 @@ jobs:
 
   python-tests:
     name: python tests (${{ matrix.python }})
+    needs: build-wheel
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -143,10 +189,31 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
-      - uses: dtolnay/rust-toolchain@stable
-      - run: python -m pip install maturin
-      - run: maturin build --release --out dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheel-linux-x86_64
+          path: dist
       - run: python -m pip install --no-deps dist/*.whl
+      - run: python -m unittest discover -s python/tests -v
+      - run: python scripts/benchmark_golden.py
+
+  # The matrix above runs on Linux only, so a Windows-only break (paths, line
+  # endings, `os.replace` on a locked file) shipped green. This builds the
+  # Windows wheel and runs the same suite on it. The wheel is abi3, so one
+  # Python version is enough.
+  python-tests-windows:
+    name: python tests (windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: python -m pip install maturin
+      - run: maturin build --release --locked --out dist
+      - run: python -m pip install --no-deps (Get-ChildItem dist/*.whl)
       - run: python -m unittest discover -s python/tests -v
       - run: python scripts/benchmark_golden.py
 
@@ -155,6 +222,7 @@ jobs:
   # the hub cache, so it must not be picked up by a glob here.
   examples:
     name: examples
+    needs: build-wheel
     runs-on: ubuntu-latest
     env:
       # The examples print Persian text; pin stdout to UTF-8 instead of relying
@@ -165,10 +233,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: python -m pip install maturin
-      - run: maturin build --release --out dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheel-linux-x86_64
+          path: dist
       - run: python -m pip install --no-deps dist/*.whl
       - run: python scripts/check_docs_examples.py
       - run: python examples/basic.py
@@ -181,6 +249,7 @@ jobs:
   # pull request, but a release must not go out with inference never tested.
   pack-tests:
     name: pack tests
+    needs: build-wheel
     if: >-
       (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
       || github.event_name == 'workflow_dispatch'
@@ -190,14 +259,14 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheel-linux-x86_64
+          path: dist
       - uses: actions/cache@v4
         with:
           path: ~/.cache/rishe
           key: rishe-packs-${{ hashFiles('python/rishe/hub.py') }}
-      - run: python -m pip install maturin
-      - run: maturin build --release --out dist
       - run: python -m pip install --no-deps dist/*.whl
       # Exports the three variables the skipped tests look for. The variables are
       # then checked: a failed pull would leave them empty, the tests would skip
@@ -220,6 +289,10 @@ jobs:
       matrix:
         include:
           - { target: x86_64-unknown-linux-gnu, os: ubuntu-latest, manylinux: auto, container: "", args: "--release --out dist" }
+          # glibc ARM: without this row every Raspberry Pi / Graviton user falls
+          # back to the sdist, which needs a Rust toolchain. `container: auto`
+          # asks maturin to cross-compile inside a manylinux image.
+          - { target: aarch64-unknown-linux-gnu, os: ubuntu-latest, manylinux: auto, container: "auto", args: "--release --out dist" }
           - { target: x86_64-unknown-linux-musl, os: ubuntu-latest, manylinux: musllinux_1_2, container: "off", args: "--release --out dist --zig" }
           - { target: aarch64-unknown-linux-musl, os: ubuntu-latest, manylinux: musllinux_1_2, container: "off", args: "--release --out dist --zig" }
           - { target: x86_64-apple-darwin, os: macos-15, manylinux: "", container: "", args: "--release --out dist" }
@@ -232,13 +305,49 @@ jobs:
           target: ${{ matrix.target }}
           manylinux: ${{ matrix.manylinux }}
           container: ${{ matrix.container }}
-          args: ${{ matrix.args }}
+          args: ${{ matrix.args }} --locked
           rust-toolchain: stable
       - uses: actions/upload-artifact@v4
         with:
           name: wheels-${{ matrix.target }}
           path: dist/*.whl
           if-no-files-found: error
+
+  # Every wheel is built on its own runner and then never opened, so a broken
+  # one could publish green. Each row installs the artifact built for its own
+  # platform and calls into it. The musllinux and aarch64-musl wheels are not
+  # covered here: running them needs an emulated Alpine container, where the
+  # `actions/download-artifact` node action is unavailable.
+  wheel-smoke:
+    name: wheel smoke (${{ matrix.label }})
+    needs: wheels
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { label: linux-x86_64, os: ubuntu-latest, pattern: "*-manylinux*_x86_64.whl" }
+          - { label: macos-arm64, os: macos-15, pattern: "*-macosx*_arm64.whl" }
+          - { label: windows-x86_64, os: windows-latest, pattern: "*-win_amd64.whl" }
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          # Only the matrix artifacts: `build-wheel` uploads a second linux wheel
+          # with the same file name, and it is not a shipping artifact.
+          path: dist
+          pattern: wheels-*
+          merge-multiple: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # `bash` on every runner, so the glob expands the same way on Windows.
+      - shell: bash
+        run: |
+          set -euo pipefail
+          wheel=$(ls dist/${{ matrix.pattern }})
+          test -n "$wheel"
+          python -m pip install --no-deps "$wheel"
+          python -c "import rishe; print(rishe.normalize('مي كنم')); print(rishe.process('سلام دنیا'))"
 
   sdist:
     runs-on: ubuntu-latest
@@ -257,26 +366,36 @@ jobs:
   # Tag-triggered releases. PyPI uses trusted publishing (OIDC): register this
   # repo + workflow "release.yml" as a trusted publisher on pypi.org first.
   publish-pypi:
-    # `docs` carries the tag-gated CHANGELOG check, so it gates both publishers.
-    # `gpu-features` is deliberately absent from both publishers: cuda and metal
-    # are not in the published wheel, so a GPU break must not block a release —
-    # it still fails the run loudly.
-    needs: [rust, python-tests, examples, wheels, sdist, docs, pack-tests]
+    # Both publishers wait for exactly the same jobs: the wheel ships with
+    # `models` and the Windows wheel is a shipping artifact, so neither may
+    # publish before those pass. `docs` carries the tag-gated CHANGELOG check.
+    # `gpu-features` is deliberately absent: cuda and metal are not in the
+    # published wheel, so a GPU break must not block a release — it still fails
+    # the run loudly.
+    needs: [rust, rust-models, msrv, features, python-tests, python-tests-windows, examples, wheels, wheel-smoke, sdist, docs, pack-tests]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       id-token: write
     steps:
+      # Only what a gate opened: the matrix wheels plus the sdist. Downloading
+      # every artifact merged `build-wheel`'s wheel over the matrix one of the
+      # same name, and `skip-existing` cannot correct a wrong upload.
       - uses: actions/download-artifact@v4
         with:
           path: dist
+          pattern: wheels-*
           merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: sdist
+          path: dist
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
           skip-existing: true
 
   publish-crate:
-    needs: [rust, rust-models, msrv, features, docs, examples, wheels, sdist, pack-tests]
+    needs: [rust, rust-models, msrv, features, python-tests, python-tests-windows, examples, wheels, wheel-smoke, sdist, docs, pack-tests]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:

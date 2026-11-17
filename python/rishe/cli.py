@@ -8,22 +8,29 @@ import os
 import sys
 from importlib.metadata import PackageNotFoundError, version as _distribution_version
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Union
 
 from . import Embeddings, Pipeline, hub, parse_date
 from .api import DEFAULT_MASKERS
 
-# Kept for callers that imported the old name; the masker list itself lives in
-# ``rishe.api`` so the API and the CLI cannot drift apart.
-DEFAULT_MASK_STAGES = list(DEFAULT_MASKERS)
+# Longest request line ``serve`` accepts, matching `MAX_LINE` in src/bin/rishe.rs.
+_MAX_SERVE_LINE = 1 << 20
 
 
 def _configure_stdio() -> None:
     """Emit and read UTF-8 regardless of the console code page."""
-    for stream in (sys.stdin, sys.stdout, sys.stderr):
+    # `utf-8-sig` drops a leading byte-order mark, which otherwise becomes part
+    # of the first word and breaks every parse. `strict` matches the Rust binary:
+    # an invalid byte is one error line and exit 1, not silent replacement text.
+    reconfigure = getattr(sys.stdin, "reconfigure", None)
+    if reconfigure is not None:
+        reconfigure(encoding="utf-8-sig")
+    for stream in (sys.stdout, sys.stderr):
         reconfigure = getattr(stream, "reconfigure", None)
         if reconfigure is not None:
-            reconfigure(encoding="utf-8")
+            # A reply can carry a lone surrogate the client sent; escaping it
+            # keeps one bad line from aborting the whole serve loop.
+            reconfigure(encoding="utf-8", errors="backslashreplace")
 
 
 def _version() -> str:
@@ -65,29 +72,31 @@ def main(argv: Optional[List[str]] = None) -> int:
         ("lemmatize", "Lemmatize Persian text."),
     ):
         command = subparsers.add_parser(name, help=description)
-        command.add_argument("text", nargs="?", help="text; reads stdin when omitted")
+        command.add_argument("text", nargs="*", help="text; reads stdin when omitted")
         command.add_argument("--json", action="store_true", help="emit JSON")
 
     mask = subparsers.add_parser("mask", help="Mask or remove sensitive tokens.")
-    mask.add_argument("text", nargs="?", help="text; reads stdin when omitted")
+    mask.add_argument("text", nargs="*", help="text; reads stdin when omitted")
     mask.add_argument(
         "--maskers",
         dest="maskers",
-        nargs="+",
+        # One value per flag, not `nargs="+"`: a greedy flag swallowed the
+        # positional text (`rishe mask --maskers url "متن"` failed).
+        action="append",
         default=list(DEFAULT_MASKERS),
-        help="maskers to apply, in order",
+        help="maskers to apply, in order (repeat the flag or use commas)",
     )
     mask.add_argument("--mask-token", default=None, help="override every mask default")
     mask.add_argument("--json", action="store_true", help="emit JSON")
 
     date = subparsers.add_parser("date", help="Parse a Jalali date into Gregorian ISO.")
-    date.add_argument("text", nargs="?", help="text; reads stdin when omitted")
+    date.add_argument("text", nargs="*", help="text; reads stdin when omitted")
     date.add_argument("--json", action="store_true", help="emit JSON")
 
     depparse = subparsers.add_parser(
         "depparse", help="Dependency parsing with a model pack."
     )
-    depparse.add_argument("text", nargs="?", help="text; reads stdin when omitted")
+    depparse.add_argument("text", nargs="*", help="text; reads stdin when omitted")
     depparse.add_argument(
         "--pack", default=None, help="depparse pack directory (required at run time)"
     )
@@ -99,8 +108,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         ("ezafe", "Ezafe tagging with a model pack."),
     ):
         command = subparsers.add_parser(name, help=description)
-        command.add_argument("text", nargs="?", help="text; reads stdin when omitted")
-        command.add_argument("--pack", default=None, help="pack directory; defaults to the Hub cache")
+        command.add_argument("text", nargs="*", help="text; reads stdin when omitted")
+        command.add_argument("--pack", default=None, help="pack directory (required at run time)")
         command.add_argument("--json", action="store_true", help="emit JSON")
 
     serve = subparsers.add_parser("serve", help="JSON-lines server on stdin/stdout.")
@@ -118,7 +127,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     serve.add_argument("--model", default=None, help="embedding .vec path or hub model name")
 
     embed = subparsers.add_parser("embed", help="Mean embedding vector for text.")
-    embed.add_argument("text", nargs="?", help="text; reads stdin when omitted")
+    embed.add_argument("text", nargs="*", help="text; reads stdin when omitted")
     embed.add_argument("--model", default=None, help=".vec path or hub model name")
     embed.add_argument("--json", action="store_true", help="emit JSON")
 
@@ -189,8 +198,8 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     pipe = Pipeline()
 
-    text = _read_text(args.text)
     try:
+        text = _read_text(args.text)
         if args.command == "normalize":
             result = pipe.normalize(text)
         elif args.command == "tokenize":
@@ -198,7 +207,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         elif args.command == "lemmatize":
             result = pipe(text).lemmas
         elif args.command == "mask":
-            result = pipe.mask(text, args.maskers, args.mask_token)
+            maskers = [
+                masker for value in args.maskers for masker in value.split(",") if masker
+            ]
+            result = pipe.mask(text, maskers, args.mask_token)
         else:
             # Unreachable: the required subparser rejects unknown commands with
             # SystemExit(2). Kept as a usage-error guard should the dispatch and
@@ -259,9 +271,8 @@ def _date_payload(text: str) -> dict:
 
 
 def _date(args) -> int:
-    text = _read_text(args.text)
     try:
-        payload = _date_payload(text)
+        payload = _date_payload(_read_text(args.text))
     except ValueError as error:
         print(error, file=sys.stderr)
         return 1
@@ -304,13 +315,13 @@ def _depparse(args) -> int:
 
 def _pack(args) -> int:
     task = args.command
-    try:
-        path = args.pack or hub.path(f"{task}-compact")
-    except (OSError, ValueError) as error:
-        print(error, file=sys.stderr)
+    # One rule for every pack command, matching `depparse` and the Rust binary:
+    # the pack directory is an explicit argument, never a silent Hub lookup.
+    if not args.pack:
+        print(f"{task} needs --pack <dir>", file=sys.stderr)
         return 1
     try:
-        pipe = Pipeline(**{f"{task}_pack": path})
+        pipe = Pipeline(**{f"{task}_pack": args.pack})
         items = getattr(pipe, task)(_read_text(args.text))
     except (OSError, ValueError, RuntimeError) as error:
         print(error, file=sys.stderr)
@@ -328,10 +339,9 @@ def _pack(args) -> int:
 def _hub(args) -> int:
     if args.hub_command == "pull":
         try:
-            if args.name in hub.PACKS:
-                print(hub.pull(args.name, force=args.force))
-            else:
-                print(hub.pull(args.name, sha256=args.sha256, force=args.force))
+            # Pass the pin through even for a pack: `pull` refuses one there
+            # instead of letting it read as a check that never happened.
+            print(hub.pull(args.name, sha256=args.sha256, force=args.force))
         except (OSError, ValueError, RuntimeError) as error:
             print(error, file=sys.stderr)
             return 1
@@ -417,7 +427,12 @@ def _embedding(args) -> int:
         return 1
 
     if args.command == "embed":
-        vector = vectors.sentence_vector(_read_text(args.text))
+        try:
+            text = _read_text(args.text)
+        except (OSError, ValueError) as error:
+            print(error, file=sys.stderr)
+            return 1
+        vector = vectors.sentence_vector(text)
         if args.json:
             print(json.dumps(vector))
         else:
@@ -488,7 +503,26 @@ def _serve(
                 return False
             raise
 
-    for raw in stream:
+    # An unbounded `for raw in stream` grows a buffer until it finds a newline,
+    # so a client that streams bytes and never sends one grows the process
+    # without bound. `readline(limit)` caps the read; a longer line is answered
+    # with the error envelope and its remainder discarded, exactly as the Rust
+    # server does (see docs/serve-schema.md).
+    max_line = _MAX_SERVE_LINE
+    while True:
+        raw = stream.readline(max_line + 1)
+        if not raw:
+            break
+        terminator = b"\n" if isinstance(raw, bytes) else "\n"
+        oversized = len(raw) > max_line and not raw.endswith(terminator)
+        if oversized:
+            if not emit({"ok": False, "error": "request line is too long"}):
+                return _end_serve()
+            while True:
+                rest = stream.readline(max_line)
+                if not rest or rest.endswith(terminator):
+                    break
+            continue
         if isinstance(raw, bytes):
             try:
                 line = raw.decode("utf-8").strip()
@@ -597,10 +631,16 @@ def _end_serve() -> int:
     return 0
 
 
-def _read_text(source: Optional[str]) -> str:
-    if source is None or source == "-":
-        return sys.stdin.read().strip()
-    return source
+def _read_text(source: Optional[Union[str, List[str]]]) -> str:
+    """Text from the positional words, joined like the Rust binary does, or stdin."""
+    if isinstance(source, list):
+        text = " ".join(source)
+    else:
+        text = source or ""
+    if not text or text == "-":
+        # Strip the newline the shell adds, not the document's own leading space.
+        return sys.stdin.read().rstrip("\r\n")
+    return text
 
 
 if __name__ == "__main__":

@@ -55,7 +55,8 @@ class ConlluReader:
         comments: Dict[str, str] = {}
         sent_id: Optional[str] = None
 
-        with self.path.open(encoding="utf-8") as handle:
+        # `utf-8-sig` so a byte-order mark does not hide the first `# sent_id`.
+        with self.path.open(encoding="utf-8-sig") as handle:
             for raw in handle:
                 line = raw.rstrip("\n")
                 if not line.strip():
@@ -74,6 +75,10 @@ class ConlluReader:
                 if len(columns) < 10:
                     continue
                 token_id, form, lemma, upos, xpos, feats, head, deprel, _, misc = columns[:10]
+                # Multiword-token ranges (`2-3`) and empty nodes (`8.1`) repeat the
+                # words of the integer-id rows; keeping them doubles the sentence.
+                if "-" in token_id or "." in token_id:
+                    continue
                 tokens.append(
                     Token(
                         id=token_id,
