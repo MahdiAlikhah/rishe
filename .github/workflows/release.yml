@@ -131,26 +131,20 @@ jobs:
       # `check` never links, so a broken link config stayed green for these two.
       - run: cargo build --locked --features ${{ matrix.feature }}
 
-  # A RustSec advisory in a dependency must fail the run. Like `gpu-features` it is
-  # absent from `publish-pypi.needs`: an advisory in a transitive crate is not a
-  # reason to block a release, but it must be visible before the next one.
+  # A RustSec advisory in a dependency must be visible before the next release.
+  # It is deliberately not a publishing gate: an advisory in a transitive crate
+  # is not a reason to hold back a patch. `cargo audit` runs directly instead of
+  # `rustsec/audit-check`, whose failing "Security audit" check run appeared as a
+  # red job inside an otherwise passing run; `continue-on-error` on the step keeps
+  # known advisories reported as a warning without painting the run red.
   audit:
     name: dependency advisories
     runs-on: ubuntu-24.04
-    permissions:
-      contents: read
-      checks: write
     steps:
       - uses: actions/checkout@v4
-      # `continue-on-error` sits on the step, not the job: a job-level one leaves
-      # a red job box in an otherwise passing run. The pinned tract/PyO3 stack
-      # carries known advisories (pyo3 0.22 -> 0.29, zip 6 -> 9, rustix) that are
-      # tracked as their own migration; every advisory is still printed and the
-      # check run is still created, it just cannot paint the run red.
-      - uses: rustsec/audit-check@v2
+      - uses: taiki-e/install-action@cargo-audit
+      - run: cargo audit
         continue-on-error: true
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
 
   # Public docs must be warning-free: rustdoc warnings are errors here.
   docs:
