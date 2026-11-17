@@ -123,7 +123,11 @@ jobs:
       matrix:
         include:
           - { feature: cuda, os: ubuntu-24.04 }
-          - { feature: metal, os: macos-latest }
+          # Intel on purpose: GitHub's arm64 macOS hosted runners are
+          # capacity-constrained ("not acquired by Runner ... even after multiple
+          # attempts") and cancelled this job twice. `metal` compiles on x64 too;
+          # a cancelled runner acquisition cannot be retried by `continue-on-error`.
+          - { feature: metal, os: macos-15-intel }
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -319,11 +323,21 @@ jobs:
           - { target: aarch64-unknown-linux-gnu, os: ubuntu-24.04, manylinux: auto, container: "auto", args: "--release --out dist", soft: true }
           - { target: x86_64-unknown-linux-musl, os: ubuntu-24.04, manylinux: musllinux_1_2, container: "off", args: "--release --out dist --zig" }
           - { target: aarch64-unknown-linux-musl, os: ubuntu-24.04, manylinux: musllinux_1_2, container: "off", args: "--release --out dist --zig" }
-          - { target: x86_64-apple-darwin, os: macos-15, manylinux: "", container: "", args: "--release --out dist" }
-          - { target: aarch64-apple-darwin, os: macos-15, manylinux: "", container: "", args: "--release --out dist" }
+          # macOS: Intel runners, both rows. The arm64 macOS hosted runners are
+          # capacity-constrained and one of these wheels was cancelled waiting for
+          # a runner. Xcode cross-compiles the arm64 wheel from x64 (the same way
+          # cibuildwheel builds universal wheels), so no arm64 runner is needed.
+          - { target: x86_64-apple-darwin, os: macos-15-intel, manylinux: "", container: "", args: "--release --out dist" }
+          - { target: aarch64-apple-darwin, os: macos-15-intel, manylinux: "", container: "", args: "--release --out dist" }
           - { target: x86_64-pc-windows-msvc, os: windows-latest, manylinux: "", container: "", args: "--release --out dist" }
     steps:
       - uses: actions/checkout@v4
+      # Cross-compiling the arm64 macOS wheel needs its std installed; this also
+      # proves the target is available before maturin runs.
+      - uses: dtolnay/rust-toolchain@stable
+        if: matrix.target == 'aarch64-apple-darwin'
+        with:
+          targets: aarch64-apple-darwin
       - uses: PyO3/maturin-action@v1
         continue-on-error: ${{ matrix.soft == true }}
         with:
