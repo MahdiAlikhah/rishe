@@ -324,13 +324,29 @@ impl ModelPack {
                 .map_err(|error| format!("cannot read {}: {error}", labels_path.display()))?,
         )
         .map_err(|error| format!("cannot parse {}: {error}", labels_path.display()))?;
+        let mut non_string_label = None;
         let labels: Vec<String> = metadata
             .get("labels")
             .and_then(|value| value.as_array())
             .ok_or_else(|| format!("{} has no labels array", labels_path.display()))?
             .iter()
-            .filter_map(|value| value.as_str().map(str::to_owned))
+            .enumerate()
+            .filter_map(|(index, value)| match value.as_str() {
+                Some(label) => Some(label.to_owned()),
+                // A non-string label used to be dropped, so the model's class
+                // index no longer matched the label list. Refuse it instead.
+                None => {
+                    non_string_label = Some(index);
+                    None
+                }
+            })
             .collect();
+        if let Some(index) = non_string_label {
+            return Err(format!(
+                "labels[{index}] in {} is not a string",
+                labels_path.display()
+            ));
+        }
         if labels.is_empty() {
             return Err(format!("{} has no labels", labels_path.display()));
         }
@@ -339,10 +355,20 @@ impl ModelPack {
             .and_then(|value| value.as_str())
             .unwrap_or_default()
             .to_owned();
-        let max_len = metadata
-            .get("max_len")
-            .and_then(|value| value.as_u64())
-            .unwrap_or(192) as usize;
+        // `as_u64` rejects `16.0`, `"16"`, `-5` and `null` by returning `None`,
+        // which then silently became the 192 default and skipped the range check.
+        let max_len = match metadata.get("max_len") {
+            None => 192,
+            Some(value) => match value.as_u64() {
+                Some(value) => value as usize,
+                None => {
+                    return Err(format!(
+                        "invalid max_len {value} in {}; expected an integer 3..=4096",
+                        labels_path.display()
+                    ))
+                }
+            },
+        };
         if !(3..=4096).contains(&max_len) {
             return Err(format!(
                 "invalid max_len {max_len} in {}; expected 3..=4096",
@@ -577,8 +603,18 @@ impl ModelPack {
     pub fn depparse(&self, text: &str) -> Result<Vec<Dependency>, String> {
         let tokens = WordTokenizer::tokenize(text);
         let words: Vec<&str> = tokens.iter().map(|token| token.text).collect();
-        let Some((ids, positions, kept, visited)) = self.encode_words(&words)? else {
+        if words.is_empty() {
             return Ok(Vec::new());
+        }
+        let Some((ids, positions, kept, visited)) = self.encode_words(&words)? else {
+            // `encode_words` returns `None` when it encoded none of the words,
+            // which for a non-empty input means the first word alone is longer
+            // than `max_len`. That used to come back as an empty parse and exit
+            // 0, while the same word in second position was a hard error.
+            return Err(format!(
+                "no word in the input fits the model's {}-piece limit; split the text into shorter sentences",
+                self.max_len
+            ));
         };
         if visited < words.len() {
             return Err(format!(
@@ -902,6 +938,59 @@ mod tests {
     }
 
     #[test]
+    fn a_max_len_that_is_not_an_integer_is_refused() {
+        // `as_u64` returns `None` for `16.0`, `"16"`, `-5` and `null`, so each
+        // silently became the 192 default and skipped the 3..=4096 check.
+        let source =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/tiny-pack");
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("rishe-bad-max-len");
+        for value in ["16.0", "\"16\"", "-5", "null"] {
+            std::fs::create_dir_all(&dir).unwrap();
+            for entry in ["model.onnx", "tokenizer.json"] {
+                std::fs::copy(source.join(entry), dir.join(entry)).unwrap();
+            }
+            std::fs::write(
+                dir.join("labels.json"),
+                format!(r#"{{"task":"pos","labels":["A","B","C"],"max_len":{value}}}"#),
+            )
+            .unwrap();
+            let error = match ModelPack::load(&dir) {
+                Ok(_) => panic!("max_len {value} must be refused"),
+                Err(error) => error,
+            };
+            assert!(error.contains("max_len"), "{value}: {error}");
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_label_that_is_not_a_string_is_refused() {
+        // A non-string label was dropped, which shifted every later class index.
+        let source =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/tiny-pack");
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("rishe-bad-label-type");
+        std::fs::create_dir_all(&dir).unwrap();
+        for entry in ["model.onnx", "tokenizer.json"] {
+            std::fs::copy(source.join(entry), dir.join(entry)).unwrap();
+        }
+        std::fs::write(
+            dir.join("labels.json"),
+            r#"{"task":"pos","labels":["A",7,"C"],"max_len":16}"#,
+        )
+        .unwrap();
+        let error = match ModelPack::load(&dir) {
+            Ok(_) => panic!("a non-string label must be refused"),
+            Err(error) => error,
+        };
+        assert!(error.contains("labels[1]"), "{error}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
     fn a_pack_whose_labels_disagree_with_the_model_is_an_error() {
         // The model in the fixture emits 3 labels; declaring 20 must fail the call
         // instead of indexing a label the output does not have.
@@ -991,6 +1080,41 @@ mod tests {
         assert!(tagged.iter().all(|(word, _)| word == "a"));
         // Alone it has nothing to report, so it is an error, not an empty list.
         assert!(pack.tags_from_words(&[long.as_str()]).is_err());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_first_word_that_cannot_be_encoded_is_an_error_not_an_empty_parse() {
+        // `depparse` turned the `encode_words` `None` into an empty parse and exit
+        // 0, while the same word in second position was a hard error.
+        let source =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/tiny-pack");
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("rishe-depparse-long-word");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::copy(source.join("model.onnx"), dir.join("model.onnx")).unwrap();
+        std::fs::write(
+            dir.join("tokenizer.json"),
+            r###"{"version":"1.0","truncation":null,"padding":null,"added_tokens":[],"normalizer":null,"pre_tokenizer":{"type":"Whitespace"},"post_processor":null,"decoder":null,"model":{"type":"WordPiece","vocab":{"[PAD]":0,"[UNK]":1,"[CLS]":2,"[SEP]":3,"a":4,"##a":5},"unk_token":"[UNK]","continuing_subword_prefix":"##","max_input_chars_per_word":100}}"###,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("labels.json"),
+            r#"{"task":"depparse","labels":["root"],"max_len":8}"#,
+        )
+        .unwrap();
+
+        let pack = ModelPack::load(&dir).expect("the pack itself loads");
+        let long = "a".repeat(7);
+        let text = format!("{long} a");
+        let error = match pack.depparse(&text) {
+            Ok(parse) => panic!("an unencodable first word must be an error, got {parse:?}"),
+            Err(error) => error,
+        };
+        assert!(error.contains("no word in the input fits"), "{error}");
+        // An empty input is still an empty parse, not an error.
+        assert!(pack.depparse("").expect("empty input").is_empty());
         std::fs::remove_dir_all(&dir).ok();
     }
 

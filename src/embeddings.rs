@@ -168,11 +168,17 @@ fn row_norms(vectors: &[f32], dim: usize) -> Result<Vec<f32>, String> {
 
 /// Sorted, duplicate-free FST over the vocabulary, mapping a word to its row.
 ///
-/// A file may list a word twice, so the first row wins; the index is the only
-/// thing the callers share.
+/// A file may list a word twice; the first row wins, so the order is
+/// `(word, row)` rather than `word`. `sort_unstable_by` on the word alone left
+/// the winner up to the sort implementation, which made the result depend on
+/// the file size.
 fn build_index(words: &[Box<str>]) -> Result<Map<Vec<u8>>, String> {
     let mut order: Vec<u32> = (0..words.len() as u32).collect();
-    order.sort_unstable_by(|&a, &b| words[a as usize].cmp(&words[b as usize]));
+    order.sort_unstable_by(|&a, &b| {
+        words[a as usize]
+            .cmp(&words[b as usize])
+            .then_with(|| a.cmp(&b))
+    });
 
     let mut builder = MapBuilder::new(Vec::<u8>::with_capacity(words.len() * 16))
         .map_err(|error| format!("fst error: {error}"))?;
@@ -515,6 +521,7 @@ impl Embeddings {
             .try_reserve(vocab.min(budget))
             .map_err(|_| "embedding file is too large for available memory".to_string())?;
         let mut scratch = vec![0_u8; u16::MAX as usize + 1];
+        let mut vocabulary_len = 0_u64;
         for _ in 0..vocab {
             let mut length = [0_u8; 2];
             file.read_exact(&mut length)
@@ -522,10 +529,22 @@ impl Embeddings {
             let length = u16::from_le_bytes(length) as usize;
             file.read_exact(&mut scratch[..length])
                 .map_err(|error| format!("read error: {error}"))?;
+            vocabulary_len += 2 + length as u64;
             let word = std::str::from_utf8(&scratch[..length]).map_err(|_| {
                 "embedding file contains a word that is not valid UTF-8".to_string()
             })?;
             words.push(word.into());
+        }
+
+        // The header promises `vocab * dim` values. Without this cross-check a
+        // shrunken count decoded only part of the payload and left the rest as
+        // trailing bytes, so a corrupt file loaded as a smaller model instead of
+        // being refused.
+        let expected_len = HEADER_LEN as u64 + vocabulary_len + (count as u64) * width as u64;
+        if file_len != expected_len {
+            return Err(format!(
+                "embedding file is {file_len} bytes but its header describes {expected_len}"
+            ));
         }
 
         let mut vectors: Vec<f32> = Vec::new();
@@ -610,12 +629,32 @@ impl Embeddings {
         if first_norm == 0.0 || second_norm == 0.0 {
             return Some(0.0);
         }
-        Some(cosine(
+        // The same scorer `most_similar` uses, so the two surfaces agree on one
+        // pair; before this they differed by up to 2x on the same vectors.
+        Some(self.score(first_index, second_index))
+    }
+
+    /// Cosine similarity of two rows, both of which are known to exist.
+    ///
+    /// One f64 divide per pair; the sum is the only hot loop, so it runs in f32
+    /// with eight accumulators to let the compiler vectorize. A row of 1e20
+    /// squares to infinity in `f32`, so a non-finite result falls back to the
+    /// f64 accumulation that cannot overflow.
+    fn score(&self, first_index: u64, second_index: u64) -> f32 {
+        let first_norm = self.norms[first_index as usize];
+        let second_norm = self.norms[second_index as usize];
+        let product = f64::from(first_norm) * f64::from(second_norm);
+        let score =
+            (f64::from(dot8(self.row(first_index), self.row(second_index))) / product) as f32;
+        if score.is_finite() {
+            return score;
+        }
+        cosine(
             first_norm,
             self.row(first_index),
             second_norm,
             self.row(second_index),
-        ))
+        )
     }
 
     /// Mean of the vectors of all in-vocabulary tokens. OOV tokens are skipped.
@@ -676,7 +715,6 @@ impl Embeddings {
 
         // ponytail: linear scan over the vocabulary; fine for interactive use,
         // move to an ANN index if this ever lands on a request hot path.
-        let query = self.row(query_index);
         let mut heap: BinaryHeap<std::cmp::Reverse<Candidate<'_>>> =
             BinaryHeap::with_capacity(n + 1);
         for (index, candidate) in self.words.iter().enumerate() {
@@ -685,16 +723,7 @@ impl Embeddings {
             {
                 continue;
             }
-            // One f64 divide per candidate; the sum is the only hot loop, so it
-            // runs in f32 with eight accumulators to let the compiler vectorize.
-            // A row of 1e20 squares to infinity in `f32`, so a non-finite result
-            // falls back to the f64 accumulation that cannot overflow.
-            let row = self.row(index as u64);
-            let product = f64::from(query_norm) * f64::from(self.norms[index]);
-            let mut score = (f64::from(dot8(query, row)) / product) as f32;
-            if !score.is_finite() {
-                score = cosine(query_norm, query, self.norms[index], row);
-            }
+            let score = self.score(query_index, index as u64);
             let candidate = Candidate {
                 score,
                 word: candidate.as_ref(),
@@ -713,7 +742,13 @@ impl Embeddings {
             .into_iter()
             .map(|std::cmp::Reverse(candidate)| (candidate.word.to_owned(), candidate.score))
             .collect();
-        out.sort_unstable_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(Ordering::Equal));
+        // Equal scores must come back in a fixed order, or two runs of the same
+        // query disagree about a near-tie that differs only in rounding.
+        out.sort_unstable_by(|a, b| {
+            b.1.partial_cmp(&a.1)
+                .unwrap_or(Ordering::Equal)
+                .then_with(|| a.0.cmp(&b.0))
+        });
         out
     }
 }
@@ -994,6 +1029,61 @@ mod tests {
             "{nearest:?}"
         );
         assert_eq!(nearest.len(), 3);
+    }
+
+    #[test]
+    fn a_duplicate_vocabulary_row_always_resolves_to_the_first_one() {
+        // The index sorted by word alone and `sort_unstable_by` may order equal
+        // keys either way, so the winning row depended on the file size.
+        let path = scratch("embeddings_duplicate_first.vec");
+        std::fs::write(&path, "4 2\nکتاب 1 0\nخانه 0 1\nکتاب 0.5 0.5\nآب 1 1\n").unwrap();
+        let embeddings = Embeddings::load(&path).unwrap();
+        std::fs::remove_file(&path).ok();
+        assert_eq!(embeddings.vector("کتاب"), Some(&[1.0_f32, 0.0][..]));
+    }
+
+    #[test]
+    fn similarity_agrees_with_most_similar_on_the_same_pair() {
+        // `most_similar` scored with the vectorized f32 dot product and
+        // `similarity` with an f64 loop, so one pair had two answers.
+        let path = scratch("embeddings_one_score.vec");
+        std::fs::write(&path, TINY).unwrap();
+        let embeddings = Embeddings::load(&path).unwrap();
+        std::fs::remove_file(&path).ok();
+
+        for (word, score) in embeddings.most_similar("کتاب", 10) {
+            let direct = embeddings.similarity("کتاب", &word).expect("known pair");
+            assert!((score - direct).abs() < 1e-6, "{word}: {score} vs {direct}");
+        }
+    }
+
+    #[test]
+    fn a_shrunken_vocab_count_in_the_header_is_refused() {
+        // The reader decoded `count` values and ignored the rest, so a header
+        // claiming fewer words loaded the leading bytes as a smaller model.
+        let source = scratch("embeddings_header.vec");
+        let binary = scratch("embeddings_header.rvec");
+        std::fs::remove_file(&source).ok();
+        std::fs::remove_file(&binary).ok();
+        std::fs::write(&source, "2 3\nکتاب 1 0 0\nخانه 0 1 0\n").unwrap();
+        let embeddings = Embeddings::load(&source).unwrap();
+        embeddings.save(&binary, DType::F32).unwrap();
+        std::fs::remove_file(&source).ok();
+
+        let mut bytes = std::fs::read(&binary).unwrap();
+        // The vocab count is the last four header bytes; claim one word instead
+        // of two and leave the payload untouched.
+        bytes[11..15].copy_from_slice(&1_u32.to_le_bytes());
+        std::fs::write(&binary, &bytes).unwrap();
+        let error = match Embeddings::load(&binary) {
+            Ok(_) => panic!("a short count must be refused"),
+            Err(error) => error,
+        };
+        std::fs::remove_file(&binary).ok();
+        assert!(
+            error.contains("but its header describes"),
+            "unexpected error: {error}"
+        );
     }
 
     #[test]
