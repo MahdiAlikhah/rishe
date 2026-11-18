@@ -119,6 +119,28 @@ class CompatTest(unittest.TestCase):
         # A generous bound: the per-character version took seconds at this size.
         self.assertLess(time.perf_counter() - start, 2.0)
 
+    def test_the_per_stage_normalizer_methods(self):
+        """Each is one named stage of `normalize`; none had a test."""
+        normalizer = Normalizer()
+        # spacing: collapse the gap, and join a split plural with a ZWNJ.
+        self.assertEqual(normalizer.correct_spacing("می  روم"), "می‌روم")
+        self.assertEqual(normalizer.correct_spacing("کتاب ها"), "کتاب‌ها")
+        # repeated_letters: three of a letter is a typo, two may not be.
+        self.assertEqual(normalizer.decrease_repeated_chars("پوووول"), "پوول")
+        self.assertEqual(normalizer.decrease_repeated_chars("سسسلام"), "سسلام")
+        # punctuation: Persian shapes for the Latin marks.
+        self.assertEqual(normalizer.persian_style("سلام,دنیا"), "سلام،دنیا")
+        self.assertEqual(normalizer.persian_style("a;b"), "a؛b")
+        # digits: ASCII to Persian, and Persian left alone.
+        self.assertEqual(normalizer.persian_number("123"), "۱۲۳")
+        self.assertEqual(normalizer.persian_number("۴۵۶"), "۴۵۶")
+        # alphabet + arabic_unicode: the two Arabic letters Persian spells differently.
+        self.assertEqual(normalizer.unicodes_replacement("ك"), "ک")
+        self.assertEqual(normalizer.unicodes_replacement("ي"), "ی")
+        # token_spacing: re-joins what word/verbal spacing split apart.
+        self.assertEqual(normalizer.token_spacing(["کتاب", "ها"]), ["کتاب‌ها"])
+        self.assertEqual(normalizer.token_spacing(["می", "روم"]), ["می‌روم"])
+
 
 if __name__ == "__main__":
     unittest.main()
