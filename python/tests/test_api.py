@@ -118,6 +118,27 @@ class FrontDoorTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             rishe.keywords("کتاب", n=0)
 
+    def test_an_out_of_range_count_is_a_value_error(self):
+        """`docs/errors.md` promises ValueError for a bad argument.
+
+        The bindings took `usize`, so Python's own conversion raised
+        `OverflowError` — never documented, and not a `ValueError`, so
+        `except ValueError` around a bad count did not fire.
+        """
+        pipe = rishe.pipeline()
+        for call in (
+            lambda: pipe.rake("کتاب خوب", -1, 3),
+            lambda: pipe.rake("کتاب خوب", 2**70, 3),
+            lambda: pipe.textrank("کتاب خوب", -1),
+            lambda: pipe.ngrams("کتاب خوب", -1, 2),
+            lambda: pipe.ngrams("کتاب خوب", 1, 2**70),
+            lambda: pipe.spell_suggest("کتاب", -1),
+        ):
+            with self.assertRaises(ValueError):
+                call()
+        # The same arguments at a sane value still work.
+        self.assertEqual(pipe.ngrams("کتاب خوب", 1, 1), ["کتاب", "خوب"])
+
 class RemovedAliasesTest(unittest.TestCase):
     """The 0.11 aliases are gone in 1.0.0: calling one is an AttributeError."""
 

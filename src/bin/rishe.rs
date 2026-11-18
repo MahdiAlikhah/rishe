@@ -288,6 +288,14 @@ fn embedding_command(command: &str, options: &Options) -> Result<(), CliError> {
                 "similarity needs exactly two words".to_string(),
             ));
         }
+        // `--top 0` is a bad option, not a missing model: checking it after the
+        // load made the exit code depend on the cache, and the Python binary
+        // reports it as a usage error up front.
+        "similar" if options.top == 0 => {
+            return Err(CliError::Usage(
+                "--top must be a positive integer".to_string(),
+            ));
+        }
         _ => {}
     }
     let embeddings = load_embeddings(options.model.as_deref())?;
@@ -305,9 +313,6 @@ fn embedding_command(command: &str, options: &Options) -> Result<(), CliError> {
             }
         }
         "similar" => {
-            if options.top == 0 {
-                return Err(CliError::Runtime("--top must be at least 1".to_string()));
-            }
             let word = options.text[0].as_str();
             let neighbours = embeddings.most_similar(word, options.top);
             if neighbours.is_empty() {

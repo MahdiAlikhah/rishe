@@ -309,6 +309,16 @@ class ExitCodeContractTest(unittest.TestCase):
             2, "similar", "کتاب", "--top", "9" * 25, "--model", str(MODEL)
         )
 
+    def test_a_bad_top_is_a_usage_error_even_with_no_model_cached(self):
+        """The check ran after the model load, so its exit code depended on the cache.
+
+        `--top 0` and `--top -1` exited 1 here (no model cached) and 2 in the Rust
+        binary; only `9 * 25` happened to agree.
+        """
+        missing = str(Path(tempfile.gettempdir()) / "rishe-no-such-model.vec")
+        for top in ("0", "-1", "9" * 25):
+            self.assert_exit(2, "similar", "کتاب", "--top", top, "--model", missing)
+
     def test_unparseable_date_exits_1(self):
         self.assert_exit(1, "date", "این یک تاریخ نیست")
 

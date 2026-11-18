@@ -433,6 +433,16 @@ def _load_embeddings(name: Optional[str]) -> Embeddings:
 
 
 def _embedding(args) -> int:
+    if args.command == "similar":
+        # Rust parses `--top` as a machine `usize`, so a value past that is the
+        # same usage error there; here the int is unbounded, and handing it to
+        # Rust raised OverflowError with a traceback instead of exit 2.
+        # Checked before the model load: a bad option is a usage error whether or
+        # not the model happens to be cached.
+        if args.top < 1 or args.top > sys.maxsize:
+            print("--top must be a positive integer", file=sys.stderr)
+            return 2
+
     try:
         vectors = _load_embeddings(args.model)
     except (OSError, ValueError) as error:
@@ -453,12 +463,6 @@ def _embedding(args) -> int:
         return 0
 
     if args.command == "similar":
-        # Rust parses `--top` as a machine `usize`, so a value past that is the
-        # same usage error there; here the int is unbounded, and handing it to
-        # Rust raised OverflowError with a traceback instead of exit 2.
-        if args.top < 1 or args.top > sys.maxsize:
-            print("--top must be a positive integer", file=sys.stderr)
-            return 2
         neighbours = vectors.most_similar(args.word, args.top)
         if not neighbours:
             print(f"{args.word!r} is not in the vocabulary", file=sys.stderr)

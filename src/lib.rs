@@ -633,6 +633,22 @@ mod py_bindings {
     use pyo3::prelude::*;
     use std::path::PathBuf;
 
+    /// Read a count argument, mapping a value that is not a usable `usize` to
+    /// `ValueError` as `docs/errors.md` promises.
+    ///
+    /// Declaring the parameter `usize` made Python's own conversion raise
+    /// `OverflowError` for a negative count, which the contract never mentions and
+    /// which is not a `ValueError`, so `except ValueError` around a bad count did
+    /// not fire. `i128` carries every count a caller could plausibly pass; a value
+    /// past even that is still `OverflowError` from the conversion itself.
+    fn count(value: i128, name: &str) -> PyResult<usize> {
+        usize::try_from(value).map_err(|_| {
+            pyo3::exceptions::PyValueError::new_err(format!(
+                "{name} must be a non-negative integer that fits in a usize, got {value}"
+            ))
+        })
+    }
+
     // The Python class is `dates::Jalali` itself (see `dates.rs`), so these
     // methods are the only place the two views meet: `to_gregorian` and
     // `from_gregorian` keep their Rust signatures and are renamed for Python.
@@ -982,9 +998,10 @@ mod py_bindings {
             &self,
             py: Python<'_>,
             text: &str,
-            min_n: usize,
-            max_n: usize,
+            min_n: i128,
+            max_n: i128,
         ) -> PyResult<Vec<String>> {
+            let (min_n, max_n) = (count(min_n, "min_n")?, count(max_n, "max_n")?);
             py.allow_threads(|| self.ngrams(text, min_n, max_n))
                 .map_err(pyo3::exceptions::PyValueError::new_err)
         }
@@ -995,10 +1012,11 @@ mod py_bindings {
             &self,
             py: Python<'_>,
             text: &str,
-            n: usize,
-            max_length: usize,
-        ) -> Vec<String> {
-            py.allow_threads(|| self.rake(text, n, max_length))
+            n: i128,
+            max_length: i128,
+        ) -> PyResult<Vec<String>> {
+            let (n, max_length) = (count(n, "n")?, count(max_length, "max_length")?);
+            Ok(py.allow_threads(|| self.rake(text, n, max_length)))
         }
 
         /// Python `textrank`: top `n` keywords, normalized first.
@@ -1007,11 +1025,13 @@ mod py_bindings {
             &self,
             py: Python<'_>,
             text: &str,
-            n: usize,
-            max_length: usize,
-            window: usize,
-        ) -> Vec<String> {
-            py.allow_threads(|| self.textrank(text, n, max_length, window))
+            n: i128,
+            max_length: i128,
+            window: i128,
+        ) -> PyResult<Vec<String>> {
+            let (n, max_length) = (count(n, "n")?, count(max_length, "max_length")?);
+            let window = count(window, "window")?;
+            Ok(py.allow_threads(|| self.textrank(text, n, max_length, window)))
         }
 
         /// Python `keyboard_noise`: default options with the optional `seed`.
@@ -1124,8 +1144,8 @@ mod py_bindings {
 
         /// Python `spell_suggest`: up to `n` candidates.
         #[pyo3(name = "spell_suggest", signature = (word, n=5))]
-        pub fn py_spell_suggest(&self, word: &str, n: usize) -> Vec<String> {
-            self.spell_suggest(word, n)
+        pub fn py_spell_suggest(&self, word: &str, n: i128) -> PyResult<Vec<String>> {
+            Ok(self.spell_suggest(word, count(n, "n")?))
         }
 
         /// Python `spell_correct`: normalizes then corrects the text.
@@ -1245,8 +1265,14 @@ mod py_bindings {
 
         /// Python `most_similar`: up to `n` neighbours by descending cosine similarity.
         #[pyo3(name = "most_similar", signature = (word, n=5))]
-        pub fn py_most_similar(&self, py: Python<'_>, word: &str, n: usize) -> Vec<(String, f32)> {
-            py.allow_threads(|| self.most_similar(word, n))
+        pub fn py_most_similar(
+            &self,
+            py: Python<'_>,
+            word: &str,
+            n: i128,
+        ) -> PyResult<Vec<(String, f32)>> {
+            let n = count(n, "n")?;
+            Ok(py.allow_threads(|| self.most_similar(word, n)))
         }
     }
 
