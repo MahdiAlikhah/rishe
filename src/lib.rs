@@ -1727,6 +1727,36 @@ mod tests {
             })
             .collect();
         assert_eq!(nlp.tokenize_char_spans(text), expected);
+
+        // The walk assumes the tokenizer hands back rising, char-aligned byte
+        // offsets: it slices 	ext[byte_end..token.start], which panics on a
+        // repeat, a reversal or a mid-character index. Random-ish input over the
+        // characters that tokenize specially is the cheap way to hold that.
+        let mut seed = 0x2545_f491_4f6c_dd1du64;
+        let alphabet: Vec<char> =
+            "ابپتثجچدذرزژسشصضطظعغفقکگلمنوهیaZ09 .,!?-()[]{}«»\u{200C}\u{200D}\u{00A0}\t\n\u{0640}😊۰①".chars().collect();
+        for _ in 0..500 {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            let len = (seed >> 33) as usize % 24;
+            let mut sample = String::new();
+            for _ in 0..len {
+                seed = seed
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
+                sample.push(alphabet[(seed >> 33) as usize % alphabet.len()]);
+            }
+            let chars: Vec<char> = sample.chars().collect();
+            for (token, start, end) in nlp.tokenize_char_spans(&sample) {
+                let slice: String = chars
+                    .get(start..end)
+                    .unwrap_or_else(|| panic!("span {start}..{end} outside {sample:?}"))
+                    .iter()
+                    .collect();
+                assert_eq!(slice, token, "{sample:?}");
+            }
+        }
     }
 
     #[test]

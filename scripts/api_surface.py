@@ -41,10 +41,26 @@ def impl_type(text):
 
 def rust_items():
     items = []
-    for path in sorted((ROOT / "src").glob("*.rs")):
-        module = "lib" if path.name == "lib.rs" else path.stem
+    # `rglob`, not `glob`: `src/*.rs` only ever saw the top level, so a module in
+    # `src/foo/bar.rs` would have been missing from the snapshot with no warning —
+    # the one drift this file exists to catch. `src/bin` stays out: it is the
+    # binary's own code, not the crate's API.
+    for path in sorted((ROOT / "src").rglob("*.rs")):
+        parts = path.relative_to(ROOT / "src").parts[:-1]
+        if "bin" in parts:
+            continue
+        # `src/foo/mod.rs` is module `foo`, not `mod`; `src/foo/bar.rs` is
+        # `foo::bar` only if `foo` declares it, and the file name is the best
+        # scope this scan can give it.
+        module = "::".join(parts) if parts else ""
+        if path.name == "lib.rs":
+            module = "lib"
+        elif path.stem != "mod":
+            module = "::".join([*parts, path.stem]) if parts else path.stem
         stack = []  # (indent, path, hidden): impl and mod scopes still open
-        for line in path.read_text(encoding="utf-8").splitlines():
+        # `utf-8-sig`: a file saved by a Windows editor can carry a BOM, and the
+        # first `pub` line then read as `\ufeffpub`, silently dropping one item.
+        for line in path.read_text(encoding="utf-8-sig").splitlines():
             text = line.strip()
             if not text or text.startswith(("//", "#[")):
                 continue

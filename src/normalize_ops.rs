@@ -527,11 +527,14 @@ fn replace_at_word_end<'a>(input: &'a str, needle: &str, replacement: &str) -> C
 
     for (idx, _) in input.match_indices(needle) {
         let after = idx + needle.len();
+        // Punctuation ends a word too: `خانه‌ی.` used to stay unconverted while
+        // `خانه‌ی ما` became `خانۀ ما`, so the same word got two spellings
+        // depending on what followed it.
         let boundary = after == input.len()
             || input[after..]
                 .chars()
                 .next()
-                .is_some_and(char::is_whitespace);
+                .is_some_and(|ch| ch.is_whitespace() || ALL_PUNCT.contains(ch));
         if boundary {
             let b = out.get_or_insert_with(|| String::with_capacity(input.len() + 4));
             b.push_str(&input[last..idx]);
@@ -659,8 +662,10 @@ fn insert_space_after_singles(chars: Vec<char>) -> Vec<char> {
     let mut out = Vec::with_capacity(chars.len() + 8);
     for (i, ch) in chars.iter().copied().enumerate() {
         out.push(ch);
-        let single_at_start = i == 0 && SINGLE_PUNCT.contains(ch);
-        if !single_at_start && (SINGLE_PUNCT.contains(ch) || CLOSER_PUNCT.contains(ch)) {
+        // A leading `،`/`…` separates from the word after it like any other. It
+        // was exempt at index 0, so `، دنیا` became `،دنیا` — the punctuation was
+        // glued to the next word, the opposite of the rule this stage enforces.
+        if SINGLE_PUNCT.contains(ch) || CLOSER_PUNCT.contains(ch) {
             if let Some(&next) = chars.get(i + 1) {
                 if !next.is_whitespace()
                     && !SINGLE_PUNCT.contains(next)
@@ -1372,6 +1377,12 @@ mod tests {
         // `خانۀی`, which is neither spelling.
         assert_eq!(ya("خانه‌یی", YaStyle::Standard), "خانه‌یی");
         assert_eq!(ya("خانه‌ی", YaStyle::Standard), "خانۀ");
+        // Punctuation ends a word as well as a space, so the ending is converted
+        // before a full stop too; it used to stay خانه‌ی. while خانه‌ی ما
+        // became خانۀ ما.
+        assert_eq!(ya("خانه‌ی.", YaStyle::Standard), "خانۀ.");
+        assert_eq!(ya("خانه‌ی،", YaStyle::Standard), "خانۀ،");
+        assert_eq!(ya("خانۀ.", YaStyle::Joda), "خانه‌ی.");
     }
 
     #[test]
@@ -1413,6 +1424,10 @@ mod tests {
         assert_eq!(punctuation_spacing("سلام(دنیا)"), "سلام (دنیا)");
         assert_eq!(punctuation_spacing("سلام ، دنیا ."), "سلام، دنیا.");
         assert_eq!(punctuation_spacing("است!نوشته"), "است! نوشته");
+        // Punctuation at the very start of the text separated from the word after
+        // it too; it used to be exempt, so ، دنیا came back as ،دنیا.
+        assert_eq!(punctuation_spacing("، دنیا"), "، دنیا");
+        assert_eq!(punctuation_spacing("… و بعد"), "… و بعد");
     }
 
     #[test]

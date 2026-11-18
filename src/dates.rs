@@ -148,6 +148,12 @@ impl Jalali {
     }
 
     /// `۱۴۰۲/۰۵/۱۲`
+    /// The Persian-digit form parse reads back, for years it accepts.
+    ///
+    /// A year of 1700 or more is written fine but not read back: parse treats a
+    /// four-digit numeric year that large as Gregorian, so ۱۷۰۰/۰۱/۰۱ is
+    /// deliberately None there. Use [Jalali::format_persian], which names the
+    /// month, for such a date.
     pub fn format_numeric(self) -> String {
         utf8_digits(&format!(
             "{:04}/{:02}/{:02}",

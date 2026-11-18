@@ -13,11 +13,14 @@ fn is_keyword_word(word: &str) -> bool {
 }
 
 /// Top `top_n` RAKE phrases of at most `max_length` words, ordered by word degree score.
+///
+/// A `top_n` of 0 asks for no phrases and a `max_length` of 0 allows no words, so
+/// both return nothing. `max_length` used to be clamped to 1, which answered a
+/// request for "at most 0 words" with one-word phrases.
 pub fn rake(text: &str, top_n: usize, max_length: usize) -> Vec<String> {
-    if top_n == 0 {
+    if top_n == 0 || max_length == 0 {
         return Vec::new();
     }
-    let max_length = max_length.max(1);
     let phrases = rake_phrases(text);
 
     let mut frequency: HashMap<&str, usize> = HashMap::new();
@@ -90,12 +93,11 @@ fn rake_phrases(text: &str) -> Vec<Vec<String>> {
 }
 
 /// Top `top_n` TextRank phrases of at most `max_length` words over a
-/// `window`-word co-occurrence graph.
+/// `window`-word co-occurrence graph. A 0 for either means no phrases.
 pub fn textrank(text: &str, top_n: usize, max_length: usize, window: usize) -> Vec<String> {
-    if top_n == 0 {
+    if top_n == 0 || max_length == 0 {
         return Vec::new();
     }
-    let max_length = max_length.max(1);
     let sentences = textrank_sentences(text);
     let graph = build_graph(&sentences, window);
     let scores = pagerank(&graph);
@@ -284,5 +286,13 @@ mod tests {
         assert!(textrank("", 5, 3, 2).is_empty());
         assert!(rake(TEXT, 0, 3).is_empty());
         assert!(textrank(TEXT, 0, 3, 2).is_empty());
+    }
+
+    #[test]
+    fn a_zero_max_length_asks_for_no_words() {
+        // It was clamped to 1, so "phrases of at most 0 words" answered with
+        // one-word phrases — a wrong answer rather than none.
+        assert!(rake(TEXT, 5, 0).is_empty());
+        assert!(textrank(TEXT, 5, 0, 2).is_empty());
     }
 }

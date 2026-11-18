@@ -40,6 +40,16 @@ class RegistryParityTest(unittest.TestCase):
         self.assertEqual(manifest.group(1), hub.PACK_MANIFEST_SHA256)
         self.assertEqual(tuple(required), hub.PACK_REQUIRED)
 
+    def test_the_manifest_schema_matches(self):
+        """Both readers must accept the same index version.
+
+        The version is the contract between an older client and a newer
+        `manifest.json`; if the two constants drift, one of them misreads an
+        index the other one refuses.
+        """
+        rust = re.search(r"const MANIFEST_SCHEMA: u64 = (\d+);", RUST).group(1)
+        self.assertEqual(int(rust), hub.MANIFEST_SCHEMA)
+
 
 if __name__ == "__main__":
     unittest.main()
