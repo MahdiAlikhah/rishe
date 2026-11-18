@@ -23,11 +23,12 @@ for lo, hi in ranges:
         mapped = "".join(final.get(c, c) for c in norm)
         if not mapped.strip() or any(c.isspace() for c in mapped):
             continue
-        if any(unicodedata.category(c)[0] != "L" for c in mapped):
-            # A diacritic-only entry is still worth keeping: it lets the
-            # normalizer's `strip_diacritics` stage see the mark it carries.
-            if not all(unicodedata.category(c) == "Mn" for c in mapped):
-                continue
+        # A letter plus its marks is one character, not two: `ذٰ` is
+        # `ذ` with a superscript alef and `اً` is `ا` with a fathatan. Requiring
+        # every char to be a letter dropped those, and requiring a pure mark
+        # dropped all but the harakat.
+        if any(unicodedata.category(c)[0] not in "LM" for c in mapped):
+            continue
         entries.append((cp, mapped))
 
 entries.sort()

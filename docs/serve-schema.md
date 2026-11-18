@@ -157,10 +157,19 @@ Request fields:
 | `maskers` | array of strings | maskers to apply, in order; `stages` is still accepted for 0.x clients |
 | `mask_token` | string | replacement string for every masker |
 
-When `maskers` is omitted the process default is used (`--maskers`, otherwise all
-maskers). When `mask_token` is omitted the process default is used (`--mask-token`,
-otherwise each masker's own default). A `maskers` value that is not an array is
-ignored, and non-string entries inside it are dropped, in both implementations.
+Order matters, and it is the caller's to get right. A masker only sees a string,
+so a later masker can consume what an earlier one wrote: `["url","non_persian"]`
+keeps `<URL>`, because `url` shields its placeholder for the rest of the chain,
+but `["non_persian","url"]` returns `به ://. برو` — `non_persian` deleted the URL's
+letters and left the punctuation, so `url` had nothing to match. The default
+order is the safe one; put `url` and `email` before the maskers that delete
+characters.
+
+When `maskers` is omitted the process default is used (`--maskers`, otherwise
+`DEFAULT_MASKERS` — every masker except `stopwords` and `offensive`). When
+`mask_token` is omitted the process default is used (`--mask-token`, otherwise
+each masker's own default). A `maskers` value that is not an array is ignored,
+and non-string entries inside it are dropped, in both implementations.
 
 ```json
 {"command":"mask","text":"info@a.co","maskers":["email"]}

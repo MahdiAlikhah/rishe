@@ -370,6 +370,31 @@ mod tests {
     }
 
     #[test]
+    fn a_letter_plus_marks_ligature_decomposes() {
+        // These decompose to a letter plus a combining mark (`ذٰ` is `ذ` with a
+        // superscript alef), so the generator's letter-only filter dropped them.
+        // `alphabet_char` covers some as a fallback, which hid the rest: `ﱜ`,
+        // `ﲐ` and `ﳙ` survived normalization verbatim.
+        let normalizer = Normalizer::new(NormalizerConfig::default());
+        for (form, letter) in [
+            ("\u{FC5B}", "\u{0630}"),
+            ("\u{FC5C}", "\u{0631}"),
+            // Alef maksura maps to the Persian `ی`, like the standalone character.
+            ("\u{FC5D}", "\u{06CC}"),
+            ("\u{FC90}", "\u{06CC}"),
+            ("\u{FCD9}", "\u{0647}"),
+            ("\u{FD3C}", "\u{0627}"),
+            ("\u{FD3D}", "\u{0627}"),
+        ] {
+            assert_eq!(
+                normalizer.normalize(form),
+                letter,
+                "{form:?} should become {letter:?} with the mark stripped"
+            );
+        }
+    }
+
+    #[test]
     fn an_isolated_haraka_is_seen_by_strip_diacritics() {
         // `FE70`-`FE7F` decompose to a space or a tatweel plus a combining mark
         // (`ﹰ` is " ً"). The generator's letter-only filter dropped all sixteen,
