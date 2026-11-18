@@ -1,5 +1,6 @@
 use crate::normalize_ops::{is_persian_letter, is_punctuation};
 use crate::stopwords;
+use crate::utilities::word_boundary;
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder, MatchKind};
 use std::sync::OnceLock;
 
@@ -624,25 +625,6 @@ fn replace_words(text: &str, matcher: &AhoCorasick, mask: &str) -> String {
     }
     out.push_str(&text[last..]);
     finish(text, out)
-}
-
-// One predicate for the whole crate: a word ends at a character that is neither
-// a Persian letter nor ASCII alphanumeric. `استx` is not the stopword `است`, and
-// `کامپیوتر2` is not the offensive `کامپیوتر`.
-fn word_boundary(text: &str, start: usize, end: usize) -> bool {
-    let before = text[..start]
-        .chars()
-        .next_back()
-        .is_none_or(|ch| !is_word_char(ch));
-    let after = text[end..]
-        .chars()
-        .next()
-        .is_none_or(|ch| !is_word_char(ch));
-    before && after
-}
-
-fn is_word_char(ch: char) -> bool {
-    is_persian_letter(ch) || ch.is_ascii_alphanumeric()
 }
 
 /// Replace each digit with `mask`.

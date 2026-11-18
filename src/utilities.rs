@@ -297,7 +297,15 @@ pub fn persianize_suggest(text: &str) -> Vec<LoanwordMatch> {
     matches
 }
 
-fn word_boundary(text: &str, start: usize, end: usize) -> bool {
+/// Whether `text[start..end]` is a standalone word: neither neighbour continues it.
+///
+/// One predicate for the whole crate. `maskers` used to keep its own identical
+/// copy; two copies of a boundary rule drift, and these two had already been
+/// described differently in their comments while deciding the same inputs the
+/// same way. A word ends at a character that is neither a Persian letter nor
+/// ASCII alphanumeric, so `استx` is not the stopword `است` and `کامپیوتر2` is not
+/// the offensive `کامپیوتر`.
+pub(crate) fn word_boundary(text: &str, start: usize, end: usize) -> bool {
     let before = text[..start]
         .chars()
         .next_back()
