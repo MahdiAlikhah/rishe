@@ -64,6 +64,20 @@ jobs:
       - run: cargo check --locked
       - run: cargo check --locked --features python
 
+  # `models` pulls `tract`, which declares rust-version 1.91, so the `models`
+  # feature has a higher floor than the crate's own 1.88. That floor was
+  # documented in `docs/STABILITY.md` and `README.fa.md` claimed CI re-checked it
+  # on every push, but no job did.
+  msrv-models:
+    name: msrv models (1.91.0)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.91.0
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --locked --features models
+      - run: cargo check --locked --features python,models
+
   # Every declared feature combination must compile on its own.
   features:
     name: features
@@ -82,6 +96,9 @@ jobs:
       - run: cargo check --locked --features python
       - run: cargo check --locked --features models
       - run: cargo check --locked --features python,models
+      # `--no-default-features` was only `check`ed; the tests that compile under
+      # it were never run, so a `#[cfg(not(feature = "hub"))]` path could rot.
+      - run: cargo test --locked --no-default-features --lib
       - run: sudo apt-get update && sudo apt-get install -y python3-dev
       - run: cargo test --locked --features python --test py_binding_errors
 
@@ -286,18 +303,26 @@ jobs:
           path: ~/.cache/rishe
           key: rishe-packs-${{ hashFiles('python/rishe/hub.py') }}
       - run: python -m pip install --no-deps dist/*.whl
-      # Exports the three variables the skipped tests look for. The variables are
-      # then checked: a failed pull would leave them empty, the tests would skip
-      # again, and this job would pass green without testing anything. The pull
-      # writes to a file first because `eval "$(...)"` hides a nonzero exit.
+      - uses: dtolnay/rust-toolchain@stable
+      # Exports the variables the skipped tests look for, for both suites. They
+      # are then checked: a failed pull would leave them empty, the tests would
+      # skip again, and this job would pass green without testing anything. The
+      # pull writes to a file first because `eval "$(...)"` hides a nonzero exit.
       - run: |
           set -euo pipefail
           python scripts/pull_test_packs.py > "$RUNNER_TEMP/env.sh"
           . "$RUNNER_TEMP/env.sh"
-          for name in RISHE_TEST_PACK RISHE_TEST_DEPPARSE_PACK RISHE_TEST_EMBEDDINGS_PACK; do
+          for name in RISHE_TEST_PACK RISHE_TEST_DEPPARSE_PACK RISHE_TEST_EMBEDDINGS_PACK RISHE_DEPPARSE_PACK RISHE_EMBEDDINGS_PACK; do
             [ -n "${!name}" ] || { echo "$name is unset: the pull failed" >&2; exit 1; }
           done
           python -m unittest discover -s python/tests -v
+      # The Rust suite has its own env-gated pack tests (`models.rs`,
+      # `embeddings.rs`); before this they were never run in CI, only skipped.
+      # Both are named `*_loaded_pack`, so one filter runs them.
+      - run: |
+          set -euo pipefail
+          . "$RUNNER_TEMP/env.sh"
+          cargo test --locked --features models --lib -- loaded_pack
 
   wheels:
     name: wheel (${{ matrix.target }})
@@ -402,10 +427,23 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - uses: PyO3/maturin-action@v1
         with:
           command: sdist
           args: --out dist
+      # The sdist was built and published but never installed, so a missing file
+      # in the archive would only surface for the users who fall back to it.
+      - run: |
+          set -euo pipefail
+          python -m venv "$RUNNER_TEMP/sdist-venv"
+          . "$RUNNER_TEMP/sdist-venv/bin/activate"
+          pip install --upgrade pip
+          pip install --no-binary :all: dist/*.tar.gz
+          python -c "import rishe; print(rishe.normalize('مي كنم'))"
       - uses: actions/upload-artifact@v4
         with:
           name: sdist
@@ -421,7 +459,7 @@ jobs:
     # `gpu-features` is deliberately absent: cuda and metal are not in the
     # published wheel, so a GPU break must not block a release — it still fails
     # the run loudly.
-    needs: [rust, rust-models, msrv, features, python-tests, python-tests-windows, examples, wheels, wheel-smoke, sdist, docs, pack-tests]
+    needs: [rust, rust-models, msrv, msrv-models, features, python-tests, python-tests-windows, examples, wheels, wheel-smoke, sdist, docs, pack-tests]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
     permissions:
@@ -444,7 +482,7 @@ jobs:
           skip-existing: true
 
   publish-crate:
-    needs: [rust, rust-models, msrv, features, python-tests, python-tests-windows, examples, wheels, wheel-smoke, sdist, docs, pack-tests]
+    needs: [rust, rust-models, msrv, msrv-models, features, python-tests, python-tests-windows, examples, wheels, wheel-smoke, sdist, docs, pack-tests]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
     steps:

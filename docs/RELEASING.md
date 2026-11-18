@@ -46,17 +46,20 @@ cargo +1.88.0 check --locked --features python
 rustup toolchain install 1.91.0 --profile minimal
 cargo +1.91.0 check --locked --features python,models
 
-# Every declared feature combination must compile on its own.
+# Every declared feature combination must compile on its own, and the tests that
+# compile under `--no-default-features` must run, not only type-check.
 cargo check --locked --no-default-features
+cargo test --locked --no-default-features --lib
 cargo check --locked --features python
 cargo check --locked --features models
 cargo check --locked --features python,models
 
-# The GPU features are opt-in and nobody builds them by default, so check them
-# too. `metal` only resolves on macOS: tract declares `tract-metal` under
+# The GPU features are opt-in and nobody builds them by default, so build them
+# too: `check` never links, so a broken link config stays green. `metal` only
+# resolves on macOS: tract declares `tract-metal` under
 # `cfg(target_vendor = "apple")`, so on Linux the feature is a silent no-op.
-cargo check --locked --features cuda
-cargo check --locked --features metal    # macOS only
+cargo build --locked --features cuda
+cargo build --locked --features metal    # macOS only
 
 # Public docs must be warning-free.
 RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps --features python,models
@@ -158,17 +161,21 @@ python -m unittest discover -s python/tests -p "test_*.py" -v
    ```
 
 6. **Watch CI** until every job is green: `rust` (three OSes), `rust models`,
-   `msrv`, `features`, `gpu feature` (cuda and metal), `docs`, `examples`,
+   `msrv` (1.88: default and `python`) and `msrv models` (1.91), `features`,
+   `gpu feature` (cuda and metal), `docs`, `examples`,
    `pack tests`, `python tests` (3.9 – 3.14 on Linux, plus Windows), `wheel
    smoke` (installs and imports the Linux, macOS and Windows wheels), and the
    wheel and sdist artifacts. The Linux wheel is built once in `build wheel` and
    the test jobs install that artifact, so the same wheel is not compiled eight
    times.
-   `pack tests` downloads the real packs and runs the 12 tests the default suite
-   skips, so it is the only job that exercises ONNX inference; it runs on tags
-   and `workflow_dispatch` only, to keep pull requests cheap. The publish jobs
-   are tag-gated; they block on every gate except `gpu feature`, since cuda and
-   metal are not in the published wheel. A GPU break fails the run without
+   `pack tests` downloads the real packs and runs the 12 Python tests and the 2
+   Rust tests the default suites skip, so it is the only job that exercises ONNX
+   inference; it runs on tags and `workflow_dispatch` only, to keep pull requests
+   cheap. The `sdist` job installs its own archive, which is the path a user takes
+   when no wheel matches. The publish jobs
+   are tag-gated; they block on every gate except `gpu feature` and `audit`,
+   since cuda and metal are not in the published wheel and a transitive advisory
+   is not a reason to hold back a patch. A GPU break fails the run without
    stranding one registry on a version the other refused:
 
    ```bash

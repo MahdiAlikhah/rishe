@@ -122,8 +122,10 @@ prints the mean sentence vector (space-separated floats, or a JSON array with
 [Exit codes](#exit-codes).
 
 `rishe convert` rewrites a word2vec text file in Rishe's compact binary format.
-The format is auto-detected on load, so both files behave identically; `f16`
-halves the file size and changes a stored value by less than 0.1% relative.
+The format is auto-detected on load, so both files behave identically. `f16`
+stores each value in two bytes instead of four and changes a stored value by less
+than 0.1% relative; together with dropping the decimal text it took the published
+300-dimensional pack from 236 MB to 42 MB, about a sixth of the size.
 
 ```bash
 rishe convert model.vec model.rvec            # f16 by default

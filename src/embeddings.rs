@@ -1389,9 +1389,16 @@ mod tests {
 
     #[test]
     fn embedding_loaded_pack() {
-        let Ok(path) = std::env::var("RISHE_EMBEDDINGS_PACK") else {
+        // `pull_test_packs.py` exports this and `pack-tests` asserts it is set.
+        // A set-but-missing path is an error: a silent `return` made a mistyped
+        // variable name look like a passing test.
+        let Some(path) = std::env::var("RISHE_EMBEDDINGS_PACK").ok() else {
             return;
         };
+        assert!(
+            std::path::Path::new(&path).exists(),
+            "RISHE_EMBEDDINGS_PACK is set to {path:?}, which does not exist"
+        );
         let embeddings = Embeddings::load(&path).expect("load embedding pack");
         assert_eq!(embeddings.dim(), 300);
         assert!(embeddings.len() >= 30_000);

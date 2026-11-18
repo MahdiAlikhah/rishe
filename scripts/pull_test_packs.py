@@ -68,9 +68,14 @@ def main(argv):
     root = ROOT / ".test-packs"
     for name, task in hub.PACKS.items():
         link(hub.pull(name), root / task)
+    embeddings = hub.pull(EMBEDDING)
     print(f'export RISHE_TEST_PACK="{root}"')
     print(f'export RISHE_TEST_DEPPARSE_PACK="{root / "depparse"}"')
-    print(f'export RISHE_TEST_EMBEDDINGS_PACK="{hub.pull(EMBEDDING)}"')
+    print(f'export RISHE_TEST_EMBEDDINGS_PACK="{embeddings}"')
+    # The Rust tests read their own names, and a mismatch silently skipped them:
+    # `models.rs` and `embeddings.rs` looked for these and never found them.
+    print(f'export RISHE_DEPPARSE_PACK="{root / "depparse"}"')
+    print(f'export RISHE_EMBEDDINGS_PACK="{embeddings}"')
     return 0
 
 

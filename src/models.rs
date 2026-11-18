@@ -780,6 +780,21 @@ impl ModelPack {
 mod tests {
     use super::*;
 
+    /// Path of a downloaded test pack, or `None` when the variable is unset.
+    ///
+    /// `pull_test_packs.py` exports these, and `pack-tests` in CI asserts they
+    /// are set before running. A plain `return` when missing turned a mistyped
+    /// variable name into a passing test, so a set-but-missing path is an error.
+    fn pack_path(name: &str) -> Option<std::path::PathBuf> {
+        let value = std::env::var(name).ok()?;
+        let path = std::path::PathBuf::from(&value);
+        assert!(
+            path.exists(),
+            "{name} is set to {value:?}, which does not exist"
+        );
+        Some(path)
+    }
+
     /// The slow, obviously correct answer: try every subset of edges that is a
     /// legal arborescence and keep the heaviest.
     fn brute_force_optimum(node_count: usize, root: usize, edges: &[ArcEdge]) -> f64 {
@@ -1146,7 +1161,7 @@ mod tests {
 
     #[test]
     fn depparse_loaded_pack() {
-        let Ok(path) = std::env::var("RISHE_DEPPARSE_PACK") else {
+        let Some(path) = pack_path("RISHE_DEPPARSE_PACK") else {
             return;
         };
         let pack = ModelPack::load(path).expect("load depparse pack");
