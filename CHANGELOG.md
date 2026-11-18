@@ -112,6 +112,28 @@ removed or renamed, so this is a patch, not a minor.
 - **Errors follow `API_CONVENTIONS.md` §11.** A missing `.vec` or pack directory
   raises `FileNotFoundError` from `Embeddings`, `ModelPack` and `Pipeline`, not a
   generic `OSError`/`ValueError`.
+- **A bad count is a `ValueError`.** `rake`, `textrank`, `ngrams`, `spell_suggest`
+  and `most_similar` took `usize`, so Python's own conversion raised
+  `OverflowError` — a type `errors.md` never mentions, and not a `ValueError`, so
+  `except ValueError` around a bad argument did not fire.
+- **`hub list` calls a corrupt cached file `corrupt`.** It printed `cached` for any
+  file that existed; `hub verify` and the Rust binary hash it against the pinned
+  digest.
+- **A whole-sentence dependency parse is capped at 512 words.** The arc decoder
+  holds a `words × (words + 1)` score matrix, so a 4094-word paragraph needed
+  roughly 700 MB and the process was killed instead of reporting anything.
+- **`rishe normalize ""` means an empty document, not stdin.** Only no text (or a
+  single `-`) reads stdin, which is what the Rust binary already did.
+- **A bad `--top` is a usage error in both binaries.** `similar … --top 0` exited
+  1 in the Rust binary when the model was missing and 2 in Python, because both
+  checked it after loading the model.
+- **`hub pull` refuses a non-http scheme by rule.** `file:`, `ftp:` and `data:`
+  were rejected only because the HTTP client could not parse them, so the rule was
+  never stated or tested.
+- **The shared pack manifest is waited for, not failed on.** Two `hub pull`s for
+  different packs collided on it, so the second failed while the first downloaded.
+- **`hub verify` no longer blesses an empty `files` object.** The loop ran zero
+  times and returned true, while the Python side refused it.
 
 ### Changed
 
@@ -122,6 +144,10 @@ removed or renamed, so this is a patch, not a minor.
 - `scripts/pull_test_packs.py` also exports `RISHE_DEPPARSE_PACK` and
   `RISHE_EMBEDDINGS_PACK`, which is what the Rust pack tests read; a set-but-
   missing path is an error instead of a silent skip.
+- One `word_boundary` predicate for the crate: `maskers` kept a second, identical
+  copy whose comment described the rule differently, so the two agreed by
+  accident and any edit to one would have made `mask` and `rake` disagree about
+  where a word ends.
 
 ### CI
 
