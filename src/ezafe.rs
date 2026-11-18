@@ -67,6 +67,11 @@ impl RuleBasedEzafe {
             {
                 continue;
             }
+            // A bare past verb closes the phrase: `او کتاب خواند` is a noun and
+            // its verb, not a noun with an ezafe before the verb.
+            if morph.present_stem(&morph.lemmatize(next)).is_some() {
+                continue;
+            }
             if !morph.is_known_noun(curr)
                 && (curr.ends_with('ش')
                     || curr.ends_with('م')
@@ -95,5 +100,42 @@ impl RuleBasedEzafe {
             }
         }
         ezafe
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn predict(text: &str) -> Vec<bool> {
+        let morph = MorphologyEngine::new();
+        let tokens: Vec<String> = crate::tokenizer::Tokenizer::tokenize(text)
+            .into_iter()
+            .map(|token| token.text.to_string())
+            .collect();
+        RuleBasedEzafe::predict(&tokens, &morph)
+    }
+
+    #[test]
+    fn a_bare_past_verb_closes_the_phrase() {
+        // Every known noun took an ezafe before the next token, so a noun and its
+        // verb looked like a noun with an ezafe marker.
+        assert_eq!(predict("او کتاب خواند"), [false, false, false]);
+        assert_eq!(predict("او کتاب گفت"), [false, false, false]);
+        assert_eq!(predict("من خانه رفتم"), [false, false, false]);
+    }
+
+    #[test]
+    fn noun_adjective_keeps_its_ezafe() {
+        assert_eq!(predict("کتاب خوب من"), [true, true, false]);
+        assert_eq!(predict("روی میز"), [true, false]);
+    }
+
+    #[test]
+    fn heads_that_never_take_an_ezafe() {
+        assert_eq!(predict("از کتاب"), [false, false]);
+        assert_eq!(predict("کتاب است"), [false, false]);
+        assert_eq!(predict("کتاب"), [false]);
+        assert_eq!(predict(""), Vec::<bool>::new());
     }
 }

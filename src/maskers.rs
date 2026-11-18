@@ -97,7 +97,7 @@ impl MaskOp {
             Self::Hashtag => mask_sigil(text, '#', mask),
             Self::Emoji => mask_emojis(text, mask),
             Self::Html => mask_html(text, mask),
-            Self::NonPersian => mask_non_persian(text, mask, false, false),
+            Self::NonPersian => mask_non_persian(text, mask),
             Self::Stopwords => mask_stopwords(text, mask),
             Self::Offensive => mask_offensive(text, mask),
             Self::Digits => mask_digits(text, mask),
@@ -525,13 +525,12 @@ fn decode_entity(entity: &str) -> Option<String> {
     None
 }
 
-/// Replace disallowed characters with `mask`, optionally keeping English and diacritics.
-pub fn mask_non_persian(
-    text: &str,
-    mask: &str,
-    keep_english: bool,
-    keep_diacritics: bool,
-) -> String {
+/// Replace non-Persian characters with `mask`.
+///
+/// There were `keep_english`/`keep_diacritics` flags, but no surface reached
+/// them: the masker name always passed `false, false`. Two unreachable knobs
+/// are a contract nobody tests, so the function takes what it uses.
+pub fn mask_non_persian(text: &str, mask: &str) -> String {
     let mut out = String::with_capacity(text.len());
 
     for ch in text.chars() {
@@ -545,9 +544,7 @@ pub fn mask_non_persian(
             || PERSIAN_DIGITS.contains(ch)
             || ch.is_ascii_digit()
             || is_punctuation(ch)
-            || ch.is_ascii_punctuation()
-            || (keep_diacritics && DIACRITICS.contains(ch))
-            || (keep_english && ch.is_ascii_alphabetic());
+            || ch.is_ascii_punctuation();
 
         if allowed {
             out.push(ch);
@@ -578,13 +575,27 @@ fn stopword_matcher() -> &'static AhoCorasick {
 
 fn offensive_matcher() -> &'static AhoCorasick {
     OFFENSIVE_MATCHER.get_or_init(|| {
-        build_matcher(
-            OFFENSIVE_WORDS
-                .lines()
-                .map(str::trim)
-                .filter(|word| !word.is_empty())
-                .map(str::to_owned),
-        )
+        // The list spells some entries with a space and others with a ZWNJ; the
+        // text may use either, or neither (`کصلیس` is written closed). All three
+        // spellings go in: `بی‌ناموس` and `کصلیس` only passed the filter because
+        // the list held one of the other two forms.
+        let mut patterns: Vec<String> = Vec::with_capacity(OFFENSIVE_WORDS.lines().count() * 3);
+        for word in OFFENSIVE_WORDS.lines().map(str::trim) {
+            if word.is_empty() {
+                continue;
+            }
+            patterns.push(word.to_owned());
+            if word.contains(' ') {
+                patterns.push(word.replace(' ', "\u{200C}"));
+                patterns.push(word.replace(' ', ""));
+            } else if word.contains('\u{200C}') {
+                patterns.push(word.replace('\u{200C}', " "));
+                patterns.push(word.replace('\u{200C}', ""));
+            }
+        }
+        patterns.sort();
+        patterns.dedup();
+        build_matcher(patterns)
     })
 }
 
@@ -615,16 +626,23 @@ fn replace_words(text: &str, matcher: &AhoCorasick, mask: &str) -> String {
     finish(text, out)
 }
 
+// One predicate for the whole crate: a word ends at a character that is neither
+// a Persian letter nor ASCII alphanumeric. `استx` is not the stopword `است`, and
+// `کامپیوتر2` is not the offensive `کامپیوتر`.
 fn word_boundary(text: &str, start: usize, end: usize) -> bool {
     let before = text[..start]
         .chars()
         .next_back()
-        .is_none_or(|ch| !is_persian_letter(ch));
+        .is_none_or(|ch| !is_word_char(ch));
     let after = text[end..]
         .chars()
         .next()
-        .is_none_or(|ch| !is_persian_letter(ch));
+        .is_none_or(|ch| !is_word_char(ch));
     before && after
+}
+
+fn is_word_char(ch: char) -> bool {
+    is_persian_letter(ch) || ch.is_ascii_alphanumeric()
 }
 
 /// Replace each digit with `mask`.
@@ -809,15 +827,18 @@ mod tests {
     #[test]
     fn non_persian_keeps_arabic_coded_persian_letters() {
         // `normalize` maps these to `ی`/`ک`/`ه`; deleting them shortened words.
-        assert_eq!(
-            mask_non_persian("او كتابي خواند", "", false, false),
-            "او كتابي خواند"
-        );
-        assert_eq!(
-            mask_non_persian("مصطفى كبيرة", "", false, false),
-            "مصطفى كبيرة"
-        );
+        assert_eq!(mask_non_persian("او كتابي خواند", ""), "او كتابي خواند");
+        assert_eq!(mask_non_persian("مصطفى كبيرة", ""), "مصطفى كبيرة");
         assert_eq!(MaskOp::NonPersian.apply("سلام hello", None), "سلام");
+    }
+
+    #[test]
+    fn non_persian_drops_every_non_persian_letter() {
+        // The removed `keep_english` knob let `hello` through, which is exactly
+        // what `non_persian` promises to remove.
+        assert_eq!(mask_non_persian("سلام hello 123!", ""), "سلام  123!");
+        // `finish` trims the masked tail, so only the kept run survives.
+        assert_eq!(mask_non_persian("سلام ۱۲۳ hello", " "), "سلام ۱۲۳");
     }
 
     #[test]
@@ -863,10 +884,7 @@ mod tests {
             MaskOp::NonPersian.apply("سلام hello 123!", None),
             "سلام  123!"
         );
-        assert_eq!(
-            mask_non_persian("سلام hello 123!", "", true, false),
-            "سلام hello 123!"
-        );
+        assert_eq!(mask_non_persian("سلام hello 123!", ""), "سلام  123!");
     }
 
     #[test]
@@ -892,6 +910,37 @@ mod tests {
         assert_eq!(MaskOp::Stopwords.apply("این کتاب است", None), "کتاب");
         assert_eq!(mask_stopwords("کتاب و دفتر", ""), "کتاب  دفتر");
         assert_eq!(MaskOp::Offensive.apply("این بی‌شرف است", None), "این  است");
+    }
+
+    #[test]
+    fn a_word_ends_at_a_non_persian_letter_or_digit() {
+        // The masker's predicate only looked for Persian letters, so `استx` was
+        // the stopword `است` and `و2` was `و`, while `utilities` disagreed. One
+        // predicate for the crate: ASCII alphanumerics are word characters.
+        assert_eq!(mask_stopwords("استx", ""), "استx");
+        assert_eq!(mask_stopwords("xاست", ""), "xاست");
+        assert_eq!(mask_stopwords("است2", ""), "است2");
+        assert_eq!(mask_stopwords("است", ""), "");
+        // Punctuation still ends the word.
+        assert_eq!(mask_stopwords("است،", ""), "،");
+        assert_eq!(mask_stopwords("است.", ""), ".");
+    }
+
+    #[test]
+    fn offensive_words_match_their_space_and_zwnj_spellings() {
+        // The list spells some entries with a space and some with a ZWNJ; text
+        // uses either, and closed spellings like `کصلیس` are common too.
+        for word in ["بی پدر", "بی‌پدر", "بی ناموس", "بی‌ناموس"] {
+            assert_eq!(MaskOp::Offensive.apply(word, None), "", "{word:?}");
+        }
+        for word in ["کس لیس", "کس‌لیس", "کص لیس", "کص‌لیس", "کصلیس"] {
+            assert_eq!(MaskOp::Offensive.apply(word, None), "", "{word:?}");
+        }
+        // Ordinary text is untouched.
+        assert_eq!(
+            MaskOp::Offensive.apply("کتاب خوب است", None),
+            "کتاب خوب است"
+        );
     }
 
     #[test]
