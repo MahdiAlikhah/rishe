@@ -512,8 +512,13 @@ fn serve(args: &[String]) -> Result<(), CliError> {
         index += 1;
     }
 
-    #[allow(unused_mut)]
+    // Mutable only where the packs loop can load into it, so both feature sets
+    // build clean without an #[allow(unused_mut)] covering the branch that
+    // does not exist.
+    #[cfg(feature = "models")]
     let mut pipe = Pipeline::create(true, true, true);
+    #[cfg(not(feature = "models"))]
+    let pipe = Pipeline::create(true, true, true);
     #[cfg(feature = "models")]
     for (task, path) in [
         ("pos", pos_pack),

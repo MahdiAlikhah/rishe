@@ -12,11 +12,22 @@ for lo, hi in ranges:
         norm = unicodedata.normalize("NFKC", ch)
         if norm == ch:
             continue
+        # The isolated harakat (`FE70`-`FE7F`) decompose to a space or a tatweel
+        # plus a combining mark: `ﹰ` is " ً" and `ﹱ` is "ـً". Neither the space
+        # nor the tatweel is part of the character, so keep only the mark,
+        # otherwise the whole block was skipped by the letter filter below and
+        # `strip_diacritics` never saw an isolated-form haraka.
+        marks = [c for c in norm if unicodedata.category(c) == "Mn"]
+        if marks and all(c in " \u0640" or unicodedata.category(c) == "Mn" for c in norm):
+            norm = "".join(marks)
         mapped = "".join(final.get(c, c) for c in norm)
         if not mapped.strip() or any(c.isspace() for c in mapped):
             continue
         if any(unicodedata.category(c)[0] != "L" for c in mapped):
-            continue
+            # A diacritic-only entry is still worth keeping: it lets the
+            # normalizer's `strip_diacritics` stage see the mark it carries.
+            if not all(unicodedata.category(c) == "Mn" for c in mapped):
+                continue
         entries.append((cp, mapped))
 
 entries.sort()

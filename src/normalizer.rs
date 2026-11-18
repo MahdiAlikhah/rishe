@@ -345,6 +345,28 @@ mod tests {
     }
 
     #[test]
+    fn an_isolated_haraka_is_seen_by_strip_diacritics() {
+        // `FE70`-`FE7F` decompose to a space or a tatweel plus a combining mark
+        // (`ﹰ` is " ً"). The generator's letter-only filter dropped all sixteen,
+        // so `strip_diacritics` never saw an isolated-form haraka and the form
+        // survived normalization verbatim.
+        let stripping = Normalizer::new(NormalizerConfig::default());
+        let keeping = Normalizer::new(NormalizerConfig {
+            strip_diacritics: false,
+            ..NormalizerConfig::default()
+        });
+        for form in ["\u{FE70}", "\u{FE72}", "\u{FE76}", "\u{FE7E}", "\u{FCF2}"] {
+            assert_eq!(stripping.normalize(form), "", "{form:?} should be stripped");
+            let kept = keeping.normalize(form).into_owned();
+            assert!(
+                kept.chars()
+                    .all(|ch| ('\u{064B}'..='\u{0652}').contains(&ch)),
+                "{form:?} kept as {kept:?}, expected only the combining mark"
+            );
+        }
+    }
+
+    #[test]
     fn decomposed_hamza_composes() {
         let n = Normalizer::new(NormalizerConfig::default());
         assert_eq!(n.normalize("ا\u{0654}حمد"), "أحمد");

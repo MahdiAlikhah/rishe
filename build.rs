@@ -165,6 +165,14 @@ fn compile_tsv_to_fst(
             "{}: key {key:?} contains whitespace and can never be a token",
             tsv_path.display()
         );
+        // A ZWNJ at either edge is stripped by normalization, so such a key is
+        // unreachable too: `آسوده‌` never matched and `آسوده` was already in the
+        // file. Seven such duplicate rows shipped that way.
+        assert!(
+            !key.starts_with('\u{200C}') && !key.ends_with('\u{200C}'),
+            "{}: key {key:?} has an edge ZWNJ and can never be a token",
+            tsv_path.display()
+        );
 
         let packed_val: u64 = if use_identity_sentinel && key == lemma {
             ((pos_flags as u64) << 56) | FLAG_IDENTITY
