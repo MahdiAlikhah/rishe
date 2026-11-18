@@ -64,7 +64,9 @@ pub(crate) const CLITIC_LOOKALIKES: &[&str] = &["توت"];
 ///
 /// The guard rejects any token the lexicon knows, which covers 7 of the 8 former
 /// entries here; `کاست` is the one the lexicon does not list.
-const NON_COPULA_STEMS: &[&str] = &["کاست"];
+// Whole words that end in `ست` but are never a stem plus the copula. `است` and
+// `نیست` are the copula itself; the rest are words whose `ست` is not a suffix.
+const NON_COPULA_STEMS: &[&str] = &["کاست", "است", "نیست", "چیست", "هست"];
 
 const COLLOQUIAL_NOUN_SUFFIXES: &[(&str, &str)] = &[
     ("\u{200C}هامون", "\u{200C}هایمان"),

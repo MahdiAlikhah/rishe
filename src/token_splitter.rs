@@ -84,6 +84,14 @@ impl TokenSplitter {
             return vec![token.to_string()];
         }
 
+        // A whole word that lemmatizes to a known verb is a verb form, not a noun
+        // plus a clitic: `رفت` is `رفتن` 3sg, not `رف` + `ت`, and `دارم` is
+        // `داشتن` 1sg. The prefix and ZWNJ splits above already ran, so the
+        // documented `می` + verb and `کتاب` + `ها` readings are unaffected.
+        if morph.present_stem(&morph.lemmatize(token)).is_some() {
+            return vec![token.to_string()];
+        }
+
         for &suffix in ATTACHED_NOUN_SUFFIXES {
             if let Some(stem) = token.strip_suffix(suffix) {
                 if stem.chars().count() >= 2

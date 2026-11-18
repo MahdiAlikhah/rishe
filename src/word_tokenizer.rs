@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 
 use crate::maskers::{email_spans, emoji_end};
-use crate::morphology::MorphologyEngine;
+use crate::morphology::{MorphologyEngine, NON_PARTICIPLE_NOUNS, PARTICIPLE_NOUNS};
 
 /// Switches for [`crate::Pipeline::tokenize`]; all default to `false`.
 #[derive(Debug, Clone, Copy, Default)]
@@ -466,6 +466,14 @@ fn is_verb_after(token: &str, morph: &MorphologyEngine) -> bool {
 }
 
 fn is_participle(token: &str, morph: &MorphologyEngine) -> bool {
+    // `خنده`, `دانه`, `هسته` end in ه over a verb stem but are nouns, not the
+    // participles of خندیدن/دانستن/بودن; the lemmatizer already knows that, so
+    // the join rule has to use the same stoplist or `خنده است` becomes one token.
+    // Words on the stoplist that are also real participles (`گفته`, `مرده`) keep
+    // joining, which is what `گفته شده است` needs.
+    if NON_PARTICIPLE_NOUNS.contains(&token) && !PARTICIPLE_NOUNS.contains(&token) {
+        return false;
+    }
     if let Some(stem) = token.strip_suffix('ه') {
         if !stem.is_empty() && (morph.is_known_verb_stem(stem) || morph.is_past_stem(stem)) {
             return true;

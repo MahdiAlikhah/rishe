@@ -47,14 +47,22 @@ impl Tokenizer {
                         end_idx = next_idx + next_ch.len_utf8();
                         chars.next();
                     } else if next_ch == '\u{200C}' {
-                        chars.next();
-                        if let Some(&(_, after_zwnj)) = chars.peek() {
-                            if after_zwnj.is_alphanumeric() {
-                                end_idx = next_idx + next_ch.len_utf8();
-                                continue;
+                        // A ZWNJ belongs to the word on both sides of it, and a
+                        // trailing one stays on its word: dropping it made
+                        // `tokenize` -> `detokenize` lose the character.
+                        while let Some(&(z_idx, z_ch)) = chars.peek() {
+                            if z_ch != '\u{200C}' {
+                                break;
                             }
+                            end_idx = z_idx + z_ch.len_utf8();
+                            chars.next();
                         }
-                        break;
+                        if !chars
+                            .peek()
+                            .is_some_and(|&(_, after)| after.is_alphanumeric())
+                        {
+                            break;
+                        }
                     } else {
                         break;
                     }
@@ -107,5 +115,46 @@ impl Tokenizer {
         }
 
         tokens
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn texts(input: &str) -> Vec<&str> {
+        Tokenizer::tokenize(input)
+            .into_iter()
+            .map(|token| token.text)
+            .collect()
+    }
+
+    #[test]
+    fn keeps_a_zwnj_on_its_word() {
+        // Dropping the ZWNJ made `tokenize` -> `detokenize` lossy.
+        assert_eq!(texts("کتاب\u{200C}"), ["کتاب\u{200C}"]);
+        assert_eq!(texts("\u{200C}کتاب"), ["\u{200C}", "کتاب"]);
+        assert_eq!(
+            texts("می\u{200C}\u{200C}خواهم"),
+            ["می\u{200C}\u{200C}خواهم"]
+        );
+        assert_eq!(texts("a\u{200C}b"), ["a\u{200C}b"]);
+        assert_eq!(texts("می\u{200C}خواهم"), ["می\u{200C}خواهم"]);
+    }
+
+    #[test]
+    fn splits_words_numbers_and_punctuation() {
+        assert_eq!(texts("سلام دنیا"), ["سلام", "دنیا"]);
+        assert_eq!(texts("۱۲۳، ۴۵۶"), ["۱۲۳", "،", "۴۵۶"]);
+        assert_eq!(texts("کتاب."), ["کتاب", "."]);
+        assert_eq!(texts("۳.۱۴"), ["۳.۱۴"]);
+    }
+
+    #[test]
+    fn spans_cover_the_original_bytes() {
+        let input = "سلام😊 دنیا\u{00A0}۱۲۳ (خوب)";
+        for token in Tokenizer::tokenize(input) {
+            assert_eq!(&input[token.start..token.end], token.text);
+        }
     }
 }

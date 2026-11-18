@@ -11,6 +11,11 @@ const OFFSET_MASK: u64 = 0x007F_FFFF_FF00_0000;
 const LEN_MASK: u64 = 0x0000_0000_00FF_FFFF;
 pub(crate) const ZWNJ: &str = "\u{200C}";
 
+/// Copula spellings the noun lexicon also lists as identity rows, which used to
+/// shadow the verb table: `است`/`نیست` stayed bare while the persons spelled
+/// without them (`هستم`, `هستید`) reduced to `بود`.
+const COPULA_FORMS: &[&str] = &["است", "نیست", "هست"];
+
 /// Preverbs the token splitter and the verbal-spacing rule both treat as a
 /// prefix. Each feature adds its own extras beside this list.
 pub(crate) const SHARED_VERBAL_PREFIXES: &[&str] =
@@ -106,7 +111,7 @@ const VERB_PERSON_ENDINGS: &[&str] = &[
 ];
 
 // Nouns that end in ه over a verb stem but are lexicalized as nouns, not participles.
-const NON_PARTICIPLE_NOUNS: &[&str] = &[
+pub(crate) const NON_PARTICIPLE_NOUNS: &[&str] = &[
     "آماده",
     "اندازه",
     "اندیشه",
@@ -148,6 +153,24 @@ const NON_PARTICIPLE_NOUNS: &[&str] = &[
     "هسته",
     "آیه",
     "پوشه",
+];
+
+// Nouns in the list above that are also genuine participles, so a verb chain
+// (`گفته شده است`) still joins; lemmatization treats them as nouns either way.
+pub(crate) const PARTICIPLE_NOUNS: &[&str] = &[
+    "بسته",
+    "پیوسته",
+    "سپرده",
+    "سوخته",
+    "شکسته",
+    "گسترده",
+    "گذشته",
+    "گفته",
+    "کشته",
+    "کنده",
+    "مانده",
+    "مرده",
+    "وابسته",
 ];
 
 /// Past and present stems of one verb.
@@ -326,6 +349,16 @@ impl MorphologyEngine {
     /// Lemma of one token from the noun and verb tables; returns the token when nothing matches.
     #[inline]
     pub fn lemmatize<'a>(&self, token: &'a str) -> Cow<'a, str> {
+        // The copula is a verb, but the noun lexicon lists the same spellings as
+        // identity rows; the verb table is the authority for these.
+        if COPULA_FORMS.contains(&token) {
+            if let Some(packed) = self.verb_stems.get(token) {
+                if let Some(lemma) = lemma_from_blob(packed) {
+                    return Cow::Borrowed(lemma);
+                }
+            }
+        }
+
         // 1. Explicit imperfective verbs (می‌... / نمی‌...) always go to verb lemmatizer first
         if let Some(verb_body) = token
             .strip_prefix("نمی\u{200C}")
@@ -339,6 +372,12 @@ impl MorphologyEngine {
         // 2. Strip unambiguous ZWNJ-attached plural/comparative suffixes first (e.g., کتاب‌ها -> کتاب)
         for suffix in ZWNJ_NOUN_SUFFIXES {
             if let Some(stem) = token.strip_suffix(suffix) {
+                // `رفته‌ام` is perfect tense, not a noun `رفته` with a possessive
+                // clitic: the verb reading has to win or 1sg/2sg collapse to the
+                // participle while 3pl (`رفته‌اند`) still reduced to `رفت`.
+                if let Some(verb_lemma) = self.match_verb_lemma(token) {
+                    return Cow::Borrowed(verb_lemma);
+                }
                 if let Some(packed) = self.noun_lexicon.get(stem) {
                     return Self::unpack_lemma(packed, stem);
                 }

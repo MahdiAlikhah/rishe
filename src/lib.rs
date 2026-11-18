@@ -1387,6 +1387,74 @@ mod tests {
     }
 
     #[test]
+    fn verb_forms_do_not_stem_to_a_prefix_plus_a_clitic() {
+        // The attached-suffix loop used to run on verbs too: `کردیم` became the
+        // noun `کردی` + `م`, and `رفت` became `رف` + `ت`, although `رف` is not
+        // a word. A word that lemmatizes to a known verb keeps its verb lemma.
+        let nlp = Pipeline::create(true, true, true);
+        assert_eq!(nlp.stem("کردیم"), "کرد");
+        assert_eq!(nlp.stem("خوردیم"), "خورد");
+        assert_eq!(nlp.stem("رفت"), "رفت");
+        // The `گان` plural restores the `ه` of the singular, as `lemmatize` does.
+        assert_eq!(nlp.stem("مردگان"), "مرده");
+        assert_eq!(nlp.stem("مرد"), "مرد");
+        // Nouns still stem through their suffix.
+        assert_eq!(nlp.stem("کتاب‌ها"), "کتاب");
+        assert_eq!(nlp.stem("خانه‌هایی"), "خانه");
+    }
+
+    #[test]
+    fn a_verb_form_is_not_split_into_a_prefix_and_a_clitic() {
+        // `split_token` stripped suffixes off verb forms: `رفت` split into a
+        // bare past stem `رف` plus `ت`, and `بروم` into `بر` + `وم`.
+        let nlp = Pipeline::create(true, true, true);
+        for word in ["رفت", "بروم", "دارم", "کردیم"] {
+            assert_eq!(nlp.split_token(word), [word], "{word:?} must stay whole");
+        }
+        // The documented splits survive.
+        assert_eq!(nlp.split_token("کتابم"), ["کتاب", "م"]);
+        assert_eq!(nlp.split_token("می‌روم"), ["می", "روم"]);
+        assert_eq!(nlp.split_token("کتاب‌ها"), ["کتاب", "ها"]);
+    }
+
+    #[test]
+    fn the_copula_lemmatizes_like_its_other_persons() {
+        // `است`/`نیست` were identity rows in the noun lexicon that shadowed the
+        // verb table, so only the persons spelled without them reduced to `بود`.
+        let nlp = Pipeline::create(true, true, true);
+        for word in ["است", "نیست", "هست", "هستم", "هستید", "هستند"] {
+            assert_eq!(nlp.morphology.lemmatize(word), "بود", "{word:?}");
+        }
+    }
+
+    #[test]
+    fn perfect_first_and_second_person_reduce_to_the_verb() {
+        // These matched a possessive clitic before the verb reading ran: 1sg/2sg
+        // came back as the participle, while 3pl already reduced to the stem.
+        let nlp = Pipeline::create(true, true, true);
+        let lemma = |word: &str| nlp.morphology.lemmatize(word).into_owned();
+        assert_eq!(lemma("رفته‌ام"), "رفت");
+        assert_eq!(lemma("رفته‌اند"), "رفت");
+        assert_eq!(lemma("کرده‌ام"), "کرد");
+        // A participle used as a noun still lemmatizes to its verb.
+        assert_eq!(lemma("رفته"), "رفت");
+    }
+
+    #[test]
+    fn a_noun_ending_in_he_does_not_join_the_copula() {
+        // `خنده است` is a noun and the copula, not the perfect of `خندیدن`.
+        let nlp = Pipeline::create(true, true, true);
+        let options = word_tokenizer::WordTokenizerOptions {
+            join_verb_parts: true,
+            ..Default::default()
+        };
+        assert_eq!(nlp.tokenize("خنده است", &options), ["خنده", "است"]);
+        assert_eq!(nlp.tokenize("کتاب است", &options), ["کتاب", "است"]);
+        // A genuine participle chain still joins.
+        assert_eq!(nlp.tokenize("رفته است", &options), ["رفته_است"]);
+    }
+
+    #[test]
     fn test_conjugation() {
         let nlp = Pipeline::create(true, true, true);
         let forms = nlp.conjugate("رفت").expect("رفت is a known verb");
