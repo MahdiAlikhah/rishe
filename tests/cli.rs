@@ -588,6 +588,10 @@ fn usage_errors_exit_two() {
         vec!["tokenize", "text", "--model"],
         vec!["similar", "one", "two", "--model", "missing-model.vec"],
         vec!["similarity", "one", "--model", "missing-model.vec"],
+        // A bad `--top` is a malformed command line, so it is a usage error even
+        // though the model does not exist: the Python binary reports it the same
+        // way, and checking it after the load made the exit code depend on the cache.
+        vec!["similar", "کتاب", "--top", "0", "--model", "missing-model.vec"],
         vec!["serve", "--frobnicate"],
         vec!["hub"],
         vec!["hub", "path"],
@@ -610,10 +614,8 @@ fn usage_errors_exit_two() {
 
 #[test]
 fn runtime_errors_exit_one() {
-    let model = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/mini-embed.vec");
     for args in [
         vec!["similar", "کتاب", "--model", "missing-model.vec"],
-        vec!["similar", "کتاب", "--top", "0", "--model", model],
         vec!["mask", "text", "--maskers", "bogus"],
         vec!["date", "not a date"],
         vec!["pos", "text"],

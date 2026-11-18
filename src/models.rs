@@ -433,6 +433,13 @@ impl ModelPack {
 
     /// Tag text into spans. Each span carries `text`, `tag`, `start` and `end`;
     /// `label()` returns the tag under the name every result type shares.
+    ///
+    /// A token the tokenizer cannot represent at all — one whose own subword
+    /// pieces exceed `max_len`, and which has no `[UNK]` to stand in for it —
+    /// keeps no tag and is left out of the result, so the output can be shorter
+    /// than the token stream. That is deliberate: the alternative was dropping
+    /// every word after it. A text made only of such a token is an error instead,
+    /// because an empty list would read as "nothing to tag".
     pub fn tags(&self, text: &str) -> Result<Vec<TaggedToken>, String> {
         let tokens = WordTokenizer::tokenize(text);
         let words: Vec<&str> = tokens.iter().map(|token| token.text).collect();
