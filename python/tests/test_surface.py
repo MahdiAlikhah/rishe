@@ -9,11 +9,24 @@ import unittest
 from pathlib import Path
 
 STUB = Path(__file__).resolve().parents[1] / "rishe" / "_core.pyi"
+SURFACE = Path(__file__).resolve().parents[2] / "docs" / "api-surface.txt"
 
 BANNED_SUFFIXES = ("_with", "_full", "_stages", "_char_spans")
 # Rule 1: no sibling methods that differ only by an option bundle.
 # Empty since 1.0.0 removed the deprecated aliases; the set may not grow.
 SUFFIX_VIOLATIONS = set()
+
+# The same rule on the Rust side. These four predate 1.0.0 and are part of the
+# frozen surface, so removing them needs 2.0.0; the set is recorded here so the
+# rule is enforced on both languages instead of only on the Python stub.
+# `ProcessOptions::from_stages_checked` ends in `_checked`, so it is not a
+# suffix match; it is listed in the doc as a fifth odd name.
+RUST_SUFFIX_VIOLATIONS = {
+    "fn lib::Pipeline::normalize_with",
+    "fn lib::Pipeline::process_with",
+    "fn lib::Pipeline::tokenize_char_spans",
+    "fn lib::ProcessOptions::from_stages",
+}
 
 # Rule 3: one name for "how many". Empty since 0.11.0 renamed the parameters;
 # keep the mechanism so a new violation fails the build.
@@ -62,6 +75,19 @@ class SurfaceTest(unittest.TestCase):
             SUFFIX_VIOLATIONS,
             f"new={sorted(found - SUFFIX_VIOLATIONS)} "
             f"fixed={sorted(SUFFIX_VIOLATIONS - found)}",
+        )
+
+    def test_no_retired_rust_suffixes(self):
+        # `API_CONVENTIONS.md` says the rule is enforced for Rust too, but only
+        # the Python stub was ever scanned, so five banned names sat in the
+        # frozen snapshot unnoticed.
+        rust = SURFACE.read_text(encoding="utf-8").splitlines()
+        found = {line for line in rust if line.startswith(("fn ", "struct ", "enum ")) and line.endswith(BANNED_SUFFIXES)}
+        self.assertEqual(
+            found,
+            RUST_SUFFIX_VIOLATIONS,
+            f"new={sorted(found - RUST_SUFFIX_VIOLATIONS)} "
+            f"fixed={sorted(RUST_SUFFIX_VIOLATIONS - found)}",
         )
 
     def test_count_parameters_are_named_n(self):

@@ -453,9 +453,10 @@ def _embedding(args) -> int:
         return 0
 
     if args.command == "similar":
-        if args.top < 1:
-            # Rust rejects the value as a usage error (exit 2); exit 1 made the
-            # two binaries disagree for the same bad command line.
+        # Rust parses `--top` as a machine `usize`, so a value past that is the
+        # same usage error there; here the int is unbounded, and handing it to
+        # Rust raised OverflowError with a traceback instead of exit 2.
+        if args.top < 1 or args.top > sys.maxsize:
             print("--top must be a positive integer", file=sys.stderr)
             return 2
         neighbours = vectors.most_similar(args.word, args.top)

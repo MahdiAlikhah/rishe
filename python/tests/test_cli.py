@@ -292,6 +292,12 @@ class ExitCodeContractTest(unittest.TestCase):
         self.assert_exit(2, "similar", "کتاب", "--top", "0", "--model", str(MODEL))
         self.assert_exit(2, "similar", "کتاب", "--top", "-1", "--model", str(MODEL))
 
+    def test_top_past_the_rust_usize_is_the_same_usage_error(self):
+        """Python's int is unbounded, so this reached Rust and raised OverflowError."""
+        self.assert_exit(
+            2, "similar", "کتاب", "--top", "9" * 25, "--model", str(MODEL)
+        )
+
     def test_unparseable_date_exits_1(self):
         self.assert_exit(1, "date", "این یک تاریخ نیست")
 

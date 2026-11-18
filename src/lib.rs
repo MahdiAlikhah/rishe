@@ -724,6 +724,16 @@ mod py_bindings {
                         ("depparse", depparse_pack),
                     ] {
                         if let Some(path) = path {
+                            // Same rule as `ModelPack.__new__`: a missing directory
+                            // is FileNotFoundError, not a generic ValueError.
+                            if !path.is_dir() {
+                                return Err(pyo3::exceptions::PyFileNotFoundError::new_err(
+                                    format!(
+                                        "no such model pack directory for {task}: {}",
+                                        path.display()
+                                    ),
+                                ));
+                            }
                             pipe.load_pack(task, path)
                                 .map_err(pyo3::exceptions::PyValueError::new_err)?;
                         }
@@ -1169,6 +1179,15 @@ mod py_bindings {
         /// Python constructor: loads vectors from `path`.
         #[new]
         pub fn py_new(py: Python<'_>, path: PathBuf) -> PyResult<Self> {
+            // `docs/API_CONVENTIONS.md` promises FileNotFoundError for a missing
+            // file; a bare IOError is not one, so `except FileNotFoundError`
+            // missed it. Every other load error stays an OSError.
+            if !path.exists() {
+                return Err(pyo3::exceptions::PyFileNotFoundError::new_err(format!(
+                    "no such embedding file: {}",
+                    path.display()
+                )));
+            }
             py.allow_threads(|| Self::load(path))
                 .map_err(pyo3::exceptions::PyIOError::new_err)
         }
@@ -1258,6 +1277,15 @@ mod py_bindings {
         /// Python constructor: loads a pack directory.
         #[new]
         pub fn py_new(py: Python<'_>, path: PathBuf) -> PyResult<Self> {
+            // `docs/API_CONVENTIONS.md` promises FileNotFoundError for a missing
+            // pack; a missing directory used to be a ValueError like any other
+            // bad pack, so `except FileNotFoundError` never fired.
+            if !path.is_dir() {
+                return Err(pyo3::exceptions::PyFileNotFoundError::new_err(format!(
+                    "no such model pack directory: {}",
+                    path.display()
+                )));
+            }
             py.allow_threads(|| Self::load(path))
                 .map_err(pyo3::exceptions::PyValueError::new_err)
         }

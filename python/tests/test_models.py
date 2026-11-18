@@ -139,6 +139,19 @@ class PackCacheTest(unittest.TestCase):
                 self.assertFalse(pack.exists())
                 self.assertIsNone(hub.info("pos-compact"))
 
+    def test_a_missing_pack_raises_file_not_found(self):
+        """`API_CONVENTIONS.md` promises FileNotFoundError, not a generic ValueError."""
+        with tempfile.TemporaryDirectory() as root:
+            missing = Path(root) / "nope"
+            with self.assertRaises(FileNotFoundError):
+                ModelPack(str(missing))
+            with self.assertRaises(FileNotFoundError):
+                Pipeline(pos_pack=str(missing))
+            # A directory that exists but is not a pack is a different error.
+            present = Path(root) / "empty"
+            present.mkdir()
+            with self.assertRaises(ValueError):
+                ModelPack(str(present))
     def test_verify_pack(self):
         with tempfile.TemporaryDirectory() as root:
             with patch.dict(os.environ, {"RISHE_HOME": root}):

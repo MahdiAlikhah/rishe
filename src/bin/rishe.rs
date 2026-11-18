@@ -760,8 +760,14 @@ fn read_text(parts: &[String]) -> Result<String, String> {
         std::io::stdin()
             .read_to_string(&mut text)
             .map_err(|error| format!("cannot read stdin: {error}"))?;
-        // Strip the newline the shell adds, not the document's own leading space.
-        Ok(text.trim_end_matches(['\r', '\n']).to_owned())
+        // Strip the newline the shell adds, not the document's own leading space,
+        // and the byte-order mark a Windows editor writes: the Python CLI reads
+        // stdin as `utf-8-sig`, and without this the same file tokenized to a
+        // leading U+FEFF word here and to nothing there.
+        Ok(text
+            .trim_start_matches('\u{feff}')
+            .trim_end_matches(['\r', '\n'])
+            .to_owned())
     } else {
         Ok(parts.join(" "))
     }

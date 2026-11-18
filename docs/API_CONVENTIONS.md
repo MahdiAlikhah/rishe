@@ -192,13 +192,19 @@ flags; both are documented as the same idea.
 
 ## 16. Mechanically enforced
 
-`python/tests/test_surface.py` (and the Rust equivalent) fails when:
+`python/tests/test_surface.py` fails when:
 
-- a public name ends with `_with`, `_full`, `_stages` or `_char_spans`;
+- a Python public name in `_core.pyi` ends with `_with`, `_full`, `_stages` or
+  `_char_spans`, or a Rust item in `docs/api-surface.txt` ends with one of them;
 - a "many inputs" method does not end with `_batch` and is not a documented
   plural noun;
 - a count parameter is not called `n`;
 - a result class does not expose `label`.
 
-The allowlist of known violations is empty since `1.0.0`, and it may only shrink. `docs/api-surface.txt` is diffed in CI, so a rename after
-`1.0.0` is a red build rather than a review comment.
+The allowlists of known violations are empty on the Python side since `1.0.0`.
+Rust has four, frozen at `1.0.0` and therefore not removable before `2.0.0`:
+`Pipeline::normalize_with`, `Pipeline::process_with`,
+`Pipeline::tokenize_char_spans` and `ProcessOptions::from_stages`. Both lists may
+only shrink. `docs/api-surface.txt` is diffed in CI (including `pub use`
+re-exports, so `JalaliDate` is in it), so a rename after `1.0.0` is a red build
+rather than a review comment.
