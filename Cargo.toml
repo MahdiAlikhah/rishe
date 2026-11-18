@@ -1,6 +1,6 @@
 [package]
 name = "rishe"
-version = "1.0.3"
+version = "1.0.4"
 edition = "2021"
 rust-version = "1.88"
 description = "Rishe (ریشه): High-performance Persian NLP engine in Rust — tokenization, SBD, lemmatization, ezafe detection, informal→formal normalization, stemming, spell checking, Jalali date parsing, embeddings"
@@ -15,6 +15,9 @@ documentation = "https://docs.rs/rishe"
 exclude = [
     ".*",
     "*.html",
+    # The working audit lists every defect it found, including the ones still
+    # open. It is never committed, so it must not reach the crate either.
+    "AUDIT.md",
     "data/corpora/*",
     "data/*.pdf",
     "data/raw_*",

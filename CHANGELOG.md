@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Model packs are versioned separately from the crate; their versions are recorded
 in the pack manifest and on the model repository.
 
-## [Unreleased]
+## [1.0.4] - 2026-11-18
 
 ### Fixed
 
@@ -159,13 +159,47 @@ removed or renamed, so this is a patch, not a minor.
   filtered them out because their `NFKC` form is a space plus a combining mark, so
   `strip_diacritics` never saw them. Four ligature forms were missing for the same
   reason; the table grows from 698 to 721 entries.
+- Seven presentation-form ligatures that decompose to a letter plus a mark (`ﱝ`
+  is `ذ` with a superscript alef, `ﴼ` is `ا` with a fathatan) were missing from
+  the same table, because the generator accepted an expansion that was all
+  letters or all marks but never both. `ﱜ`, `ﲐ` and `ﳙ` came back from `normalize`
+  verbatim. The table grows again, to 728 entries.
 - Seven unreachable rows left `data/nouns.tsv`: eight keys carried a ZWNJ at the
   edge, which normalization strips, and seven of them duplicated a row already in
   the file. `build.rs` refuses such a key now, as it already refused whitespace.
+- Two more `data/nouns.tsv` keys held characters no Persian word can: `مشبهñبه` (a
+  Latin `ñ`) and `گله‌دار8602` (digits glued on by a bad merge). Both tokenized only
+  to their own junk spelling, and `مشبه` and `گله‌دار` were already in the file.
+  `build.rs` refuses a key outside Persian letters and ZWNJ, which covers the
+  class.
 - Two rows in `data/verbs.tsv` used the infinitive as the past stem (`تب` →
   `تبیدن`, `نیاز` → `نیازیدن`). Because the past stem is what the past tense is
   built from, `conjugate("تب")` produced `تبیدنم` instead of `تبیدم`, and the
   lemma was the infinitive too. `build.rs` refuses that shape now.
+
+### Doc corrections
+
+- `docs/api.md` said `tokenize` returns tokens "exactly as they appear" and then
+  listed the options that change them. The options are real but off by default, so
+  the page now says that and names what each one does.
+- `docs/serve-schema.md` said a `mask` request applies its `maskers` "in order"
+  without saying that order is load-bearing. A masker only sees a string, so
+  `["non_persian","url"]` deletes the URL's letters before `url` can match it and
+  returns `به ://. برو`, while `["url","non_persian"]` keeps `<URL>` because the
+  chain shields a placeholder already written. Only the default order is safe, and
+  the page now says so.
+
+### Tests
+
+- Every per-stage `Normalizer` method is called by a test: `correct_spacing`,
+  `decrease_repeated_chars`, `persian_style`, `persian_number`,
+  `unicodes_replacement`, `seperate_mi` and `token_spacing` each wrap one named
+  `normalize` stage and none was covered. `seperate_mi` leaves `ميروم` alone
+  because the Arabic `ي` is not the Persian `ی`; hazm does the same, so that is
+  compat and is now asserted rather than left as a surprise.
+- The generated presentation table has a test that it is sorted and unique, since
+  `expand` binary-searches it: an unsorted regeneration would silently stop
+  resolving forms instead of failing.
 
 ### CI
 
@@ -1039,7 +1073,8 @@ Removed in `1.0.0`; each emits `DeprecationWarning` today.
 - Python bindings (abi3) and a Rust core.
 - Benchmark suite and dual MIT/Apache-2.0 licensing.
 
-[Unreleased]: https://github.com/MahdiAlikhah/rishe/compare/v1.0.3...HEAD
+[Unreleased]: https://github.com/MahdiAlikhah/rishe/compare/v1.0.4...HEAD
+[1.0.4]: https://github.com/MahdiAlikhah/rishe/compare/v1.0.3...v1.0.4
 [1.0.3]: https://github.com/MahdiAlikhah/rishe/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/MahdiAlikhah/rishe/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/MahdiAlikhah/rishe/compare/v1.0.0...v1.0.1

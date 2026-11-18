@@ -47,4 +47,10 @@ module-name = "rishe._core"
 python-source = "python"
 features = ["python", "models", "extension-module"]
 binding = "pyo3"
-exclude = ["python/rishe/*.pdb", "python/rishe/*.pyd", "**/__pycache__/**"]
+exclude = [
+    "python/rishe/*.pdb",
+    "python/rishe/*.pyd",
+    "**/__pycache__/**",
+    # The working audit is never committed; keep it out of the sdist too.
+    "AUDIT.md",
+]
