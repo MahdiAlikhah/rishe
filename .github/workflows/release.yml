@@ -301,7 +301,10 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: ~/.cache/rishe
-          key: rishe-packs-${{ hashFiles('python/rishe/hub.py') }}
+          # Both halves of the registry: `src/hub.rs` holds the digest and file
+          # list a pack is verified against, so keying only on `hub.py` reused a
+          # cache the Rust side would now reject.
+          key: rishe-packs-${{ hashFiles('python/rishe/hub.py', 'src/hub.rs') }}
       - run: python -m pip install --no-deps dist/*.whl
       - uses: dtolnay/rust-toolchain@stable
       # Exports the variables the skipped tests look for, for both suites. They

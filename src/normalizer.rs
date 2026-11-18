@@ -345,6 +345,31 @@ mod tests {
     }
 
     #[test]
+    fn the_presentation_table_is_binary_searchable() {
+        // `expand` binary-searches the table, so an unsorted or duplicated entry
+        // silently stops resolving instead of failing. The table is generated, so
+        // this is the check that a regeneration has to keep passing.
+        let forms = crate::presentation::PRESENTATION_FORMS;
+        assert!(!forms.is_empty());
+        for pair in forms.windows(2) {
+            assert!(
+                pair[0].0 < pair[1].0,
+                "{:?} then {:?}",
+                pair[0].0,
+                pair[1].0
+            );
+        }
+        for &(form, target) in forms {
+            assert!(!target.is_empty(), "{form:?} maps to nothing");
+            assert_eq!(crate::presentation::expand(form), Some(target), "{form:?}");
+        }
+        // A character the table does not list stays unresolved rather than being
+        // mapped to whatever entry the search lands on.
+        assert_eq!(crate::presentation::expand('A'), None);
+        assert_eq!(crate::presentation::expand('\u{FB4F}'), None);
+    }
+
+    #[test]
     fn an_isolated_haraka_is_seen_by_strip_diacritics() {
         // `FE70`-`FE7F` decompose to a space or a tatweel plus a combining mark
         // (`ﹰ` is " ً"). The generator's letter-only filter dropped all sixteen,

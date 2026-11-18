@@ -70,9 +70,10 @@ returned before.
 | Command line | the commands documented in [`cli.md`](cli.md) |
 
 These rows are measured on the released artifacts, not assumed: CI builds the
-Python package on every listed CPython version and enforces the Rust 1.88 gate on
-every push. A version or platform not listed here is not supported. Dropping a
-platform, a Python version or the MSRV is a major-version change.
+Python package on every listed CPython version and enforces both Rust gates on
+every push — 1.88 for the default feature set and 1.91 for `models`. A version or
+platform not listed here is not supported. Dropping a platform, a Python version
+or the MSRV is a major-version change.
 
 Free-threaded CPython (`3.13t`, `3.14t`) and PyPy are not supported, and this is
 a dependency limit rather than a choice:

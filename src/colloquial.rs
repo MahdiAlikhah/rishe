@@ -56,8 +56,9 @@ pub(crate) const FUSED_PREP_CLITICS: &[(&str, (&str, &str))] = &[
 ///
 /// `توت` is mulberry; every other key in [`FUSED_PREP_CLITICS`] is a form that
 /// only exists as a clitic, so the table stays useful. Tested by frequency, not
-/// by lexicon membership: all 28 keys are frequency-1 lexicon entries, so a
-/// blanket "is a known noun" guard would switch the whole feature off.
+/// by lexicon membership: the twelve keys the lexicon does list all carry
+/// frequency 1, so a blanket "is a known noun" guard would switch those twelve
+/// off for nothing. The other sixteen are not in either lexicon at all.
 pub(crate) const CLITIC_LOOKALIKES: &[&str] = &["توت"];
 
 /// Copula lookalikes that the whole-word guard does not already cover.

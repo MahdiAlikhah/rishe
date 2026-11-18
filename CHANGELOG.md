@@ -158,6 +158,10 @@ removed or renamed, so this is a patch, not a minor.
 - `features` runs `cargo test --no-default-features --lib`, not only `check`.
 - `sdist` installs its own archive, so a file missing from it fails the release
   rather than the users who fall back to it.
+- New `wheel-smoke` job installs each built wheel in a clean environment and
+  imports it, so a wheel that builds but cannot load fails the release instead of
+  the user's first `import rishe`. The aarch64 macOS wheel is cross-compiled and
+  is not natively import-tested.
 - `docs/RELEASING.md` matches the workflow: `cargo build` for the GPU features
   (they were `check`ed, which never links), the new jobs, the two Rust pack tests,
   and `audit` as the second non-blocking publish gate. `docs/cli.md` no longer

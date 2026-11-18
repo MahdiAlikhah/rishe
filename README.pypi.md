@@ -179,15 +179,21 @@ Options include `join_verb_parts`, `join_abbreviations`, `separate_emoji`,
 
 ### Corpora
 
+The readers parse CoNLL-U, PEYMA and one-sentence-per-line text. The sample
+corpora live in the GitHub repository, not in the wheel or the sdist, so point
+the path at your own file:
+
 ```python
 from rishe import ConlluReader, PeymaReader, PlainTextReader
 
-for sentence in ConlluReader("data/corpora/fa_perdt-ud-test.conllu"):
+for sentence in ConlluReader("fa_perdt-ud-test.conllu"):
     print(sentence.text, sentence.tokens[0].lemma)
 ```
 
 `ConlluReader` handles CoNLL-U, `PeymaReader` reads the PEYMA format and
-`PlainTextReader` reads one sentence per line.
+`PlainTextReader` reads one sentence per line. The test corpora used in this
+repo's own suite are under `data/corpora/` in the repository (gitignored, so a
+clone does not fetch them); see `scripts/pull_test_packs.py`.
 
 ## Model packs
 
