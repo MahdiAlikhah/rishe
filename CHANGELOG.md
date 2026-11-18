@@ -9,6 +9,135 @@ in the pack manifest and on the model repository.
 
 ## [Unreleased]
 
+### Fixed
+
+Everything below is one of the ~45 findings the 1.0.3 audit ranked "should fix";
+each ships with the regression test that would have caught it. No public item was
+removed or renamed, so this is a patch, not a minor.
+
+- **Morphology and the tokenizer round-trip.** `tokenize` dropped a trailing ZWNJ,
+  so `detokenize` could not put it back. `detokenize` put a space before ASCII
+  `,`/`;` and around both ASCII quotes; the quote toggles now. The identity rows
+  for `است`/`نیست`/`هست` shadowed the verb table, so the copula read as a noun.
+  Perfect 1sg/2sg (`رفته‌ام`) collapsed to the participle while 3pl reduced to the
+  verb. `stem`/`split_token` stripped suffixes off verb forms (`رفت` → `رف`+`ت`,
+  `کردیم` → `کردی`+`م`); `stem` now restores `گان` → `ه` like `lemmatize` does.
+  `join_verb_parts` lacked the non-participle noun guard (`خنده است`), and the
+  copula split ran on `است`/`نیست`/`هست`/`چیست`.
+- **Ezafe.** A marker was inserted before every bare past verb
+  (`او کتاب خواند`); `ezafe.rs` had no tests at all before this.
+- **Maskers.** Maskers and the utilities used different word-boundary predicates,
+  so `استx` counted as the stopword `است`. `mask_non_persian` took two flags no
+  surface could pass; removed, it now drops English the way its name says.
+- **`data/offensive_words.txt` and `data/informal_words.tsv`.** Five duplicate
+  rows, a vocalised entry `normalize` can never match, and the space/ZWNJ/closed
+  variants were missing, so `بی پدر`, `بی‌ناموس` and `کصلیس` all passed the filter.
+  Ten rows had a stray edge ZWNJ, six keys were unreachable (including the common
+  colloquial `رو` → `را`) and four lemmas emitted a leading U+200C.
+- **Conjugation.** The negation or particle went before a separable preverb
+  (`نبرگشتم`, `ببرگردم`); preverbs come from the stem table and keep their place
+  (`برنگشتم`, `برگردم`). 83 lemmas without a present stem got one fabricated from
+  the past stem, and the present paradigm is now empty rather than invented. The
+  infinitive key (`بیختن` → `بیخت`) was picked as the present stem. `verbs.tsv`
+  lost the unresolvable `آهنج یا آهاز` key.
+- **`to_tajik`.** It counted the ZWNJ as a word letter (`خونҳҳо`, `خانۀ` → `ҳ`) and
+  softened every final `ه` (`ماه` → `моа`).
+- **`augment`.** The keyboard-shift row for `9`/`0` was swapped (`90` → `)(`), a
+  seed of 0 was clamped to 1, Persian digits and `ژ` had no neighbours, and
+  `ocr_noise` ate Persian digits.
+- **`inflector`.** `possessive("ایرانی")` inserted no ZWNJ; the module had no
+  tests. `possessive("ایرانی", 0)` is `ایرانی‌ام` and `possessive("دنیا", 0)` is
+  `دنیایم` now.
+- **Lexicon data.** `nouns.tsv` had 16k keys the tokenizer can never produce
+  (Arabic-coded letters, 127 punctuation keys): canonicalized and filtered,
+  190,450 → 187,591 rows, every `key == lemma`, byte-sorted. 163k of the 190k
+  `word_freq.tsv` rows had frequency 0, which is what made `spell_correct` prefer
+  junk; only real counts are kept (27,132 rows). `extract_lexicons.py` applies the
+  same canonicalization and filtering, so a regeneration keeps both files clean,
+  and `build.rs` asserts a key has no whitespace so a hand edit fails loudly.
+- **Corpus readers.** `ConlluReader` reported nothing when a row had the wrong
+  column count; it warns on stderr with `file:line` now. `PlainTextReader` and
+  `PeymaReader` open with `utf-8-sig`, so a BOM no longer becomes part of the
+  first sentence.
+- **CLI exit codes.** Every command exited 101 on a closed stdout
+  (`rishe hub list | head -1`); a print hook makes it a clean 0. The Python binary
+  wrote CRLF on Windows, rejected `--top < 1` with exit 1 where Rust uses 2, and
+  accepted `hub list extra` where Rust rejects it. Rust read a stdin BOM as a
+  token and Python did not; both drop it now. A `--top` past `usize` was
+  `OverflowError` with a traceback in Python and exit 2 in Rust; both exit 2.
+- **Hub locks and cache safety.** A killed pull left a `.lock` that refused
+  retries for an hour with no way out; `hub unlock <name>` (Rust and Python)
+  clears it without deleting the payload, and for a pack the leaked lock blocked
+  every pack. A custom URL could overwrite a registered model's cache file with
+  bytes only the caller's digest vouched for; both implementations refuse that
+  name, and `--sha256` on a registered model is refused instead of ignored.
+  Windows device names (`NUL`, `COM1`, …) are refused: they download, verify and
+  then can never be renamed into place, leaving an unremovable `.part`. A body
+  with no `Content-Length` was unbounded; the cap is 8 GiB. `hub list` said
+  `cached` for a corrupt file; it checks the digest. Python: a complete `.part`
+  answered with 416 was deleted and re-fetched, a short body was reported as a
+  checksum mismatch and its resumable prefix deleted, `http.client` errors escaped
+  as tracebacks, `file:`/`ftp:`/`data:` URLs copied local bytes into the model
+  cache, a foreign lock was deleted in `finally`, and an empty `HOME` picked a
+  different cache root than Rust.
+- **Conjugation and the Python binding.** `conjugate()` returned a `HashMap`, so
+  the Python dict order changed per call and per process; the binding builds it
+  in a fixed field order.
+- **`compat.Normalizer`.** The alphabet table covered 150 Arabic presentation
+  forms and missed 49, so `ﻙﺕﺍﺏ` came back as `کتﺍب`. Removing a symbol left a
+  double space (`کتاب © ۲۰۰۰`). The special-character filter asked
+  `unicodedata.category` once per character instead of once per distinct
+  character and the verbal-spacing pass ran twice; a 1 MB document went from
+  3.0 s to 2.6 s. `Lemmatizer` accepted `pos` and `joined_verb_parts` and ignored
+  both.
+- **`compat` constructor flags.** `unicodes_replacement` and the
+  `seperate_mi`/`correct_spacing` pair were stored on the instance and then never
+  consulted, because `__init__` raises for both cases. The dead attributes are
+  gone.
+- **`process_batch("…")`.** A bare string was iterated as characters and returned
+  one document per character.
+- **Embeddings.** A duplicate vocabulary row resolved to whichever row the
+  unstable sort put first, so `vector()` could return the first or the last row;
+  the order is `(word, row)` and the first row always wins. `similarity()` used an
+  f64 loop while `most_similar()` used the vectorized f32 dot product, so one pair
+  had two answers; both go through one scorer. Exact score ties are alphabetical
+  instead of heap order. The `.rvec` reader trusted the header count and ignored
+  trailing bytes, so a shrunken count decoded a smaller model; the file length
+  must match the header now.
+- **Model packs.** In `labels.json`, a `max_len` of `16.0`, `"16"`, `-5` or
+  `null` silently became the 192 default and skipped the `3..=4096` check, and a
+  non-string label was dropped, which shifted every later class index; both are
+  errors. `depparse` returned an empty parse and exit 0 when the first word could
+  not be encoded, while the same word in second position was a hard error.
+- **Errors follow `API_CONVENTIONS.md` §11.** A missing `.vec` or pack directory
+  raises `FileNotFoundError` from `Embeddings`, `ModelPack` and `Pipeline`, not a
+  generic `OSError`/`ValueError`.
+
+### Changed
+
+- `scripts/api_surface.py` reads `pub use` re-exports, so `JalaliDate` is in
+  `docs/api-surface.txt` (217 → 218 Rust items). `python/tests/test_surface.py`
+  now enforces the naming rules on the Rust snapshot too, with the four names
+  frozen at 1.0.0 as its shrinking allowlist.
+- `scripts/pull_test_packs.py` also exports `RISHE_DEPPARSE_PACK` and
+  `RISHE_EMBEDDINGS_PACK`, which is what the Rust pack tests read; a set-but-
+  missing path is an error instead of a silent skip.
+
+### CI
+
+- `pack tests` runs the two Rust pack tests as well as the twelve Python ones,
+  and asserts the five variables they read are set.
+- New `msrv models` job: the `models` feature needs 1.91 (`tract`), which
+  `docs/STABILITY.md` documented and nothing checked.
+- `features` runs `cargo test --no-default-features --lib`, not only `check`.
+- `sdist` installs its own archive, so a file missing from it fails the release
+  rather than the users who fall back to it.
+- `docs/RELEASING.md` matches the workflow: `cargo build` for the GPU features
+  (they were `check`ed, which never links), the new jobs, the two Rust pack tests,
+  and `audit` as the second non-blocking publish gate. `docs/cli.md` no longer
+  claims `convert` "halves the file size" when the published pack went from 236 MB
+  to 42 MB.
+
 ## [1.0.3] - 2026-11-17
 
 ### Changed
