@@ -108,6 +108,7 @@ impl Conjugation {
     /// and per call; the Python binding needs one stable order so callers can
     /// print or compare the result. Crate-internal, so the frozen `1.0.0` API
     /// surface does not grow for a serialization detail.
+    #[cfg(feature = "python")]
     pub(crate) fn into_pairs(self) -> [(&'static str, Vec<String>); 8] {
         [
             ("past", self.past),
