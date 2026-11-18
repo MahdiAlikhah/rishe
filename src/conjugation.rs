@@ -40,20 +40,47 @@ impl Conjugation {
     pub fn from_roots(roots: &VerbRoots) -> Self {
         let past = roots.past.as_str();
         let present = roots.present.as_str();
-        let negative_past = prefixed_stem(past, "ن");
-        let subjunctive = if present == "باش" {
-            present.to_string()
+        let preverb = roots.preverb.as_str();
+        // A separable preverb keeps its place: `بر` + `گشت` negates to `برنگشتم`,
+        // and `می`/`نمی` go between preverb and stem.
+        let past_body = past.strip_prefix(preverb).unwrap_or(past);
+        let present_body = present.strip_prefix(preverb).unwrap_or(present);
+
+        // No present stem in the source means no present paradigm; emitting the
+        // endings alone (`م`, `ی`, `د`) was worse than emitting nothing.
+        let (present, negative_present, subjunctive) = if present.is_empty() {
+            (Vec::new(), Vec::new(), Vec::new())
         } else {
-            prefixed_stem(present, "ب")
+            // `باش` is the irregular subjunctive of `بود` and takes no `ب`; a
+            // separable preverb blocks the marker as well, giving `برگردم`
+            // rather than `ببرگردم`.
+            let subjunctive = if present == "باش" || !preverb.is_empty() {
+                present.to_string()
+            } else {
+                prefixed_stem(present, "ب")
+            };
+            (
+                forms(
+                    &format!("می\u{200C}{preverb}"),
+                    present_body,
+                    &PRESENT_ENDINGS,
+                ),
+                forms(
+                    &format!("نمی\u{200C}{preverb}"),
+                    present_body,
+                    &PRESENT_ENDINGS,
+                ),
+                forms("", &subjunctive, &PRESENT_ENDINGS),
+            )
         };
 
         Self {
             past: forms("", past, &PAST_ENDINGS),
-            negative_past: forms("", &negative_past, &PAST_ENDINGS),
-            imperfective_past: forms("می\u{200C}", past, &PAST_ENDINGS),
-            present: forms("می\u{200C}", present, &PRESENT_ENDINGS),
-            negative_present: forms("نمی\u{200C}", present, &PRESENT_ENDINGS),
-            subjunctive: forms("", &subjunctive, &PRESENT_ENDINGS),
+            negative_past: forms("", &negated(preverb, past_body), &PAST_ENDINGS),
+            imperfective_past: forms(&format!("می\u{200C}{preverb}"), past_body, &PAST_ENDINGS),
+            present,
+            negative_present,
+            subjunctive,
             future: FUTURE_AUX.map(|aux| format!("{aux} {past}")).to_vec(),
             perfect: PERFECT_ENDINGS
                 .map(|ending| format!("{past}ه{ending}"))
@@ -81,6 +108,12 @@ fn forms(prefix: &str, stem: &str, endings: &[&str; 6]) -> Vec<String> {
         .iter()
         .map(|ending| format!("{prefix}{stem}{ending}"))
         .collect()
+}
+
+/// Negate a stem, keeping a separable preverb where it is: `بر` + `گشت` gives
+/// `برنگشتم`, while a bare `آ`/`ا` stem takes the `ی` glide (`نمی‌آیم`).
+fn negated(preverb: &str, stem: &str) -> String {
+    format!("{preverb}{}", prefixed_stem(stem, "ن"))
 }
 
 fn prefixed_stem(stem: &str, prefix: &str) -> String {

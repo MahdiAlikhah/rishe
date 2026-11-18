@@ -12,8 +12,14 @@ pub fn to_tajik(text: &str) -> String {
             out.push(digit);
             continue;
         }
-        let start = index == 0 || !is_persian_word_char(chars[index - 1]);
-        let end = index + 1 == chars.len() || !is_persian_word_char(chars[index + 1]);
+        // A ZWNJ ends a word for these tests: it joins a stem to a suffix
+        // (`خانه‌ها`), so the `ه` before it is stem-final and softens, while the
+        // old test counted the ZWNJ as a letter and kept it hard (`хонҳҳо`).
+        let start =
+            index == 0 || chars[index - 1] == ZWNJ || !is_persian_word_char(chars[index - 1]);
+        let end = index + 1 == chars.len()
+            || chars[index + 1] == ZWNJ
+            || !is_persian_word_char(chars[index + 1]);
         let mapped = match ch {
             '\u{0622}' => "о",
             '\u{0627}' => {
@@ -33,8 +39,10 @@ pub fn to_tajik(text: &str) -> String {
             // `ح` is a consonant everywhere; only `ه` softens to a vowel at the
             // end of a word (`خانه` → `хона`), so `صبح` keeps its `ҳ`.
             '\u{062D}' => "ҳ",
+            // `ه` softens to a vowel at the end of a word (`خانه` → `хона`) but
+            // stays a consonant when it follows a vowel letter (`ماه` → `моҳ`).
             '\u{0647}' => {
-                if end {
+                if end && !follows_vowel_letter(&chars, index) {
                     "а"
                 } else {
                     "ҳ"
@@ -70,7 +78,10 @@ pub fn to_tajik(text: &str) -> String {
                 }
             }
             '\u{0626}' => "й",
-            '\u{0629}' | '\u{06C0}' => "ҳ",
+            // `ۀ` is `ه` plus the ezafe hamza: `خانۀ من` is `خانه` + ezafe, so the
+            // `ه` softens and the ezafe is written `и` (`хонаи мн`).
+            '\u{06C0}' => "аи",
+            '\u{0629}' => "ҳ",
             _ => {
                 out.push(ch);
                 continue;
@@ -179,6 +190,20 @@ fn is_persian_word_char(ch: char) -> bool {
     )
 }
 
+/// Whether the nearest non-ZWNJ character before `index` is a vowel letter that
+/// keeps a following `ه` consonantal: `خواه` → `хоҳ`, but `خانه` → `хона`.
+fn follows_vowel_letter(chars: &[char], index: usize) -> bool {
+    matches!(
+        previous_word_char(chars, index),
+        Some('\u{0627}' | '\u{0622}' | '\u{0648}' | '\u{06CC}' | '\u{064A}' | '\u{0649}')
+    )
+}
+
+/// Nearest non-ZWNJ character before `index`, if any.
+fn previous_word_char(chars: &[char], index: usize) -> Option<char> {
+    chars[..index].iter().rev().copied().find(|&ch| ch != ZWNJ)
+}
+
 fn is_tajik_word_char(ch: char) -> bool {
     ch.is_alphabetic() || ch.is_ascii_digit()
 }
@@ -198,6 +223,23 @@ mod tests {
         // `ح` stays a consonant at a word end; `ه` still softens to a vowel.
         assert_eq!(to_tajik("صبح"), "сбҳ");
         assert_eq!(to_tajik("خانه"), "хона");
+    }
+
+    #[test]
+    fn zwnj_ends_a_word_for_the_softening_rules() {
+        // The ZWNJ was counted as a letter, so a stem-final `ه` stayed hard
+        // (`خانه‌ها` -> `хонҳҳо`) and `ۀ` came out as a bare `ҳ`.
+        assert_eq!(to_tajik("خانه‌ها"), "хонаҳо");
+        assert_eq!(to_tajik("خانۀ من"), "хонаи мн");
+    }
+
+    #[test]
+    fn a_he_after_a_vowel_letter_stays_a_consonant() {
+        // `ماه` has no ZWNJ and no ezafe; softening every final `ه` gave `моа`.
+        assert_eq!(to_tajik("ماه"), "моҳ");
+        assert_eq!(to_tajik("خان"), "хон");
+        // After a consonant the `ه` is the final vowel, as before.
+        assert_eq!(to_tajik("ره"), "ра");
     }
 
     #[test]

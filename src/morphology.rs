@@ -178,8 +178,11 @@ pub(crate) const PARTICIPLE_NOUNS: &[&str] = &[
 pub struct VerbRoots {
     /// Past stem or infinitive lemma, e.g. `رفت`.
     pub past: String,
-    /// Present stem, e.g. `رو`.
+    /// Present stem, e.g. `رو`; empty when the source lists none.
     pub present: String,
+    /// Separable preverb (`بر` in `برگشت`), or empty. The negations and the
+    /// imperfective marker go after it, and the subjunctive takes no `ب`.
+    pub preverb: String,
 }
 
 // Present stems that cannot be picked by "longest variant" because the lexicon also
@@ -231,25 +234,61 @@ impl MorphologyEngine {
         }
 
         let mut roots = HashMap::with_capacity(by_lemma.len());
-        for (lemma, keys) in by_lemma {
+        for (lemma, keys) in &by_lemma {
+            // A lemma whose only key is itself has no present stem in the source.
+            // Leaving `present` empty keeps the paradigm honest; filling it with
+            // the past stem invented `می‌آرستم` for `آرست`.
+            //
+            // The source also lists the infinitive as a key (`بیختن` -> `بیخت`).
+            // An infinitive is not a present stem, and picking it as the longest
+            // key produced `می‌بیختنم`.
+            let infinitive = format!("{lemma}ن");
             let present = PREFERRED_PRESENT
                 .iter()
                 .find(|(past, _)| *past == lemma.as_str())
                 .map(|(_, present)| (*present).to_string())
                 .or_else(|| {
                     keys.iter()
-                        .filter(|key| **key != lemma)
+                        .filter(|key| key.as_str() != lemma.as_str() && **key != infinitive)
                         .max_by_key(|key| key.chars().count())
                         .cloned()
                 })
-                .unwrap_or_else(|| lemma.clone());
+                .unwrap_or_default();
             roots.insert(
                 lemma.clone(),
                 VerbRoots {
-                    past: lemma,
+                    past: lemma.clone(),
                     present,
+                    preverb: String::new(),
                 },
             );
+        }
+
+        // A separable preverb (`بر` in `برگشت`) behaves like a prefix of the whole
+        // paradigm: `برنگشتم`, not `نبرگشتم`, and `برگردم`, not `ببرگردم`. It is
+        // only separable when the stem left over is a verb whose own present stem
+        // is exactly what follows the preverb here, which rejects `برید`/`درید`.
+        let separables: Vec<(String, String)> = roots
+            .iter()
+            .filter_map(|(lemma, entry)| {
+                let present = entry.present.as_str();
+                if present.len() < 3 {
+                    return None;
+                }
+                let prefix = SHARED_VERBAL_PREFIXES
+                    .iter()
+                    .filter(|prefix| lemma.starts_with(**prefix) && present.starts_with(**prefix))
+                    .max_by_key(|prefix| prefix.len())?;
+                let rest = &lemma[prefix.len()..];
+                let rest_present = &present[prefix.len()..];
+                let rest_entry = roots.get(rest)?;
+                (rest_entry.present == rest_present).then(|| (lemma.clone(), (*prefix).to_string()))
+            })
+            .collect();
+        for (lemma, preverb) in separables {
+            if let Some(entry) = roots.get_mut(&lemma) {
+                entry.preverb = preverb;
+            }
         }
         roots
     }
@@ -274,11 +313,12 @@ impl MorphologyEngine {
         self.verb_roots.get(lemma.as_ref())
     }
 
-    /// Present stem of a verb lemma, or `None` when it is not a known verb.
+    /// Present stem of a verb lemma, or `None` when the lemma has none.
     pub fn present_stem(&self, lemma: &str) -> Option<&str> {
         self.verb_roots
             .get(lemma)
             .map(|roots| roots.present.as_str())
+            .filter(|present| !present.is_empty())
     }
 
     /// Whether `stem` is a known past stem or verb lemma.

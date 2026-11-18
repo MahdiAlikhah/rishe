@@ -191,7 +191,12 @@ pub fn whitespace_noise(text: &str, options: WhitespaceNoiseOptions) -> String {
 
 const KEYBOARD_ROWS: [&str; 4] = ["1234567890-=", "ضصثقفغعهخحجچپ", "شسیبلاتنمکگ", "ظطزرذدئو./"];
 
-const SHIFTED_ROWS: [&str; 4] = ["!@#$%^&*)(_+", "ًٌٍ﷼،؛,][\\}{|", "َُِّۀآـ«»:\"", "ةيژؤأإء<>؟"];
+// The shifted row is what `shift` produces on each key, so `9` must give `(` and
+// `0` must give `)`. The pair was swapped, and `keyboard_noise("90")` emitted `)(`.
+const SHIFTED_ROWS: [&str; 4] = ["!@#$%^&*()_+", "ًٌٍ﷼،؛,][\\}{|", "َُِّۀآـ«»:\"", "ةيژؤأإء<>؟"];
+
+/// Persian digits sit on the same keys as the ASCII ones, in this order.
+const PERSIAN_DIGIT_ROW: &str = "۱۲۳۴۵۶۷۸۹۰";
 
 static KEYBOARD_NEIGHBORS: OnceLock<HashMap<char, Vec<char>>> = OnceLock::new();
 
@@ -221,11 +226,45 @@ fn keyboard_neighbors() -> &'static HashMap<char, Vec<char>> {
                 map.insert(ch, neighbors);
             }
         }
+
+        // Persian digits have no row of their own: they sit on the same keys as
+        // the ASCII digits, so they take the same neighbours in their own script.
+        // Without this, `keyboard_noise` never touched `۱۲۳` at all.
+        let persian: Vec<char> = PERSIAN_DIGIT_ROW.chars().collect();
+        let ascii: Vec<char> = KEYBOARD_ROWS[0].chars().take(10).collect();
+        for (ascii_digit, persian_digit) in ascii.iter().zip(&persian) {
+            let neighbors = map
+                .get(ascii_digit)
+                .map(|neighbors| {
+                    neighbors
+                        .iter()
+                        .filter_map(|n| {
+                            ascii
+                                .iter()
+                                .position(|c| c == n)
+                                .map(|index| persian[index])
+                        })
+                        .collect::<Vec<char>>()
+                })
+                .unwrap_or_default();
+            map.insert(*persian_digit, neighbors);
+        }
+        // `ژ` shares a key with `ز`, and has no row entry of its own, so it was
+        // the one letter the masker never corrupted.
+        map.insert('ژ', vec!['ز']);
+        map.entry('ز').or_default().push('ژ');
         map
     })
 }
 
 fn shifted_char(ch: char) -> Option<char> {
+    // Persian digits shift to the symbol on the same key, like the ASCII digit
+    // does; they had no entry at all and so were never shifted.
+    let ch = PERSIAN_DIGIT_ROW
+        .chars()
+        .position(|digit| digit == ch)
+        .and_then(|index| KEYBOARD_ROWS[0].chars().nth(index))
+        .unwrap_or(ch);
     for (r, row) in KEYBOARD_ROWS.iter().enumerate() {
         if let Some(index) = row.chars().position(|c| c == ch) {
             return SHIFTED_ROWS[r].chars().nth(index);
@@ -261,8 +300,9 @@ fn ocr_confusions(ch: char) -> Option<&'static [char]> {
         'ه' => &['ة'],
         'ی' => &['ئ'],
         'ئ' => &['ی'],
-        '۱' => &['ل'],
-        '۰' => &['.'],
+        // Persian digits were confused with the letters they resemble, which
+        // contradicts the documented "only Persian letters are replaced" and
+        // turned `۱۰` into `ل۰` or `۱.`. Digits are left alone.
         _ => return None,
     })
 }
@@ -278,7 +318,9 @@ struct Rng(u64);
 
 impl Rng {
     fn new(seed: u64) -> Self {
-        Self(seed.max(1))
+        // `seed.max(1)` silently made `seed=0` identical to `seed=1`. Mixing the
+        // seed instead keeps every seed distinct and keeps xorshift off zero.
+        Self(seed ^ 0x9E37_79B9_7F4A_7C15)
     }
 
     fn next_u64(&mut self) -> u64 {
@@ -345,6 +387,65 @@ mod tests {
         };
         assert_eq!(keyboard_noise("12-", options), "!@_");
         assert_eq!(keyboard_noise("کتاب", options), "کتاب");
+        // The shifted row had `9` and `0` swapped, so this gave `)(`.
+        assert_eq!(keyboard_noise("90", options), "()");
+        // Persian digits shift like their ASCII neighbours on the same keys.
+        assert_eq!(keyboard_noise("۹۰", options), "()");
+    }
+
+    #[test]
+    fn keyboard_noise_reaches_persian_digits_and_zhe() {
+        let options = KeyboardNoiseOptions {
+            deletion_prob: 1.0,
+            substitution_prob: 0.0,
+            insertion_prob: 0.0,
+            repeat_prob: 0.0,
+            shifted_prob: 0.0,
+            shift_letters: false,
+            seed: Some(3),
+        };
+        // Neither had a keyboard entry, so both passed through untouched.
+        assert_eq!(keyboard_noise("۱۲۳ ژاله", options), " ");
+    }
+
+    #[test]
+    fn ocr_noise_leaves_digits_alone() {
+        let options = OcrNoiseOptions {
+            substitution_prob: 1.0,
+            deletion_prob: 0.0,
+            repeat_prob: 0.0,
+            seed: Some(5),
+        };
+        // The doc says only Persian letters are confused; `۱۰` used to become
+        // `ل۰` or `۱.`.
+        assert_eq!(ocr_noise("۱۰ ۲۰", options), "۱۰ ۲۰");
+        let output = ocr_noise("بپ", options);
+        assert_eq!(output.chars().count(), 2);
+        assert!(output.chars().all(|ch| "پتثب".contains(ch)));
+    }
+
+    #[test]
+    fn different_seeds_give_different_output() {
+        let options = KeyboardNoiseOptions {
+            deletion_prob: 0.0,
+            substitution_prob: 0.3,
+            insertion_prob: 0.0,
+            repeat_prob: 0.0,
+            shifted_prob: 0.0,
+            shift_letters: false,
+            seed: Some(0),
+        };
+        // `seed=0` was clamped to `1`, so both seeds produced the same text.
+        let zero = keyboard_noise(&"کتاب ".repeat(20), options);
+        let one = keyboard_noise(
+            &"کتاب ".repeat(20),
+            KeyboardNoiseOptions {
+                seed: Some(1),
+                ..options
+            },
+        );
+        assert_ne!(zero, one);
+        assert_eq!(zero, keyboard_noise(&"کتاب ".repeat(20), options));
     }
 
     #[test]

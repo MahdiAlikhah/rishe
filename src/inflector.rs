@@ -83,3 +83,37 @@ fn join(word: &str, suffix: &str) -> String {
         format!("{word}{ZWNJ}{suffix}")
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn possessive_keeps_the_he_and_ye_final_letters_distinct() {
+        // `ی`-final words take a ZWNJ like `ه`-final ones; without it `ایرانی` +
+        // `م` reads as "we are Iranian".
+        assert_eq!(Inflector::possessive("ایرانی", 0), Some("ایرانی‌ام".into()));
+        assert_eq!(Inflector::possessive("ایرانی", 2), Some("ایرانی‌اش".into()));
+        assert_eq!(Inflector::possessive("خانه", 0), Some("خانه‌ام".into()));
+        assert_eq!(Inflector::possessive("خانه", 3), Some("خانه‌مان".into()));
+        // Vowel-final nouns take the linking `ی`.
+        assert_eq!(Inflector::possessive("دنیا", 0), Some("دنیایم".into()));
+        assert_eq!(Inflector::possessive("بازو", 2), Some("بازویش".into()));
+        // Consonant-final nouns take the bare suffix.
+        assert_eq!(Inflector::possessive("کتاب", 0), Some("کتابم".into()));
+        assert_eq!(Inflector::possessive("کتاب", 6), None);
+        assert_eq!(Inflector::possessive("", 0), Some(String::new()));
+    }
+
+    #[test]
+    fn comparisons_and_plurals() {
+        assert_eq!(Inflector::comparative("بزرگ"), "بزرگ‌تر");
+        assert_eq!(Inflector::superlative("بزرگ"), "بزرگ‌ترین");
+        assert_eq!(Inflector::comparative("خوب"), "بهتر");
+        assert_eq!(Inflector::superlative("خوب"), "بهترین");
+        // `ها` follows `ا`/`و`/`د`/`ر`/`ز`/`ژ` without a ZWNJ.
+        assert_eq!(Inflector::plural("کتاب"), "کتاب‌ها");
+        assert_eq!(Inflector::plural("دنیا"), "دنیاها");
+        assert_eq!(Inflector::plural(""), "");
+    }
+}
