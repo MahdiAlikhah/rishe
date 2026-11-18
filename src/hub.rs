@@ -248,6 +248,20 @@ fn pull(args: &[String]) -> Result<(), HubError> {
             ))
         })?;
         validate_sha(&sha)?;
+        // Only a network URL is a download. `file:`/`ftp:`/`data:` would copy or
+        // fetch bytes by another protocol and drop them in the model cache. The
+        // HTTP client happens to reject them too, but with a parse error that says
+        // nothing about the rule, so the check is explicit here like the Python one.
+        let authority = name.split(['/', '?', '#']).next().unwrap_or(name);
+        let scheme = match name.find(':') {
+            Some(at) if at < authority.len() => name[..at].to_ascii_lowercase(),
+            _ => String::new(),
+        };
+        if scheme != "http" && scheme != "https" {
+            return Err(HubError::Runtime(format!(
+                "unsupported URL scheme {scheme:?}; use http or https"
+            )));
+        }
         let filename = infer_filename(name).ok_or_else(|| {
             HubError::Runtime(
                 "cannot infer a filename from the URL; it must end in a plain file name"
@@ -1468,6 +1482,25 @@ mod tests {
                 .contains("belongs to the registered model"),
             "{error}"
         );
+    }
+
+    #[test]
+    fn a_custom_url_must_be_http() {
+        // `file:`/`ftp:`/`data:` copied or fetched bytes by another protocol and
+        // dropped them in the model cache. The HTTP client rejected them by
+        // accident with a parse error, so the rule was never stated or tested.
+        for url in [
+            "file:///etc/passwd",
+            "ftp://example.invalid/model.bin",
+            "data:text/plain,hi",
+        ] {
+            let error = pull(&[url.to_string(), "--sha256".to_string(), "0".repeat(64)])
+                .expect_err("a non-http URL must be refused");
+            assert!(
+                error.to_string().contains("unsupported URL scheme"),
+                "{error}"
+            );
+        }
     }
 
     #[test]
