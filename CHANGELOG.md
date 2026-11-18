@@ -148,6 +148,20 @@ removed or renamed, so this is a patch, not a minor.
   copy whose comment described the rule differently, so the two agreed by
   accident and any edit to one would have made `mask` and `rake` disagree about
   where a word ends.
+- `ya` converts the word-final `ه‌ی` before punctuation as well as before a space:
+  `خانه‌ی.` used to stay unconverted while `خانه‌ی ما` became `خانۀ ما`, so one
+  word had two spellings.
+- `punctuation_spacing` separates a leading `،`/`…`/`؟` from the word after it;
+  `، دنیا` came back as `،دنیا`.
+- `rake` and `textrank` return nothing for `max_length=0`, which asks for phrases
+  of at most zero words. It was clamped to 1 and answered with one-word phrases.
+- `normalize` strips an isolated-form haraka (`ﹰ`, `ﹶ`, …): the generated table
+  filtered them out because their `NFKC` form is a space plus a combining mark, so
+  `strip_diacritics` never saw them. Four ligature forms were missing for the same
+  reason; the table grows from 698 to 721 entries.
+- Seven unreachable rows left `data/nouns.tsv`: eight keys carried a ZWNJ at the
+  edge, which normalization strips, and seven of them duplicated a row already in
+  the file. `build.rs` refuses such a key now, as it already refused whitespace.
 
 ### CI
 

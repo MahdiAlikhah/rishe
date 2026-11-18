@@ -280,6 +280,10 @@ CC BY-SA 4.0; see [NOTICE.md](NOTICE.md).
 
 ## CLI
 
+The `pos`, `ner`, `ezafe`, `depparse`, `similar` and `similarity` commands need a
+model: pull the packs first (see [Model packs](#model-packs)), or pass `--model` /
+`--pack` with a path. The rest work on a fresh install.
+
 ```bash
 rishe normalize "مي كنم"
 rishe tokenize "سلام دنیا" --json
