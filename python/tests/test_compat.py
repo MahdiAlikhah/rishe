@@ -102,6 +102,23 @@ class CompatTest(unittest.TestCase):
         # A lone tatweel is a stretch, not a letter.
         self.assertEqual(Normalizer().normalize("کـتاب"), "کتاب")
 
+    def test_lemmatizer_honors_pos_and_joined_verb_parts(self):
+        """Both arguments were accepted and then ignored."""
+        self.assertEqual(Lemmatizer().lemmatize("می‌روم", pos="V"), "رفت#رو")
+        # A non-verb tag takes the word lemma, not the verb table.
+        self.assertEqual(Lemmatizer().lemmatize("می‌روم", pos="N"), "رفت")
+        self.assertEqual(Lemmatizer(joined_verb_parts=False).lemmatize("می‌روم"), "رفت")
+
+    def test_remove_specials_chars_is_linear(self):
+        """It asked `unicodedata.category` once per character, not per distinct one."""
+        import time
+
+        text = "کتاب خوب است © " * 20000
+        start = time.perf_counter()
+        Normalizer(remove_diacritics=False).remove_specials_chars(text)
+        # A generous bound: the per-character version took seconds at this size.
+        self.assertLess(time.perf_counter() - start, 2.0)
+
 
 if __name__ == "__main__":
     unittest.main()

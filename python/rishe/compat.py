@@ -51,7 +51,6 @@ class Normalizer:
         self._decrease_repeated_chars = decrease_repeated_chars
         self._persian_style = persian_style
         self._persian_numbers = persian_numbers
-        self._unicodes_replacement = unicodes_replacement
         self._seperate_mi = seperate_mi
         if not unicodes_replacement:
             raise NotImplementedError(
@@ -73,9 +72,9 @@ class Normalizer:
         # Build the stage list from the flags first. Running the default pipeline
         # here would apply the spacing step before the flags are consulted, which
         # silently makes `correct_spacing=False` a no-op.
-        stages: List[str] = []
-        if self._unicodes_replacement:
-            stages.extend(["alphabet", "arabic_unicode"])
+        # `unicodes_replacement` is checked in `__init__` and raises when it is
+        # off, so its two stages are always present.
+        stages: List[str] = ["alphabet", "arabic_unicode"]
         if self._persian_style:
             stages.append("punctuation")
         if self._persian_numbers:
@@ -84,10 +83,13 @@ class Normalizer:
             stages.append("spacing")
         if self._decrease_repeated_chars:
             stages.append("repeated_letters")
-        if self._seperate_mi:
+        # `spacing` already ends with the verbal-spacing pass (`NormalizeOp::Spacing`
+        # runs orthographic -> punctuation -> word -> verbal), so adding it again
+        # here re-joined every word a second time for no change: it is idempotent,
+        # and it was a third of the runtime.
+        if self._seperate_mi and not self._correct_spacing:
             stages.append("verbal_spacing")
-        if stages:
-            text = self._pipe.normalize(text, stages)
+        text = self._pipe.normalize(text, stages)
         if self._remove_diacritics:
             text = self._pipe.mask(text, ["diacritics"])
         if self._remove_specials_chars:
@@ -103,16 +105,22 @@ class Normalizer:
     def remove_specials_chars(self, text: str) -> str:
         # Whitespace and format characters carry meaning — `\n` and `\t` separate
         # words, ZWJ joins an emoji, RLM sets the direction — so they stay.
-        kept = "".join(
+        # One `unicodedata.category` call per *distinct* character, then a C-level
+        # `translate`: the old loop asked for the category of every character,
+        # which made this the slowest step of the whole compatibility normalizer.
+        drop = {
             ch
-            for ch in text
-            if ch.isspace()
-            or unicodedata.category(ch) == "Cf"
-            or not unicodedata.category(ch).startswith(("S", "C"))
-        )
-        if kept == text:
+            for ch in set(text)
+            if not (
+                ch.isspace()
+                or unicodedata.category(ch) == "Cf"
+                or not unicodedata.category(ch).startswith(("S", "C"))
+            )
+        }
+        if not drop:
             # Nothing was removed, so any run of spaces is the caller's own.
             return text
+        kept = text.translate({ord(ch): None for ch in drop})
         # Removing a symbol leaves a hole, and `کتاب © ۲۰۰۰` became `کتاب  ۲۰۰۰`.
         # Collapse the spaces that removal made; newlines are the caller's layout.
         while "  " in kept:
@@ -214,11 +222,21 @@ class Lemmatizer:
                 "Rishe compiles its lexicons in; custom words_file/verbs_file "
                 "are not supported."
             )
+        self._joined_verb_parts = joined_verb_parts
         self._pipe = _pipe()
 
     def lemmatize(self, word: str, pos: str = "") -> str:
+        # `pos` selects the lemma space: a verb tag goes through the verb table,
+        # anything else through the word lemma. Both `pos` and
+        # `joined_verb_parts` used to be accepted and ignored, so
+        # `lemmatize("کتاب", pos="V")` and `joined_verb_parts=False` changed
+        # nothing at all.
+        if pos and not pos.upper().startswith(("V", "AUX")):
+            return self._pipe.lemmatize(word)
         lemma, present = self._pipe.lemmatize_verb(word)
-        return f"{lemma}#{present}" if present else lemma
+        if self._joined_verb_parts and present:
+            return f"{lemma}#{present}"
+        return lemma
 
 
 class Stemmer:
@@ -238,6 +256,9 @@ class TokenSplitter:
         self._pipe = _pipe()
 
     def split_token_words(self, token: str) -> List[Tuple[str, ...]]:
+        # One tuple of the parts when the token splits, and an empty list when it
+        # does not — the classic shape. `split_token` returns the token itself in
+        # that case, so the length check is what distinguishes the two.
         parts = self._pipe.split_token(token)
         return [tuple(parts)] if len(parts) > 1 else []
 
