@@ -289,6 +289,14 @@ class DownloadTest(unittest.TestCase):
                 hub.pull(url, sha256="0" * 64)
             self.assertIn("http", str(caught.exception), url)
 
+    def test_a_backslash_in_a_url_filename_is_refused(self):
+        """`Path(...).name` splits on "\\\\" on Windows only, so one URL got two answers.
+
+        `http://x/a\\b.bin` was `b.bin` here and `ValueError` in the Rust binary.
+        """
+        with self.assertRaises(ValueError):
+            hub.pull("http://x/a\\b.bin", sha256="0" * 64)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -221,7 +221,12 @@ def pull(
             raise ValueError(
                 f"unsupported URL scheme {scheme or '(none)'!r}; use http or https"
             )
-        inferred = filename or Path(urlparse(source).path).name
+        # Split on "/" only, like `infer_filename` in src/hub.rs. `Path(...).name`
+        # also splits on "\\" on Windows, so `http://x/a\\b.bin` became `b.bin`
+        # here while the Rust binary refused it: the same URL was accepted on one
+        # platform and rejected on the other. A backslash must reach
+        # `_safe_filename` so it can reject it.
+        inferred = filename or urlparse(source).path.rsplit("/", 1)[-1]
         safe_name = _safe_filename(inferred)
         # A custom URL must not land on a registered model's cache file: the bytes
         # are only as trustworthy as the digest the caller passed.
