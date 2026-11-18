@@ -397,8 +397,13 @@ def _hub(args) -> int:
                 status = "missing"
             elif entry.get("partial"):
                 status = "partial"
-            else:
+            elif hub.verify(name):
                 status = "cached"
+            else:
+                # `cached` is a claim about the file, so it is checked against the
+                # pinned digest. The Rust binary already did this; reporting
+                # `cached` here for a corrupt file made the two disagree.
+                status = "corrupt"
             print(f"{name}\t{status}\t{model.filename}")
         for name in hub.PACKS:
             entry = hub.info(name)
@@ -406,8 +411,10 @@ def _hub(args) -> int:
                 status = "missing"
             elif entry.get("partial"):
                 status = "partial"
-            else:
+            elif hub.verify(name):
                 status = "cached"
+            else:
+                status = "corrupt"
             print(f"{name}\t{status}\tpack")
     return 0
 

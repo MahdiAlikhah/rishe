@@ -374,6 +374,24 @@ class ExitCodeContractTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             self.assert_exit(2, "hub", "list", "extra", env={"RISHE_HOME": root})
 
+    def test_hub_list_calls_a_corrupt_file_corrupt(self):
+        """`cached` is a claim about the file, so it is checked against the digest.
+
+        The Rust binary reported `corrupt`; this reported `cached`, so one cache
+        read differently depending on which binary asked.
+        """
+        with tempfile.TemporaryDirectory() as root:
+            models = Path(root) / "models"
+            models.mkdir()
+            (models / "rishe-embed-fa-300-v2.rvec").write_bytes(b"junk")
+            result = self.assert_exit(0, "hub", "list", env={"RISHE_HOME": root})
+        status = {
+            line.split("\t")[0]: line.split("\t")[1]
+            for line in result.stdout.decode("utf-8", "replace").splitlines()
+            if len(line.split("\t")) >= 2
+        }
+        self.assertEqual(status["rishe-embed-fa-300-v2"], "corrupt")
+
     def test_hub_pull_refuses_a_pin_for_a_task_pack(self):
         # A pack is verified against the registry manifest, so a caller digest has
         # nothing to apply to; ignoring it read as a pin that never happened.
