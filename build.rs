@@ -156,6 +156,16 @@ fn compile_tsv_to_fst(
             continue;
         }
 
+        // A key with whitespace can never come back from the tokenizer, so it is
+        // dead weight in the FST. The check is here rather than only in the
+        // generator because a hand-edited TSV would otherwise slip through
+        // (`آهنج یا آهاز` became `آخت`'s present stem this way).
+        assert!(
+            !key.chars().any(char::is_whitespace),
+            "{}: key {key:?} contains whitespace and can never be a token",
+            tsv_path.display()
+        );
+
         let packed_val: u64 = if use_identity_sentinel && key == lemma {
             ((pos_flags as u64) << 56) | FLAG_IDENTITY
         } else {

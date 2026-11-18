@@ -114,6 +114,7 @@ impl From<rishe::hub::HubError> for CliError {
 }
 
 fn main() -> ExitCode {
+    install_broken_pipe_hook();
     match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
@@ -127,6 +128,27 @@ fn main() -> ExitCode {
             ExitCode::from(error.exit_code())
         }
     }
+}
+
+/// Treat a closed stdout as a normal end of output.
+///
+/// `println!` panics when the write fails, so `rishe hub list | head -1` exited
+/// 101 on SIGPIPE instead of 0, while `docs/errors.md` documents only 0, 1 and 2.
+/// `serve` already handled this by hand; every other command writes through
+/// `println!`, so the hook covers them all instead of rewriting ~25 call sites.
+fn install_broken_pipe_hook() {
+    let default = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let message = info
+            .payload()
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| info.payload().downcast_ref::<&str>().copied());
+        if message.is_some_and(|message| message.contains("failed printing to stdout")) {
+            std::process::exit(0);
+        }
+        default(info);
+    }));
 }
 
 fn run() -> Result<(), CliError> {

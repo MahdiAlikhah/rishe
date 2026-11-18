@@ -7,6 +7,7 @@ supported; other corpus-specific formats can be added as needed.
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Iterator, List, Optional
@@ -54,10 +55,11 @@ class ConlluReader:
         tokens: List[Token] = []
         comments: Dict[str, str] = {}
         sent_id: Optional[str] = None
+        skipped = 0
 
         # `utf-8-sig` so a byte-order mark does not hide the first `# sent_id`.
         with self.path.open(encoding="utf-8-sig") as handle:
-            for raw in handle:
+            for line_no, raw in enumerate(handle, 1):
                 line = raw.rstrip("\n")
                 if not line.strip():
                     if tokens:
@@ -73,6 +75,16 @@ class ConlluReader:
                     continue
                 columns = line.split("\t")
                 if len(columns) < 10:
+                    # A corrupt row used to vanish silently, so a file with every
+                    # row broken read as an empty corpus. One skipped line is
+                    # reported on stderr; the rest of the file still reads.
+                    skipped += 1
+                    if skipped <= 5:
+                        print(
+                            f"warning: {self.path}:{line_no}: expected 10 columns, "
+                            f"found {len(columns)}; skipping",
+                            file=sys.stderr,
+                        )
                     continue
                 token_id, form, lemma, upos, xpos, feats, head, deprel, _, misc = columns[:10]
                 # Multiword-token ranges (`2-3`) and empty nodes (`8.1`) repeat the
@@ -108,7 +120,8 @@ class PeymaReader:
 
     def sentences(self) -> Iterator[Sentence]:
         lines: List[str] = []
-        with self.path.open(encoding="utf-8") as handle:
+        # `utf-8-sig` so a byte-order mark does not become a leading token.
+        with self.path.open(encoding="utf-8-sig") as handle:
             for raw in handle:
                 line = raw.strip()
                 if line:
@@ -130,7 +143,8 @@ class PlainTextReader:
         return self.sentences()
 
     def sentences(self) -> Iterator[Sentence]:
-        with self.path.open(encoding="utf-8") as handle:
+        # `utf-8-sig` so a byte-order mark does not become a leading token.
+        with self.path.open(encoding="utf-8-sig") as handle:
             for raw in handle:
                 line = raw.strip()
                 if line:

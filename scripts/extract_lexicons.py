@@ -5,6 +5,7 @@ mappings, normalizes everything to canonical Persian, and writes `data/*.tsv` fo
 """
 
 from pathlib import Path
+import unicodedata
 import urllib.request
 
 DATA_DIR = Path("data")
@@ -30,6 +31,7 @@ def canonical_persian(text: str) -> str:
         "\u0649": "\u06cc",  # Alef Maksura -> Persian Yeh (ی)
         "\u0643": "\u06a9",  # Arabic Kaf -> Persian Keh (ک)
         "\u06c0": "\u0647",  # Heh with Yeh -> Heh (ه)
+        "\u0629": "\u0647",  # Teh Marbuta -> Heh (ه); `normalize` maps it too
         "\u0640": "",        # Strip Tatweel
     }
     for old, new in replacements.items():
@@ -37,6 +39,22 @@ def canonical_persian(text: str) -> str:
     return "".join(
         ch for ch in text if not (0x064B <= ord(ch) <= 0x0652 or ord(ch) == 0x0670)
     )
+
+
+def is_token_key(word: str) -> bool:
+    """Whether `word` can ever come back from the tokenizer as a single token.
+
+    A key with a space, punctuation or a symbol can never match, because the
+    tokenizer splits on those. 16k of the old `nouns.tsv` rows were like that.
+    """
+    if not word or " " in word or "\t" in word:
+        return False
+    for ch in word:
+        if ch == "\u200c" or ch.isdigit():
+            continue
+        if not unicodedata.category(ch).startswith("L"):
+            return False
+    return True
 
 
 def parse_pos_flags(raw_pos_str: str) -> int:
@@ -80,6 +98,10 @@ def build_nouns_tsv(raw_words_path: Path, out_path: Path):
                 continue
             word = canonical_persian(parts[0])
             if not word:
+                continue
+            # A key the tokenizer can never produce is dead weight in the
+            # compiled FST, so it is dropped at generation time too.
+            if not is_token_key(word):
                 continue
             raw_pos = parts[2] if len(parts) >= 3 else "N"
             flags = parse_pos_flags(raw_pos)
@@ -210,6 +232,10 @@ def build_word_freq_tsv(raw_words_path: Path, out_path: Path):
             try:
                 count = int(parts[1])
             except ValueError:
+                continue
+            # A zero count is a placeholder row, not a frequency. Keeping those
+            # made `spell_correct` prefer junk over real words.
+            if count <= 0 or not is_token_key(word):
                 continue
             if count > freq.get(word, -1):
                 freq[word] = count
