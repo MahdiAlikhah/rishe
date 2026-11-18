@@ -90,8 +90,17 @@ class CompatTest(unittest.TestCase):
         # The spacing stage turns a tab into a space; the words stay apart.
         self.assertEqual(normalizer.normalize("کتاب\tخوب"), "کتاب خوب")
         self.assertEqual(normalizer.normalize("می‌روم"), "می‌روم")
-        # Symbols are what the flag is for, so those still go.
-        self.assertEqual(normalizer.normalize("کتاب © ۲۰۰۰"), "کتاب  ۲۰۰۰")
+        # Symbols are what the flag is for, so those still go — without leaving the
+        # double space the removal used to make.
+        self.assertEqual(normalizer.normalize("کتاب © ۲۰۰۰"), "کتاب ۲۰۰۰")
+        self.assertEqual(normalizer.normalize("سلام 😀 دنیا"), "سلام دنیا")
+
+    def test_normalizer_maps_every_arabic_presentation_form(self):
+        """The stage list included `alphabet`, but 49 of its forms were missing."""
+        self.assertEqual(Normalizer().normalize("ﻙﺕﺍﺏ خوب"), "کتاب خوب")
+        self.assertEqual(Normalizer().normalize("ﻻ"), "لا")
+        # A lone tatweel is a stretch, not a letter.
+        self.assertEqual(Normalizer().normalize("کـتاب"), "کتاب")
 
 
 if __name__ == "__main__":

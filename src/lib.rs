@@ -1089,11 +1089,21 @@ mod py_bindings {
 
         /// Python `conjugate`: forms as a map, or `None` for an unknown verb.
         #[pyo3(name = "conjugate")]
-        pub fn py_conjugate(
+        pub fn py_conjugate<'py>(
             &self,
+            py: Python<'py>,
             verb: &str,
-        ) -> Option<std::collections::HashMap<String, Vec<String>>> {
-            self.conjugate(verb).map(Conjugation::into_map)
+        ) -> Option<Bound<'py, pyo3::types::PyDict>> {
+            // A `HashMap` iterates in a different order per process and per call,
+            // so `list(result)` changed between two calls in one session. The dict
+            // is built in field order, which keeps the result stable.
+            let conjugation = self.conjugate(verb)?;
+            use pyo3::types::PyDictMethods;
+            let dict = pyo3::types::PyDict::new_bound(py);
+            for (field, forms) in conjugation.into_pairs() {
+                dict.set_item(field, forms).ok()?;
+            }
+            Some(dict)
         }
 
         /// Python `split_token`: morphemes of one fused token.

@@ -103,7 +103,14 @@ pub fn run_classified(args: &[String]) -> Result<(), HubError> {
         ));
     };
     match command {
-        "list" => list().map_err(HubError::Runtime),
+        "list" => {
+            // `hub list` takes no arguments; the Python CLI rejects an extra word
+            // with exit 2 and this one used to ignore it.
+            if let Some(extra) = args.get(1) {
+                return Err(HubError::Usage(format!("unknown hub list option: {extra}")));
+            }
+            list().map_err(HubError::Runtime)
+        }
         "info" => info(require_name(args, "hub info needs a name")?).map_err(HubError::Runtime),
         "path" => path(require_name(args, "hub path needs a name")?).map_err(HubError::Runtime),
         "remove" => {

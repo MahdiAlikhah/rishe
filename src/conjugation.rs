@@ -101,6 +101,25 @@ impl Conjugation {
             ("perfect".to_string(), self.perfect),
         ])
     }
+
+    /// The fields of the conjugation in a fixed order.
+    ///
+    /// `into_map` returns a `HashMap`, whose iteration order differs per process
+    /// and per call; the Python binding needs one stable order so callers can
+    /// print or compare the result. Crate-internal, so the frozen `1.0.0` API
+    /// surface does not grow for a serialization detail.
+    pub(crate) fn into_pairs(self) -> [(&'static str, Vec<String>); 8] {
+        [
+            ("past", self.past),
+            ("negative_past", self.negative_past),
+            ("imperfective_past", self.imperfective_past),
+            ("present", self.present),
+            ("negative_present", self.negative_present),
+            ("subjunctive", self.subjunctive),
+            ("future", self.future),
+            ("perfect", self.perfect),
+        ]
+    }
 }
 
 fn forms(prefix: &str, stem: &str, endings: &[&str; 6]) -> Vec<String> {

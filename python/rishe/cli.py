@@ -30,7 +30,9 @@ def _configure_stdio() -> None:
         if reconfigure is not None:
             # A reply can carry a lone surrogate the client sent; escaping it
             # keeps one bad line from aborting the whole serve loop.
-            reconfigure(encoding="utf-8", errors="backslashreplace")
+            # `newline=""` stops Python from writing `\r\n` on Windows, which
+            # made `rishe hub list` differ between the two binaries byte for byte.
+            reconfigure(encoding="utf-8", errors="backslashreplace", newline="")
 
 
 def _version() -> str:
@@ -452,8 +454,10 @@ def _embedding(args) -> int:
 
     if args.command == "similar":
         if args.top < 1:
-            print("--top must be at least 1", file=sys.stderr)
-            return 1
+            # Rust rejects the value as a usage error (exit 2); exit 1 made the
+            # two binaries disagree for the same bad command line.
+            print("--top must be a positive integer", file=sys.stderr)
+            return 2
         neighbours = vectors.most_similar(args.word, args.top)
         if not neighbours:
             print(f"{args.word!r} is not in the vocabulary", file=sys.stderr)

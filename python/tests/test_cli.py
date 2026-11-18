@@ -287,8 +287,10 @@ class ExitCodeContractTest(unittest.TestCase):
         result = self.assert_exit(1, "mask", "سلام", "--maskers", "bogus")
         self.assertIn("unknown masker", result.stderr.decode("utf-8", "replace"))
 
-    def test_top_below_one_exits_1(self):
-        self.assert_exit(1, "similar", "کتاب", "--top", "0", "--model", str(MODEL))
+    def test_top_below_one_is_a_usage_error(self):
+        """Rust rejects the same command line with exit 2, not 1."""
+        self.assert_exit(2, "similar", "کتاب", "--top", "0", "--model", str(MODEL))
+        self.assert_exit(2, "similar", "کتاب", "--top", "-1", "--model", str(MODEL))
 
     def test_unparseable_date_exits_1(self):
         self.assert_exit(1, "date", "این یک تاریخ نیست")
@@ -324,6 +326,26 @@ class ExitCodeContractTest(unittest.TestCase):
             self.assert_exit(
                 1, "hub", "pull", "not-a-model", env={"RISHE_HOME": root}
             )
+
+    def test_hub_unlock_reports_no_lock(self):
+        """An interrupted pull left a lock that refused retries for an hour."""
+        with tempfile.TemporaryDirectory() as root:
+            env = {"RISHE_HOME": root}
+            result = self.run_cli("hub", "unlock", "pos-compact", env=env)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.strip(), b"no lock")
+            lock = Path(root) / "models" / "pos-compact.lock"
+            lock.parent.mkdir(parents=True, exist_ok=True)
+            lock.write_bytes(b"1234 0")
+            result = self.run_cli("hub", "unlock", "pos-compact", env=env)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.strip(), b"unlocked")
+            self.assertFalse(lock.exists())
+
+    def test_hub_list_rejects_an_extra_word_like_the_rust_binary(self):
+        """`hub list extra` used to be accepted here and rejected there."""
+        with tempfile.TemporaryDirectory() as root:
+            self.assert_exit(2, "hub", "list", "extra", env={"RISHE_HOME": root})
 
     def test_hub_pull_refuses_a_pin_for_a_task_pack(self):
         # A pack is verified against the registry manifest, so a caller digest has

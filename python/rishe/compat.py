@@ -103,13 +103,21 @@ class Normalizer:
     def remove_specials_chars(self, text: str) -> str:
         # Whitespace and format characters carry meaning — `\n` and `\t` separate
         # words, ZWJ joins an emoji, RLM sets the direction — so they stay.
-        return "".join(
+        kept = "".join(
             ch
             for ch in text
             if ch.isspace()
             or unicodedata.category(ch) == "Cf"
             or not unicodedata.category(ch).startswith(("S", "C"))
         )
+        if kept == text:
+            # Nothing was removed, so any run of spaces is the caller's own.
+            return text
+        # Removing a symbol leaves a hole, and `کتاب © ۲۰۰۰` became `کتاب  ۲۰۰۰`.
+        # Collapse the spaces that removal made; newlines are the caller's layout.
+        while "  " in kept:
+            kept = kept.replace("  ", " ")
+        return kept
 
     def decrease_repeated_chars(self, text: str) -> str:
         return self._pipe.normalize(text, ["repeated_letters"])
