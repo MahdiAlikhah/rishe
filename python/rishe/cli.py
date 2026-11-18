@@ -160,6 +160,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     hub_remove.add_argument("name")
     hub_verify = hub_commands.add_parser("verify", help="Verify cached checksums.")
     hub_verify.add_argument("name")
+    hub_unlock = hub_commands.add_parser(
+        "unlock", help="Clear a download lock left by a killed pull."
+    )
+    hub_unlock.add_argument("name")
 
     args = parser.parse_args(argv)
     if args.command is None:
@@ -369,6 +373,13 @@ def _hub(args) -> int:
             print(error, file=sys.stderr)
             return 1
         print("removed" if removed else "not cached")
+    elif args.hub_command == "unlock":
+        try:
+            cleared = hub.unlock(args.name)
+        except (OSError, ValueError) as error:
+            print(error, file=sys.stderr)
+            return 1
+        print("unlocked" if cleared else "no lock")
     elif args.hub_command == "verify":
         try:
             valid = hub.verify(args.name)

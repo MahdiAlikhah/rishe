@@ -12,6 +12,7 @@ The cache lives in ``$RISHE_HOME/models`` or ``~/.cache/rishe/models``.
 from __future__ import annotations
 
 import hashlib
+import http.client
 import json
 import os
 import shutil
@@ -33,6 +34,7 @@ __all__ = [
     "path",
     "pull",
     "remove",
+    "unlock",
     "verify",
 ]
 
@@ -107,9 +109,16 @@ def cache_dir() -> Path:
     root = os.environ.get("RISHE_HOME")
     if root is not None:
         return Path(root) / "models"
-    home = os.environ.get("HOME") or os.environ.get("USERPROFILE")
-    base = Path(home) if home else Path.home()
-    return base / ".cache" / "rishe" / "models"
+    # Mirrors `cache_dir` in src/hub.rs: an empty `HOME` is still set, so it wins
+    # over `USERPROFILE`. Testing truthiness instead put the two binaries in
+    # different cache roots whenever `HOME` was empty.
+    if "HOME" in os.environ:
+        home = os.environ["HOME"]
+    elif "USERPROFILE" in os.environ:
+        home = os.environ["USERPROFILE"]
+    else:
+        home = str(Path.home())
+    return Path(home) / ".cache" / "rishe" / "models"
 
 
 def _unknown(name: str) -> str:
@@ -169,6 +178,13 @@ def _safe_filename(inferred: str) -> str:
         raise ValueError(
             "cannot infer a filename from the URL; it must be a plain file name"
         )
+    # Windows resolves these names to devices wherever they appear, so the file
+    # can be downloaded and verified but never renamed into place.
+    stem = name.split(".")[0].upper()
+    if stem in _WINDOWS_DEVICE_NAMES:
+        raise ValueError(
+            "cannot infer a filename from the URL; it is a reserved device name"
+        )
     return name
 
 
@@ -198,8 +214,23 @@ def pull(
                 f"{_unknown(name_or_url)}. Pass sha256= to pull a custom URL."
             )
         source = name_or_url
+        # Only a network URL is a download. `file:`/`ftp:`/`data:` would copy or
+        # fetch bytes by another protocol and drop them in the model cache.
+        scheme = urlparse(source).scheme.lower()
+        if scheme not in ("http", "https"):
+            raise ValueError(
+                f"unsupported URL scheme {scheme or '(none)'!r}; use http or https"
+            )
         inferred = filename or Path(urlparse(source).path).name
         safe_name = _safe_filename(inferred)
+        # A custom URL must not land on a registered model's cache file: the bytes
+        # are only as trustworthy as the digest the caller passed.
+        for known_name, known in MODELS.items():
+            if known.filename == safe_name:
+                raise ValueError(
+                    f"{safe_name} belongs to the registered model {known_name!r}; "
+                    "pass filename= to pick a different name"
+                )
         model = Model(url=source, sha256=sha256.lower(), filename=safe_name)
 
     digest = model.sha256.lower()
@@ -215,18 +246,31 @@ def pull(
 # A lock older than this was left by a process that died mid-download.
 _STALE_LOCK_SECONDS = 3600
 
+# Windows device names; mirrored by `infer_filename` in src/hub.rs.
+_WINDOWS_DEVICE_NAMES = frozenset(
+    ["CON", "PRN", "AUX", "NUL"]
+    + [f"COM{index}" for index in range(1, 10)]
+    + [f"LPT{index}" for index in range(1, 10)]
+)
+
 
 def _acquire_download_lock(target: Path) -> Path:
     """Claim ``target`` so two processes never share one ``.part`` file.
 
     A second pull fails with a clear message instead of corrupting the first. A
     lock older than :data:`_STALE_LOCK_SECONDS` is taken over, so a crash does
-    not block the download forever.
+    not block the download forever. The lock records a pid token so its owner can
+    tell its own lock from one another process took over.
     """
     lock = target.with_name(target.name + ".lock")
+    token = f"{os.getpid()} {time.time_ns()}".encode()
     for _ in range(2):
         try:
-            os.close(os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+            handle = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            try:
+                os.write(handle, token)
+            finally:
+                os.close(handle)
             return lock
         except FileExistsError:
             try:
@@ -243,6 +287,29 @@ def _acquire_download_lock(target: Path) -> Path:
     raise RuntimeError(f"cannot lock {target}")
 
 
+def unlock(name: str) -> bool:
+    """Clear a download lock left behind by a killed process.
+
+    The lock is only taken over automatically after an hour, so an interrupted
+    pull had no way to retry: ``force`` re-downloads but keeps the lock, and
+    ``remove`` also drops the cached payload. A pack's lock belongs to the shared
+    manifest, which blocks every pack.
+    """
+    if name not in PACKS and name not in MODELS:
+        raise ValueError(_unknown(name))
+    cleared = False
+    if name in MODELS:
+        candidates = [cache_dir() / (Path(MODELS[name].filename).name + ".lock")]
+    else:
+        manifest = cache_dir() / "rishe-models-manifest.json"
+        candidates = [cache_dir() / (name + ".lock"), Path(str(manifest) + ".lock")]
+    for lock in candidates:
+        if lock.is_file():
+            lock.unlink()
+            cleared = True
+    return cleared
+
+
 def _download(url: str, target: Path, sha256: str, *, force: bool = False) -> Path:
     """Download one file atomically, resuming a partial download."""
     target = Path(target)
@@ -250,10 +317,14 @@ def _download(url: str, target: Path, sha256: str, *, force: bool = False) -> Pa
         return target
     target.parent.mkdir(parents=True, exist_ok=True)
     lock = _acquire_download_lock(target)
+    token = lock.read_text(encoding="utf-8", errors="replace") if lock.is_file() else ""
     try:
         return _download_locked(url, target, sha256, force=force)
     finally:
-        lock.unlink(missing_ok=True)
+        # Remove the lock only while it is still ours: a download that ran past the
+        # stale window has already had its lock taken over by another process.
+        if lock.is_file() and lock.read_text(encoding="utf-8", errors="replace") == token:
+            lock.unlink(missing_ok=True)
 
 
 def _download_locked(url: str, target: Path, sha256: str, *, force: bool = False) -> Path:
@@ -273,6 +344,11 @@ def _download_locked(url: str, target: Path, sha256: str, *, force: bool = False
                 response = urllib.request.urlopen(request, timeout=60)
             except urllib.error.HTTPError as error:
                 if error.code == 416 and part.exists():
+                    # A complete-but-unrenamed part answers a resume with 416;
+                    # promote it instead of deleting the transfer.
+                    if _sha256(part) == sha256.lower():
+                        os.replace(part, target)
+                        return target
                     part.unlink()
                     last_error = error
                     continue
@@ -313,6 +389,15 @@ def _download_locked(url: str, target: Path, sha256: str, *, force: bool = False
                     output.flush()
                     os.fsync(output.fileno())
 
+            if total and done < total:
+                # A truncated body is a network failure, not a corrupted remote:
+                # the prefix is still good, so the next attempt resumes it instead
+                # of deleting the transfer and starting over.
+                last_error = ValueError(
+                    f"download of {url} stopped after {done} of {total} bytes"
+                )
+                continue
+
             actual = _sha256(part)
             if actual != sha256.lower():
                 part.unlink()
@@ -337,7 +422,10 @@ def _download_locked(url: str, target: Path, sha256: str, *, force: bool = False
             if str(error).startswith("checksum mismatch"):
                 raise
             last_error = error
-        except (urllib.error.URLError, TimeoutError, OSError) as error:
+        except (urllib.error.URLError, http.client.HTTPException, TimeoutError, OSError) as error:
+            # `http.client` raises its own hierarchy for a malformed response
+            # (IncompleteRead, BadStatusLine); it is not an OSError, so it used to
+            # escape as a traceback instead of a retry.
             last_error = error
 
     raise RuntimeError(f"download failed after 3 attempts: {last_error}") from last_error
@@ -438,7 +526,10 @@ def remove(name: str) -> bool:
             pack_lock.unlink()
             removed = True
         manifest = cache_dir() / "rishe-models-manifest.json"
-        for stale in (Path(str(manifest) + ".part"), Path(str(manifest) + ".lock")):
+        for stale in (
+            Path(str(manifest) + ".part"),
+            Path(str(manifest) + ".lock"),
+        ):
             if stale.is_file():
                 stale.unlink()
                 removed = True

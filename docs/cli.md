@@ -154,6 +154,7 @@ rishe hub pull depparse-compact
 rishe hub info depparse-compact
 rishe hub verify depparse-compact
 rishe hub remove depparse-compact    # delete it, including a partial pull
+rishe hub unlock depparse-compact    # clear a lock left by a killed pull
 ```
 
 Models land in `$RISHE_HOME/models` or `~/.cache/rishe/models`, and
@@ -165,7 +166,9 @@ half-filled pack directory. The next `hub pull` resumes from it — and starts o
 from zero if that prefix turns out not to belong to the remote object — `hub list`
 and `hub info` report it as `partial` with the bytes already on disk, and
 `hub remove` deletes it, including a `rishe-models-manifest.json.part` left by an
-interrupted manifest download.
+interrupted manifest download. A killed pull also leaves a `.lock` that refuses a
+retry for an hour; `hub unlock <name>` clears it without deleting the cached
+files (`--force` re-downloads but does not bypass the lock).
 
 `hub pull <url>` needs a URL that ends in a plain file name, and the file lands in
 the cache directory. A URL whose last segment is empty, `.`/`..`, or that contains

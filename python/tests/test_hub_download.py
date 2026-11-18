@@ -61,6 +61,19 @@ class NotFoundHandler(http.server.BaseHTTPRequestHandler):
         pass
 
 
+class Always416Handler(http.server.BaseHTTPRequestHandler):
+    """Answer every request with 416, like a resume of a complete part."""
+
+    hits = 0
+
+    def do_GET(self):
+        type(self).hits += 1
+        self.send_error(416)
+
+    def log_message(self, *_args):
+        pass
+
+
 class CachePathsTest(unittest.TestCase):
     def test_cache_dir_prefers_home_like_the_rust_binary(self):
         # `Path.home()` reads USERPROFILE on Windows; the Rust binary prefers
@@ -205,6 +218,76 @@ class DownloadTest(unittest.TestCase):
             )
             self.assertEqual(target.read_bytes(), PAYLOAD)
             self.assertFalse(lock.exists(), "lock left behind")
+
+    def test_unlock_clears_a_leaked_lock_without_dropping_the_payload(self):
+        """A killed pull blocked retries for an hour with no way to clear it."""
+        with tempfile.TemporaryDirectory() as root, mock.patch.dict(
+            os.environ, {"RISHE_HOME": root}, clear=False
+        ):
+            models = Path(root) / "models"
+            models.mkdir(parents=True)
+            payload = models / "rishe-embed-fa-300.vec"
+            payload.write_bytes(b"payload")
+            lock = models / "rishe-embed-fa-300.vec.lock"
+            lock.write_bytes(b"1234 0")
+            self.assertTrue(hub.unlock("rishe-embed-fa-300"))
+            self.assertFalse(lock.exists())
+            self.assertTrue(payload.is_file(), "unlocking must keep the payload")
+            self.assertFalse(hub.unlock("rishe-embed-fa-300"), "no lock to clear")
+            with self.assertRaises(ValueError):
+                hub.unlock("not-a-model")
+
+    def test_a_foreign_lock_is_not_deleted_by_its_previous_owner(self):
+        """The old download deleted whatever lock was there, including a new one."""
+        with tempfile.TemporaryDirectory() as root:
+            target = Path(root) / "payload.bin"
+            lock = Path(root) / "payload.bin.lock"
+            lock.write_bytes(b"other 1")
+            # A lock owned by someone else must survive a failed download.
+            with self.assertRaises(RuntimeError):
+                hub._download("http://127.0.0.1:1/x", target, "0" * 64)
+            self.assertTrue(lock.is_file(), "a foreign lock was deleted")
+
+    def test_a_complete_part_is_promoted_instead_of_re_downloaded(self):
+        """A 416 on a complete part used to delete the transfer and start over."""
+        server = self.serve(Always416Handler)
+        Always416Handler.hits = 0
+        with tempfile.TemporaryDirectory() as root:
+            target = Path(root) / "payload.bin"
+            (Path(root) / "payload.bin.part").write_bytes(PAYLOAD)
+            hub._download(
+                f"http://127.0.0.1:{server.server_port}/payload.bin",
+                target,
+                hashlib.sha256(PAYLOAD).hexdigest(),
+            )
+            self.assertEqual(target.read_bytes(), PAYLOAD)
+            self.assertEqual(Always416Handler.hits, 1, "should promote, not refetch")
+
+    def test_a_device_name_is_refused_before_anything_is_written(self):
+        """`NUL` downloads and verifies but can never be renamed into place."""
+        for name in ("NUL", "nul.vec", "COM1", "LPT9.bin"):
+            with self.assertRaises(ValueError):
+                hub._safe_filename(name)
+        self.assertEqual(hub._safe_filename("nulls.vec"), "nulls.vec")
+
+    def test_a_custom_url_cannot_replace_a_registered_model(self):
+        """The cache file of a pinned model must not accept unverified bytes."""
+        name = hub.MODELS["rishe-embed-fa-300"].filename
+        with self.assertRaises(ValueError) as caught:
+            hub.pull(f"http://mirror/{name}", sha256="0" * 64)
+        self.assertIn("belongs to the registered model", str(caught.exception))
+
+    def test_only_http_urls_are_downloaded(self):
+        """`file:`/`ftp:`/`data:` copied local bytes into the model cache."""
+        for url in (
+            "file:///etc/passwd",
+            "ftp://host/model.vec",
+            "data:text/plain,hello",
+            "//host/model.vec",
+        ):
+            with self.assertRaises(ValueError) as caught:
+                hub.pull(url, sha256="0" * 64)
+            self.assertIn("http", str(caught.exception), url)
 
 
 if __name__ == "__main__":

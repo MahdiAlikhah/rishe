@@ -99,7 +99,7 @@ impl std::fmt::Display for HubError {
 pub fn run_classified(args: &[String]) -> Result<(), HubError> {
     let Some(command) = args.first().map(String::as_str) else {
         return Err(HubError::Usage(
-            "usage: rishe hub <pull|list|info|path|remove|verify> ...".to_string(),
+            "usage: rishe hub <pull|list|info|path|remove|unlock|verify> ...".to_string(),
         ));
     };
     match command {
@@ -108,6 +108,9 @@ pub fn run_classified(args: &[String]) -> Result<(), HubError> {
         "path" => path(require_name(args, "hub path needs a name")?).map_err(HubError::Runtime),
         "remove" => {
             remove(require_name(args, "hub remove needs a name")?).map_err(HubError::Runtime)
+        }
+        "unlock" => {
+            unlock(require_name(args, "hub unlock needs a name")?).map_err(HubError::Runtime)
         }
         "verify" => {
             let name = require_name(args, "hub verify needs a name")?;
@@ -160,6 +163,17 @@ fn infer_filename(url: &str) -> Option<&str> {
     if escapes {
         return None;
     }
+    // Windows resolves these names to devices wherever they appear: `NUL` can be
+    // downloaded and verified but never renamed into place, which leaves an
+    // unremovable `.part` behind.
+    let stem = name.split('.').next().unwrap_or(name).to_ascii_uppercase();
+    let reserved = [
+        "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
+        "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    ];
+    if reserved.contains(&stem.as_str()) {
+        return None;
+    }
     Some(name)
 }
 
@@ -207,6 +221,13 @@ fn pull(args: &[String]) -> Result<(), HubError> {
     let (url, expected, filename) = if let Some((_, url, sha, filename)) =
         MODELS.iter().find(|(model, _, _, _)| model == name)
     {
+        // The registry pins this name's digest, so a caller-supplied one cannot be
+        // honoured; ignoring it reads as a pin that never happened.
+        if sha256.is_some() {
+            return Err(HubError::Runtime(
+                "registered models are pinned to their published digest; omit --sha256".to_string(),
+            ));
+        }
         (
             (*url).to_string(),
             (*sha).to_string(),
@@ -226,6 +247,18 @@ fn pull(args: &[String]) -> Result<(), HubError> {
                     .to_string(),
             )
         })?;
+        // A custom URL must not land on a registered model's cache file: the
+        // bytes are only as trustworthy as the digest the caller passed, so
+        // `hub pull http://mirror/rishe-embed-fa-300.vec` would replace a
+        // pinned model and `hub path`/`embed` would then hand it out.
+        if let Some((owner, _, _, _)) = MODELS
+            .iter()
+            .find(|(model, _, _, known)| *model != name && *known == filename)
+        {
+            return Err(HubError::Runtime(format!(
+                "{filename} belongs to the registered model {owner:?}; pick a different file name for a custom URL"
+            )));
+        }
         (name.clone(), sha.to_ascii_lowercase(), filename.to_string())
     };
     let target = cache_dir().map_err(HubError::Runtime)?.join(&filename);
@@ -235,10 +268,16 @@ fn pull(args: &[String]) -> Result<(), HubError> {
 }
 
 fn list() -> Result<(), String> {
-    for (name, _, _, filename) in MODELS {
+    for (name, _, sha, filename) in MODELS {
         let path = cache_dir()?.join(filename);
+        // `cached` is a claim about the file, so it is checked against the
+        // pinned digest; a corrupt or foreign file used to read as `cached`.
         let status = if path.is_file() {
-            "cached"
+            if sha256_file(&path)? == *sha {
+                "cached"
+            } else {
+                "corrupt"
+            }
         } else if part_path(&path).is_file() {
             // An interrupted pull still takes up disk; say so instead of "missing".
             "partial"
@@ -372,6 +411,37 @@ fn remove(name: &str) -> Result<(), String> {
         removed = true;
     }
     println!("{}", if removed { "removed" } else { "not cached" });
+    Ok(())
+}
+
+/// Clear a download lock left behind by a killed process.
+///
+/// The lock is only taken over automatically after an hour, so a user whose pull
+/// was interrupted had no way to retry: `--force` re-downloads but does not
+/// bypass the lock, and `remove` also drops the cached files. For a pack the
+/// leaked lock belongs to the shared manifest, which blocks every pack.
+fn unlock(name: &str) -> Result<(), String> {
+    let path = if let Some((_, _, _, filename)) = MODELS.iter().find(|item| item.0 == name) {
+        cache_dir()?.join(filename)
+    } else if PACKS.iter().any(|(pack, _)| *pack == name) {
+        cache_dir()?.join(name)
+    } else {
+        return Err(format!("unknown model or pack {name:?}"));
+    };
+    let mut cleared = false;
+    let mut targets = vec![lock_path(&path)];
+    if PACKS.iter().any(|(pack, _)| *pack == name) {
+        // A pack pull locks the shared manifest, not the pack directory.
+        let manifest = cache_dir()?.join("rishe-models-manifest.json");
+        targets.push(lock_path(&manifest));
+    }
+    for lock in targets {
+        if lock.is_file() {
+            fs::remove_file(&lock).map_err(|error| error.to_string())?;
+            cleared = true;
+        }
+    }
+    println!("{}", if cleared { "unlocked" } else { "no lock" });
     Ok(())
 }
 
@@ -566,6 +636,10 @@ fn lock_path(target: &Path) -> PathBuf {
 /// A lock this old was left by a process that died mid-download.
 const STALE_LOCK: Duration = Duration::from_secs(3600);
 
+/// Ceiling for a body with no `Content-Length`: 8 GiB is far past every published
+/// artifact, so hitting it means the mirror is not serving a model file.
+const MAX_UNKNOWN_BODY: u64 = 8 * 1024 * 1024 * 1024;
+
 /// Held for the whole download and removed on drop.
 struct DownloadLock {
     path: PathBuf,
@@ -620,6 +694,10 @@ fn acquire_download_lock(target: &Path) -> Result<DownloadLock, String> {
                 return Ok(DownloadLock { path, token });
             }
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                // `force` is not a bypass: it means "re-download", not "ignore the
+                // other process". Clearing the lock here would let two downloads
+                // append to one `.part` file, which is the corruption the lock
+                // exists to prevent.
                 let stale = fs::metadata(&path)
                     .and_then(|metadata| metadata.modified())
                     .ok()
@@ -804,6 +882,14 @@ fn copy_with_progress(
             if written > total {
                 return Err(format!("server sent more than {total} bytes"));
             }
+        } else if written > MAX_UNKNOWN_BODY {
+            // Without a `Content-Length` the body has no declared end, so a
+            // mistaken or hostile mirror could fill the disk. The largest known
+            // artifact is a few gigabytes; anything past this is not a model.
+            return Err(format!(
+                "server sent more than {} bytes without a Content-Length",
+                MAX_UNKNOWN_BODY
+            ));
         }
         if terminal && written >= report {
             match expected {
@@ -1227,9 +1313,61 @@ mod tests {
             "http://host/..\\..\\important.txt",
             "http://host/a\\b.vec",
             "http://host/x:y.dll",
+            // Windows device names resolve to the device, so `NUL` downloads and
+            // verifies but can never be renamed into place.
+            "http://host/NUL",
+            "http://host/nul.vec",
+            "http://host/com1",
+            "http://host/LPT9.bin",
         ] {
             assert_eq!(infer_filename(url), None, "{url} must be refused");
         }
+        // A device name only bites as the whole stem, not as part of one.
+        assert_eq!(infer_filename("http://host/nulls.vec"), Some("nulls.vec"));
+    }
+
+    #[test]
+    fn a_custom_url_cannot_overwrite_a_registered_model() {
+        // `hub pull http://mirror/rishe-embed-fa-300.vec --sha256 <own digest>`
+        // used to replace the pinned file with bytes nobody verified, and `hub
+        // path`/`embed` then handed them out.
+        let registered = MODELS[0];
+        let filename = registered.3;
+        let error = pull(&[
+            format!("http://mirror/{filename}"),
+            "--sha256".to_string(),
+            "0".repeat(64),
+        ])
+        .expect_err("a registered file name must be refused");
+        assert!(
+            error
+                .to_string()
+                .contains("belongs to the registered model"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn unlocked_clears_a_leaked_lock_without_dropping_the_cache() {
+        // A killed pull left a lock that blocked retries for an hour, and neither
+        // `--force` nor `remove` cleared it (`remove` also deletes the payload).
+        let root = scratch("hub-unlock");
+        let target = root.join("model.bin");
+        std::fs::write(&target, b"payload").expect("payload");
+        let lock = lock_path(&target);
+        std::fs::write(&lock, b"1234 0").expect("lock");
+
+        // The lock refuses a second pull for as long as it is fresh.
+        let error = match acquire_download_lock(&target) {
+            Ok(_) => panic!("a held lock must refuse a second download"),
+            Err(error) => error,
+        };
+        assert!(error.contains("another rishe process"), "{error}");
+
+        std::fs::remove_file(&lock).expect("unlock");
+        assert!(target.is_file(), "unlocking must keep the payload");
+        acquire_download_lock(&target).expect("the freed lock is claimable");
+        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]
