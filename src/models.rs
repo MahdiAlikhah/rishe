@@ -12,6 +12,15 @@ use crate::tokenizer::Tokenizer as WordTokenizer;
 
 tract::impl_ndarray_interop!();
 
+/// Most words one dependency parse accepts.
+///
+/// The decoder scores every (word, head) pair, so its memory is quadratic in the
+/// word count: 4094 words — the most a 4096-piece pack can encode in one pass —
+/// needs roughly 700 MB, which turns a long paragraph into an out-of-memory kill
+/// rather than an error. A real sentence is far below this. The limit is applied
+/// after encoding, so it counts encoded words, not characters.
+pub(crate) const MAX_PARSE_WORDS: usize = 512;
+
 /// Counts characters up to a byte offset, continuing from the previous call.
 /// Tokens arrive in text order, so this turns a per-token `text[..at].chars()`
 /// scan into one pass over the text.
@@ -622,6 +631,17 @@ impl ModelPack {
                 self.max_len
             ));
         }
+        // The arc decoder holds a `words × (words + 1)` score matrix plus one edge
+        // per pair, so a whole-sentence parse is quadratic: 4094 words (the most a
+        // 4096-token pack allows) needs roughly 700 MB and the process dies instead
+        // of answering. A real sentence is far under this.
+        if kept.len() > MAX_PARSE_WORDS {
+            return Err(format!(
+                "text has {} words, more than the {} a dependency parse accepts; split it into sentences",
+                kept.len(),
+                MAX_PARSE_WORDS
+            ));
+        }
         let word_count = kept.len();
         let token_count = ids.len();
         let pad_id = self.tokenizer.token_to_id("[PAD]").unwrap_or(0) as i64;
@@ -1130,6 +1150,39 @@ mod tests {
         assert!(error.contains("no word in the input fits"), "{error}");
         // An empty input is still an empty parse, not an error.
         assert!(pack.depparse("").expect("empty input").is_empty());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_parse_with_more_words_than_the_decoder_accepts_is_an_error() {
+        // One model pass can encode up to `max_len` pieces, and a whole-sentence
+        // parse needs a `words × (words + 1)` score matrix, so a long paragraph
+        // was an out-of-memory kill instead of an error.
+        let source =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/tiny-pack");
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("rishe-depparse-word-cap");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("tokenizer.json"),
+            r###"{"version":"1.0","truncation":null,"padding":null,"added_tokens":[],"normalizer":null,"pre_tokenizer":{"type":"Whitespace"},"post_processor":null,"decoder":null,"model":{"type":"WordPiece","vocab":{"[PAD]":0,"[UNK]":1,"[CLS]":2,"[SEP]":3,"a":4},"unk_token":"[UNK]","continuing_subword_prefix":"##","max_input_chars_per_word":100}}"###,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("labels.json"),
+            r#"{"task":"depparse","labels":["root"],"max_len":4096}"#,
+        )
+        .unwrap();
+        std::fs::copy(source.join("model.onnx"), dir.join("model.onnx")).unwrap();
+
+        let pack = ModelPack::load(&dir).expect("the pack itself loads");
+        let text = "a ".repeat(MAX_PARSE_WORDS + 2);
+        let error = match pack.depparse(&text) {
+            Ok(parse) => panic!("{} words must be refused", parse.len()),
+            Err(error) => error,
+        };
+        assert!(error.contains("more than the"), "{error}");
         std::fs::remove_dir_all(&dir).ok();
     }
 
