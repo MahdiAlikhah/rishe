@@ -4,7 +4,7 @@ use std::env;
 use std::fs::{self, File};
 use std::io::{IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const MODELS: &[(&str, &str, &str, &str)] = &[
     (
@@ -539,14 +539,41 @@ fn load_manifest() -> Result<Value, String> {
     let path = cache_dir()?.join("rishe-models-manifest.json");
     // The manifest is sha-pinned, so a cached copy with the right digest is the
     // same file; re-fetching it costs a round trip and fails offline for nothing.
-    download(
+    let attempt = download(
         &format!("{}/manifest.json", pack_base()),
         &path,
         PACK_MANIFEST_SHA256,
         false,
-    )?;
+    );
+    if let Err(error) = attempt {
+        // One manifest is shared by every pack, so a second `hub pull` for a
+        // different pack used to fail fast here while the first one fetched it.
+        // Wait for that fetch instead: the file either appears valid or the
+        // original error stands.
+        if !error.contains("another rishe process is downloading") {
+            return Err(error);
+        }
+        let deadline = Instant::now() + MANIFEST_WAIT;
+        loop {
+            if manifest_matches(&path)? {
+                break;
+            }
+            if Instant::now() >= deadline {
+                return Err(format!(
+                    "{error} (waited {}s for the shared manifest)",
+                    MANIFEST_WAIT.as_secs()
+                ));
+            }
+            std::thread::sleep(Duration::from_millis(200));
+        }
+    }
     let text = fs::read_to_string(&path).map_err(|error| error.to_string())?;
     parse_manifest(&text)
+}
+
+/// Whether the cached manifest is present and carries the pinned digest.
+fn manifest_matches(path: &Path) -> Result<bool, String> {
+    Ok(path.is_file() && sha256_file(path)? == PACK_MANIFEST_SHA256)
 }
 
 fn verify_pack(name: &str, task: &str) -> Result<bool, String> {
@@ -568,6 +595,20 @@ fn verify_pack(name: &str, task: &str) -> Result<bool, String> {
     else {
         return Ok(false);
     };
+    // An empty `files` object used to run the loop below zero times and bless an
+    // empty directory as a verified pack. The Python implementation already
+    // refused this, so the two binaries disagreed on the same cache.
+    files_match(&target, files)
+}
+
+/// Whether every file in a manifest `files` object matches `target`.
+///
+/// An empty object is not a match: it would bless any directory that has the
+/// required file names.
+fn files_match(target: &Path, files: &serde_json::Map<String, Value>) -> Result<bool, String> {
+    if files.is_empty() {
+        return Ok(false);
+    }
     for (filename, metadata) in files {
         let Some(sha) = metadata.get("sha256").and_then(Value::as_str) else {
             return Ok(false);
@@ -642,6 +683,13 @@ fn lock_path(target: &Path) -> PathBuf {
 
 /// A lock this old was left by a process that died mid-download.
 const STALE_LOCK: Duration = Duration::from_secs(3600);
+
+/// How long a second pack pull waits for another process's manifest fetch.
+///
+/// The manifest is small and shared by every pack, so waiting a minute is far
+/// better than making `hub pull ner-compact` fail because `hub pull pos-compact`
+/// happened to be inside its first second.
+const MANIFEST_WAIT: Duration = Duration::from_secs(60);
 
 /// Ceiling for a body with no `Content-Length`: 8 GiB is far past every published
 /// artifact, so hitting it means the mirror is not serving a model file.
@@ -1057,6 +1105,74 @@ mod tests {
         let root = std::env::temp_dir().join(format!("rishe-{name}-{}", std::process::id()));
         std::fs::create_dir_all(&root).expect("scratch dir");
         root
+    }
+
+    #[test]
+    fn a_held_manifest_lock_waits_instead_of_failing_a_second_pack() {
+        // One manifest is shared by every pack, so a second `hub pull` for a
+        // different pack used to fail with "another rishe process is
+        // downloading" while the first one was still fetching the manifest.
+        let root = scratch("manifest-wait");
+        let path = root.join("rishe-models-manifest.json");
+        let body = br#"{"tasks":{}}"#;
+        let digest = {
+            use sha2::Digest;
+            let mut hasher = Sha256::new();
+            hasher.update(body);
+            format!("{:x}", hasher.finalize())
+        };
+        std::fs::write(lock_path(&path), b"other").expect("lock");
+        // Stand-in for the other process finishing: the valid manifest appears.
+        let writer = {
+            let path = path.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(300));
+                std::fs::write(&path, body).expect("manifest");
+            })
+        };
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let matched = loop {
+            if manifest_matches_with(&path, &digest).expect("digest") {
+                break true;
+            }
+            if Instant::now() >= deadline {
+                break false;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        };
+        writer.join().expect("writer thread");
+        assert!(
+            matched,
+            "the wait must observe the manifest the other pull wrote"
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// `manifest_matches` with an explicit digest, so the test needs no network.
+    fn manifest_matches_with(path: &Path, digest: &str) -> Result<bool, String> {
+        Ok(path.is_file() && sha256_file(path)? == digest)
+    }
+
+    #[test]
+    fn an_empty_file_list_does_not_verify_a_pack() {
+        // `files` was iterated without a length check, so a manifest entry with
+        // an empty object blessed any directory that had the required names.
+        let root = scratch("verify-empty-files");
+        let pack = root.join("pos-compact");
+        std::fs::create_dir_all(&pack).expect("pack dir");
+        for name in PACK_REQUIRED {
+            std::fs::write(pack.join(name), b"x").expect("required file");
+        }
+        let parsed = parse_manifest(r#"{"tasks":{"pos":{"files":{}}}}"#).expect("manifest");
+        let files = parsed
+            .get("tasks")
+            .and_then(|tasks| tasks.get("pos"))
+            .and_then(|task| task.get("files"))
+            .and_then(Value::as_object)
+            .expect("files object");
+        let valid = files_match(&pack, files).expect("compare");
+        std::fs::remove_dir_all(&root).ok();
+        assert!(!valid, "an empty file list must not verify a directory");
     }
 
     #[test]

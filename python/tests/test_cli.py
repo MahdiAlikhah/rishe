@@ -30,6 +30,17 @@ class CliTest(unittest.TestCase):
         with mock.patch("sys.stdin", io.StringIO("  متن  \r\n")):
             self.assertEqual(cli._read_text([]), "  متن  ")
 
+    def test_an_explicit_empty_string_is_not_stdin(self):
+        """`rishe normalize ""` read stdin here and returned "" in the Rust binary."""
+        with mock.patch("sys.stdin", io.StringIO("متن از stdin\n")):
+            self.assertEqual(cli._read_text(""), "")
+        with mock.patch("sys.stdin", io.StringIO("متن از stdin\n")):
+            self.assertEqual(cli._read_text([""]), "")
+        with mock.patch("sys.stdin", io.StringIO("متن از stdin\n")):
+            self.assertEqual(cli._read_text(["-"]), "متن از stdin")
+        with mock.patch("sys.stdin", io.StringIO("متن از stdin\n")):
+            self.assertEqual(cli._read_text(None), "متن از stdin")
+
     def test_normalize(self):
         code, output = self.run_cli(["normalize", "مي كنم"])
         self.assertEqual(code, 0)

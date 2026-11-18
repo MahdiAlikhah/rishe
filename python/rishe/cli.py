@@ -648,15 +648,22 @@ def _end_serve() -> int:
 
 
 def _read_text(source: Optional[Union[str, List[str]]]) -> str:
-    """Text from the positional words, joined like the Rust binary does, or stdin."""
-    if isinstance(source, list):
-        text = " ".join(source)
+    """Text from the positional words, joined like the Rust binary does, or stdin.
+
+    Only *no* words (or the single word ``-``) means stdin. An explicit empty
+    string is an empty document: it used to read stdin, so
+    ``rishe normalize ""`` blocked on a pipe the Rust binary ignores.
+    """
+    if source is None:
+        parts: List[str] = []
+    elif isinstance(source, list):
+        parts = source
     else:
-        text = source or ""
-    if not text or text == "-":
+        parts = [source]
+    if not parts or parts == ["-"]:
         # Strip the newline the shell adds, not the document's own leading space.
         return sys.stdin.read().rstrip("\r\n")
-    return text
+    return " ".join(parts)
 
 
 if __name__ == "__main__":
