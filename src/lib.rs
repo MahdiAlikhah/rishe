@@ -1530,6 +1530,19 @@ mod tests {
 
         let bood = nlp.conjugate("بود").expect("بود is a known verb");
         assert!(bood.subjunctive.contains(&"باشم".to_string()));
+
+        // The past stem comes straight from the verb table, so a row whose lemma
+        // was the infinitive built `تبیدنم` instead of `تبیدم`.
+        for (stem, past, lemma) in [("تب", "تبیدم", "تبید"), ("نیاز", "نیازیدم", "نیازید")]
+        {
+            let forms = nlp.conjugate(stem).expect("{stem} is a known verb");
+            assert!(
+                forms.past.contains(&past.to_string()),
+                "{stem} -> {:?}",
+                forms.past
+            );
+            assert_eq!(nlp.lemmatize_verb(&format!("می\u{200C}{stem}م")).0, lemma);
+        }
     }
 
     #[test]

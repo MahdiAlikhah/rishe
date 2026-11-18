@@ -173,6 +173,15 @@ fn compile_tsv_to_fst(
             "{}: key {key:?} has an edge ZWNJ and can never be a token",
             tsv_path.display()
         );
+        // A verb lemma is a past stem, so it cannot end in `ن`: that is the
+        // infinitive. `تب`/`نیاز` shipped with `تبیدن`/`نیازیدن` as the lemma, and
+        // because the lemma becomes the past stem, `conjugate` built `تبیدنم`
+        // instead of `تبیدم` from them.
+        assert!(
+            !(tsv_path.ends_with("verbs.tsv") && lemma.trim_end().ends_with('ن')),
+            "{}: key {key:?} has the infinitive {lemma:?} as its past stem",
+            tsv_path.display()
+        );
 
         let packed_val: u64 = if use_identity_sentinel && key == lemma {
             ((pos_flags as u64) << 56) | FLAG_IDENTITY

@@ -67,7 +67,13 @@ class JalaliDate:
         """Format as a Persian month-name date such as ۱۲ مرداد ۱۴۰۲."""
         ...
     def format_numeric(self) -> str:
-        """Format as a Persian-digit date such as ۱۴۰۲/۰۵/۱۲."""
+        """Format as a Persian-digit date such as ۱۴۰۲/۰۵/۱۲.
+
+        A year of 1700 or more formats but does not parse back: :func:parse_date
+        reads a four-digit numeric year that large as Gregorian, so it returns
+        None there. Use :meth:ormat_persian, which names the month, for such a
+        date.
+        """
         ...
 
 class TaggedToken:

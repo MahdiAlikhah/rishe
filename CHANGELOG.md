@@ -162,6 +162,10 @@ removed or renamed, so this is a patch, not a minor.
 - Seven unreachable rows left `data/nouns.tsv`: eight keys carried a ZWNJ at the
   edge, which normalization strips, and seven of them duplicated a row already in
   the file. `build.rs` refuses such a key now, as it already refused whitespace.
+- Two rows in `data/verbs.tsv` used the infinitive as the past stem (`تب` →
+  `تبیدن`, `نیاز` → `نیازیدن`). Because the past stem is what the past tense is
+  built from, `conjugate("تب")` produced `تبیدنم` instead of `تبیدم`, and the
+  lemma was the infinitive too. `build.rs` refuses that shape now.
 
 ### CI
 
