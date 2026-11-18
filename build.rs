@@ -173,6 +173,16 @@ fn compile_tsv_to_fst(
             "{}: key {key:?} has an edge ZWNJ and can never be a token",
             tsv_path.display()
         );
+        // A key must be Persian letters and ZWNJ only. `مشبهñبه` (a Latin ñ) and
+        // `گله‌دار8602` (digits glued on by a bad merge) both shipped and both
+        // tokenize to themselves, so they could only ever match that exact
+        // junk spelling — the clean forms were already in the file.
+        assert!(
+            key.chars()
+                .all(|ch| ch == '\u{200C}' || ('\u{0600}'..='\u{06FF}').contains(&ch)),
+            "{}: key {key:?} has a character outside Persian letters and ZWNJ",
+            tsv_path.display()
+        );
         // A verb lemma is a past stem, so it cannot end in `ن`: that is the
         // infinitive. `تب`/`نیاز` shipped with `تبیدن`/`نیازیدن` as the lemma, and
         // because the lemma becomes the past stem, `conjugate` built `تبیدنم`
