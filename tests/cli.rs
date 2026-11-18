@@ -591,7 +591,14 @@ fn usage_errors_exit_two() {
         // A bad `--top` is a malformed command line, so it is a usage error even
         // though the model does not exist: the Python binary reports it the same
         // way, and checking it after the load made the exit code depend on the cache.
-        vec!["similar", "کتاب", "--top", "0", "--model", "missing-model.vec"],
+        vec![
+            "similar",
+            "کتاب",
+            "--top",
+            "0",
+            "--model",
+            "missing-model.vec",
+        ],
         vec!["serve", "--frobnicate"],
         vec!["hub"],
         vec!["hub", "path"],
