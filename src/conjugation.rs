@@ -1,8 +1,8 @@
 use crate::morphology::VerbRoots;
 use std::collections::HashMap;
 
-const PAST_ENDINGS: [&str; 6] = ["م", "ی", "", "یم", "ید", "ند"];
-const PRESENT_ENDINGS: [&str; 6] = ["م", "ی", "د", "یم", "ید", "ند"];
+pub(crate) const PAST_ENDINGS: [&str; 6] = ["م", "ی", "", "یم", "ید", "ند"];
+pub(crate) const PRESENT_ENDINGS: [&str; 6] = ["م", "ی", "د", "یم", "ید", "ند"];
 const PERFECT_ENDINGS: [&str; 6] = [
     "\u{200C}ام",
     "\u{200C}ای",
@@ -59,17 +59,14 @@ impl Conjugation {
             } else {
                 prefixed_stem(present, "ب")
             };
+            // A separable preverb comes FIRST: `برمی‌گردم`, not `می‌برگردم`. The
+            // normalizer folds `بر می‌گردم` to `برمی‌گردم`, so emitting the other
+            // order made `conjugate` and `normalize` disagree about the same word.
+            let present_prefix = preverb_imperfective(preverb, "می");
+            let negative_prefix = preverb_imperfective(preverb, "نمی");
             (
-                forms(
-                    &format!("می\u{200C}{preverb}"),
-                    present_body,
-                    &PRESENT_ENDINGS,
-                ),
-                forms(
-                    &format!("نمی\u{200C}{preverb}"),
-                    present_body,
-                    &PRESENT_ENDINGS,
-                ),
+                forms(&present_prefix, present_body, &PRESENT_ENDINGS),
+                forms(&negative_prefix, present_body, &PRESENT_ENDINGS),
                 forms("", &subjunctive, &PRESENT_ENDINGS),
             )
         };
@@ -77,7 +74,11 @@ impl Conjugation {
         Self {
             past: forms("", past, &PAST_ENDINGS),
             negative_past: forms("", &negated(preverb, past_body), &PAST_ENDINGS),
-            imperfective_past: forms(&format!("می\u{200C}{preverb}"), past_body, &PAST_ENDINGS),
+            imperfective_past: forms(
+                &preverb_imperfective(preverb, "می"),
+                past_body,
+                &PAST_ENDINGS,
+            ),
             present,
             negative_present,
             subjunctive,
@@ -128,6 +129,15 @@ fn forms(prefix: &str, stem: &str, endings: &[&str; 6]) -> Vec<String> {
         .iter()
         .map(|ending| format!("{prefix}{stem}{ending}"))
         .collect()
+}
+
+/// The imperfective prefix for a verb, with a separable preverb kept in front.
+///
+/// The preverb leads, because it keeps its position and the imperfective marker
+/// attaches to the stem: `بر` + `می` + `‌` gives `برمی‌گردم`. Without a preverb
+/// this is just `می‌`/`نمی‌`.
+fn preverb_imperfective(preverb: &str, marker: &str) -> String {
+    format!("{preverb}{marker}\u{200C}")
 }
 
 /// Negate a stem, keeping a separable preverb where it is: `بر` + `گشت` gives

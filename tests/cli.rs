@@ -299,6 +299,35 @@ fn masks_with_the_maskers_flag_and_rejects_the_removed_one() {
 }
 
 #[test]
+fn maskers_flag_replaces_the_defaults_and_repeats_append() {
+    // Choosing a chain has to replace the defaults: `--maskers stopwords` used to
+    // leave URLs and emails in the clear, so the flag that looked like a filter
+    // published the text it was asked to clean.
+    let line = "به https://a.b و info@a.co برو";
+    let stopwords_only = stdout(rishe().args(["mask", line, "--maskers", "stopwords"]));
+    assert!(stopwords_only.contains("https://a.b"), "{stopwords_only}");
+    assert!(stopwords_only.contains("info@a.co"), "{stopwords_only}");
+
+    // One value per flag, appended: the last flag used to win outright.
+    let both = stdout(rishe().args(["mask", line, "--maskers", "url", "--maskers", "email"]));
+    assert_eq!(both, "به <URL> و <EMAIL> برو");
+}
+
+#[test]
+fn masking_never_corrupts_text_that_shares_a_shield() {
+    // The chain swapped `<URL>`/`<EMAIL>` for the fixed pairs `ژژ`/`چچ`, which
+    // real words contain, so masking invented placeholders out of the text.
+    for text in ["چچ", "غژژ", "فژژ", "سلام ژژ دنیا"] {
+        assert_eq!(stdout(rishe().args(["mask", text])), text, "{text:?}");
+    }
+    // And the caller's mask token is never fed back through the chain.
+    assert_eq!(
+        stdout(rishe().args(["mask", "info@a.co", "--mask-token", "[MASK]"])),
+        "[MASK]"
+    );
+}
+
+#[test]
 fn lists_hub_packs() {
     let output = stdout(rishe().args(["hub", "list"]));
     assert!(output.contains("depparse-compact\t"));

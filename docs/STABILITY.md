@@ -11,7 +11,7 @@ source and the same tag. A version number covers all of these surfaces:
 
 | surface | where it lives |
 |---|---|
-| Python API | `rishe`, `rishe.api`, `rishe.compat`, `rishe.hub`, `rishe.corpora`, `rishe.dates` |
+| Python API | `rishe`, `rishe.api`, `rishe.compat`, `rishe.hub`, `rishe.corpora` |
 | Rust API | the `rishe` crate's public items, including `Pipeline`, `Embeddings`, `ModelPack`, `hub` |
 | Command line | the `rishe` binary (`cargo install`) and the `rishe` console script (pip) |
 | Serve protocol | the JSON-lines protocol in [`serve-schema.md`](serve-schema.md) |

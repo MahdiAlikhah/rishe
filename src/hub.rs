@@ -181,7 +181,23 @@ fn infer_filename(url: &str) -> Option<&str> {
     if reserved.contains(&stem.as_str()) {
         return None;
     }
+    // A trailing dot or space is stripped by Windows, so `model.vec.` names the
+    // same file as `model.vec`: accepting it would write over a model while the
+    // collision check saw two different names.
+    if name.ends_with('.') || name.ends_with(' ') {
+        return None;
+    }
     Some(name)
+}
+
+/// Whether two cache file names resolve to the same file.
+///
+/// Windows and default macOS resolve names case-insensitively, so
+/// `RISHE-EMBED-FA-300.VEC` overwrote the pinned model while an exact `==` said
+/// it did not. Comparing lowercase is right on Linux too: the two names cannot
+/// both be a registered model, and refusing is the safe direction.
+fn same_cache_file(left: &str, right: &str) -> bool {
+    left.eq_ignore_ascii_case(right)
 }
 
 fn pull(args: &[String]) -> Result<(), HubError> {
@@ -274,7 +290,7 @@ fn pull(args: &[String]) -> Result<(), HubError> {
         // pinned model and `hub path`/`embed` would then hand it out.
         if let Some((owner, _, _, _)) = MODELS
             .iter()
-            .find(|(model, _, _, known)| *model != name && *known == filename)
+            .find(|(model, _, _, known)| *model != name && same_cache_file(known, filename))
         {
             return Err(HubError::Runtime(format!(
                 "{filename} belongs to the registered model {owner:?}; pick a different file name for a custom URL"
@@ -1482,6 +1498,45 @@ mod tests {
                 .contains("belongs to the registered model"),
             "{error}"
         );
+    }
+
+    #[test]
+    fn a_registered_model_name_cannot_be_matched_by_case_or_a_trailing_dot() {
+        // The guard compared exact strings, so on Windows (and default macOS)
+        // `RISHE-EMBED-FA-300.VEC` resolved to the pinned file and replaced it.
+        let registered = MODELS[0];
+        let filename = registered.3;
+        for variant in [
+            filename.to_ascii_uppercase(),
+            filename.to_ascii_lowercase(),
+            format!("{} ", filename),
+        ] {
+            if variant.trim() == filename {
+                continue;
+            }
+            let error = pull(&[
+                format!("http://mirror/{variant}"),
+                "--sha256".to_string(),
+                "0".repeat(64),
+            ])
+            .expect_err("a case or trailing-space variant must be refused");
+            assert!(
+                error
+                    .to_string()
+                    .contains("belongs to the registered model"),
+                "{variant}: {error}"
+            );
+        }
+        // A trailing dot is refused before the download starts: Windows strips it,
+        // so it names the pinned file while comparing as a different string.
+        assert_eq!(infer_filename(&format!("http://host/{filename}.")), None);
+    }
+
+    #[test]
+    fn same_cache_file_ignores_case() {
+        assert!(same_cache_file("model.vec", "MODEL.VEC"));
+        assert!(same_cache_file("Model.Vec", "model.vec"));
+        assert!(!same_cache_file("model.vec", "model.rvec"));
     }
 
     #[test]

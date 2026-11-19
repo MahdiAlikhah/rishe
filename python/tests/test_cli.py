@@ -69,6 +69,36 @@ class CliTest(unittest.TestCase):
             main(["mask", "x", "--stages", "url"])
         self.assertEqual(caught.exception.code, 2)
 
+    def test_maskers_flag_replaces_the_defaults_and_repeats_append(self):
+        """`--maskers` chooses the chain; it used to append to the defaults.
+
+        Appending meant `--maskers stopwords` still masked URLs and emails, so the
+        flag behaved differently from the Rust binary and from its own help.
+        """
+        line = "به https://a.b و info@a.co برو"
+        code, output = self.run_cli(["mask", line, "--maskers", "stopwords"])
+        self.assertEqual(code, 0)
+        self.assertIn("https://a.b", output)
+        self.assertIn("info@a.co", output)
+
+        code, output = self.run_cli(
+            ["mask", line, "--maskers", "url", "--maskers", "email"]
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(output, "به <URL> و <EMAIL> برو")
+
+    def test_mask_never_corrupts_text_that_shares_a_shield(self):
+        """The chain used `ژژ`/`چچ` as shields, and real words contain both."""
+        for text in ("چچ", "غژژ", "فژژ", "سلام ژژ دنیا"):
+            code, output = self.run_cli(["mask", text])
+            self.assertEqual(code, 0)
+            self.assertEqual(output, text)
+        code, output = self.run_cli(
+            ["mask", "info@a.co", "--mask-token", "[MASK]"]
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(output, "[MASK]")
+
     def test_several_positional_words_are_joined(self):
         """The Rust binary joins the words; Python used to exit 2."""
         code, output = self.run_cli(["normalize", "مي", "كنم"])

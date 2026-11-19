@@ -67,9 +67,9 @@ rishe.process("مي كنم").tokens             # ['می\u200cکنم']
 
 It does take keyword options, and they change the tokens rather than the text:
 `replace_links=True` collapses a URL to one `LINK` token, `replace_numbers=True`
-collapses a number to `NUM3`, and `join_verb_parts=False` stops the default
-joining of a verb and its auxiliary. Off by default, so the un-argumented call
-above is the plain surface split.
+collapses a number to `NUM3`, and `join_verb_parts=True` joins a verb and its
+auxiliary into one token (`رفته است` → `رفته_است`). All of them are off by
+default, so the un-argumented call above is the plain surface split.
 
 Tokenization options are keyword arguments (`join_verb_parts=`,
 `replace_links=`, `replace_emails=`, …), not separate methods.

@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Model packs are versioned separately from the crate; their versions are recorded
 in the pack manifest and on the model repository.
 
+## [1.0.5] - 2026-11-19
+
+### Fixed
+
+The 1.0.4 audit's remaining findings, every one shipped with the regression test
+that would have caught it. No public item was removed or renamed, so this is a
+patch like 1.0.4.
+
+- **Morphology.** `lemmatize` read `ترساند` as a form of `ترسید`: the whole token
+  was never looked up before the person endings were stripped, so its final `د`
+  left `ترسان`. The participle heuristic accepted any verb stem instead of a *past*
+  stem, so `شماره` (`شمار`) and `کافه` (`کاف`) became `شمرد`/`کافت` — 321 nouns
+  stopped over-stemming. `verbs.tsv` keyed the real present stems `گذر`/`شنو`/`یاب`
+  to the non-words `گدشت`/`شنفت`/`یابید` (absent from all 187,582 nouns and 27,132
+  frequency entries), so `conjugate` invented a paradigm for a spelling nobody
+  writes; the present-stem rows now point at `گذشت`/`شنید`/`یافت` and the typo
+  identity rows are gone. A preverb verb now conjugates preverb-first
+  (`برمی‌گردم`, `برنمی‌گردم`, `برمی‌گشتم`, `برنگشتم`, `برگردم`) and reads its own
+  output back. The whole negative past and subjunctive of a vowel-initial verb
+  (`نیامد`, `بیایم`) failed to parse; the `ی` glide is resolved only when the token
+  really is in the candidate verb's paradigm, so `نیاز` and `بیار` stay nouns.
+- **Normalization.** All three ezafe spellings (`خانۀ`, `خانه‌ی`, `خانه ی`) flatten
+  to plain `خانه` — uniform text, and search works. `خانه‌یی` and `خانه یا` are
+  left alone. `punctuation_spacing` split `3.14`, `12:30`, `v1.0.4` and every URL;
+  `orthographic_spacing` deleted a bare `\r`. `spacing` was not idempotent
+  (`خوب؟‌ها`), split a bracket pair (`((ب))` → `( (ب))`), and `repeated_letters`
+  trimmed leading/trailing space it was never asked to touch.
+- **Maskers.** The shield mechanism rewrote real `ژژ`/`چچ` (14 lexicon words);
+  shields are now bound once per chain and no longer collide with the text.
+  `mask_diacritics` listed eight harakat while `Normalizer` strips U+064B..U+0656
+  plus U+0670, so `آب` lost its madda instead of composing to `آ` and
+  `compat(remove_diacritics=True)` disagreed with `normalize`. The emoji ranges
+  missed the Misc Symbols and Arrows block, so `⬛`/`⭕`/`⬅` stuck to the word.
+- **Command line.** `--maskers` now replaces the defaults on its first use and
+  appends on repeats, in both binaries. `spell_correct` corrected per line instead
+  of collapsing every line break into one space.
+- **Hub.** A pinned model could be overwritten through a case variant or a
+  trailing dot/space in the file name; `same_cache_file` compares case-insensitively
+  and `_safe_filename` rejects the trailing dot. Python `hub.pull(registered,
+  sha256=…)` now raises instead of silently ignoring the pin.
+- **Docs and data.** `docs/errors.md` promised `ValueError` for a missing pack
+  (it is `FileNotFoundError`), claimed `--top 0` exits 1 (both binaries exit 2),
+  and `docs/STABILITY.md` listed a phantom `rishe.dates`. `CHANGELOG.md` said
+  187,591 nouns; the file has 187,582. `docs/api.md` described `join_verb_parts`
+  backwards. `docs/BENCHMARKS.md` labelled one run as both 0.11.4 and the 1.0.0
+  reference. `scripts/gen_presentation_forms.py` hard-coded one machine's absolute
+  path, so it could not be re-run anywhere else.
+- **Augmentation.** `Rng::new` XORed the seed with the golden-ratio constant, so
+  the seed that *equals* that constant produced state 0 — the one state xorshift
+  cannot leave — and `keyboard_noise` emitted a single space. The state is now
+  SplitMix64-mixed.
+
 ## [1.0.4] - 2026-11-18
 
 ### Fixed
@@ -50,7 +102,7 @@ removed or renamed, so this is a patch, not a minor.
   `دنیایم` now.
 - **Lexicon data.** `nouns.tsv` had 16k keys the tokenizer can never produce
   (Arabic-coded letters, 127 punctuation keys): canonicalized and filtered,
-  190,450 → 187,591 rows, every `key == lemma`, byte-sorted. 163k of the 190k
+  190,450 → 187,582 rows, every `key == lemma`, byte-sorted. 163k of the 190k
   `word_freq.tsv` rows had frequency 0, which is what made `spell_correct` prefer
   junk; only real counts are kept (27,132 rows). `extract_lexicons.py` applies the
   same canonicalization and filtering, so a regeneration keeps both files clean,

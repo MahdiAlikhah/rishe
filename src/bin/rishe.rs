@@ -189,6 +189,7 @@ fn run() -> Result<(), CliError> {
         text: Vec::new(),
     };
     let mut args = args.peekable();
+    let mut maskers_given = false;
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--json" => options.json = true,
@@ -196,11 +197,20 @@ fn run() -> Result<(), CliError> {
                 let value = args
                     .next()
                     .ok_or_else(|| CliError::Usage("--maskers needs a value".to_string()))?;
-                options.maskers = value
-                    .split(',')
-                    .filter(|stage| !stage.is_empty())
-                    .map(str::to_owned)
-                    .collect();
+                // The first flag replaces the defaults; repeats append, so
+                // `--maskers url --maskers email` means both, as the help and the
+                // Python CLI say. Assigning per flag silently dropped all but the
+                // last one.
+                if !maskers_given {
+                    options.maskers.clear();
+                    maskers_given = true;
+                }
+                options.maskers.extend(
+                    value
+                        .split(',')
+                        .filter(|stage| !stage.is_empty())
+                        .map(str::to_owned),
+                );
             }
             "--mask-token" => {
                 options.mask_token =

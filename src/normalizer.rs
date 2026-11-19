@@ -24,6 +24,50 @@ impl Default for NormalizerConfig {
     }
 }
 
+/// Flatten every ezafe spelling of a word-final `ه` to plain `ه`.
+///
+/// Persian writes the same ezafe three ways — `خانۀ`, `خانه‌ی`, `خانه ی` — and
+/// the lexicon proves none of them is a distinct word: 0 of 187,582 nouns (and 0
+/// of every other shipped list) contain `ۀ`, and it never appears inside a word.
+/// So all three are the word's own `ه` plus a mark, and flattening loses no word
+/// identity while making search and lookup work. A raw `خانۀ` is not in the
+/// lexicon at all; the flattened `خانه` is.
+///
+/// This is the input direction only. Writing `ۀ`/`ه‌ی` back is a display choice,
+/// which `ya` keeps as an opt-in style converter outside the default chain.
+fn flatten_ezafe<'a>(input: &'a str) -> Cow<'a, str> {
+    // `ۀ` is handled by `classify_char`; these two spellings survive it.
+    if !input.contains("\u{647}\u{200C}\u{6CC}") && !input.contains("\u{647} \u{6CC}") {
+        return Cow::Borrowed(input);
+    }
+    let mut out = String::with_capacity(input.len());
+    let mut rest = input;
+    while let Some(at) = rest.find('\u{647}') {
+        out.push_str(&rest[..at]);
+        out.push('\u{647}');
+        let after = &rest[at + '\u{647}'.len_utf8()..];
+        // The ezafe yā is word-final, so strip it only when a word boundary
+        // follows. `خانه‌یی` keeps its `ی` (the yā is followed by another letter),
+        // and so does `خانه یا`, where `یا` is a separate word.
+        let candidate = after
+            .strip_prefix("\u{200C}\u{6CC}")
+            .or_else(|| after.strip_prefix(" \u{6CC}"));
+        match candidate {
+            Some(tail)
+                if tail
+                    .chars()
+                    .next()
+                    .is_none_or(|ch| !crate::normalize_ops::is_persian_letter(ch)) =>
+            {
+                rest = tail;
+            }
+            _ => rest = after,
+        }
+    }
+    out.push_str(rest);
+    Cow::Owned(out)
+}
+
 /// Character-level Persian normalizer.
 pub struct Normalizer {
     config: NormalizerConfig,
@@ -142,8 +186,8 @@ impl Normalizer {
         }
 
         match buf {
-            Some(s) => Cow::Owned(s),
-            None => Cow::Borrowed(input),
+            Some(s) => Cow::Owned(flatten_ezafe(&s).into_owned()),
+            None => flatten_ezafe(input),
         }
     }
 
@@ -289,7 +333,7 @@ enum CharAction {
 
 /// Compose `ا` + combining hamza/maddah/subscript-alef into `أ`/`آ`/`إ`.
 /// Returns `None` when there is nothing to compose.
-fn compose_decomposed(input: &str) -> Option<String> {
+pub(crate) fn compose_decomposed(input: &str) -> Option<String> {
     const MARKS: [(char, char); 3] = [
         ('\u{0653}', '\u{0622}'),
         ('\u{0654}', '\u{0623}'),
@@ -319,6 +363,40 @@ fn compose_decomposed(input: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_ezafe_spelling_flattens_to_plain_heh() {
+        let n = Normalizer::new(NormalizerConfig::default());
+        // Persian writes the same ezafe three ways. None of them is a distinct
+        // word (0 of 187,582 nouns contain `ۀ`), so the default normalizer
+        // flattens all three to the word's own `ه`: uniform text, and the
+        // flattened form is the one the lexicon actually holds.
+        let khaneh = "خانه";
+        for ezafe in [
+            "خانۀ".to_string(),
+            "خانه\u{200C}ی".to_string(),
+            "خانه ی".to_string(),
+        ] {
+            assert_eq!(n.normalize(&ezafe), khaneh, "{ezafe:?}");
+        }
+        // Flattening is idempotent and does not touch a `ی` that is a letter.
+        for word in ["دنیا", "میان", "خانۀ", "خانه\u{200C}ی"] {
+            let once = n.normalize(word).into_owned();
+            assert_eq!(n.normalize(&once), once, "{word:?}");
+        }
+    }
+
+    #[test]
+    fn a_heh_followed_by_ya_is_only_flattened_at_the_ezafe() {
+        let n = Normalizer::new(NormalizerConfig::default());
+        // `خانه‌یی` is not the ezafe, so the `ی` stays.
+        assert_eq!(
+            n.normalize("خانه\u{200C}یی.",).into_owned(),
+            "خانه\u{200C}یی.".to_string()
+        );
+        // A yā that only looks adjacent after a space stays a separate word.
+        assert_eq!(n.normalize("خانه یا").into_owned(), "خانه یا".to_string());
+    }
 
     #[test]
     fn presentation_forms_normalize_once() {

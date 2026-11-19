@@ -1,4 +1,10 @@
+import os
+import pathlib
 import unicodedata
+
+# The generator wrote to one machine's absolute path, so it could not be re-run
+# anywhere else. Resolve the crate root from this file instead.
+_root = pathlib.Path(__file__).resolve().parent.parent
 
 ranges = [(0xFB50, 0xFE00), (0xFE70, 0xFF00)]
 final = {"\u0643": "\u06A9", "\u064A": "\u0649", "\u06C0": "\u0647"}
@@ -69,7 +75,7 @@ lines.append("        .ok()")
 lines.append("        .map(|index| PRESENTATION_FORMS[index].1)")
 lines.append("}")
 
-path = r"C:\Users\MAK\Documents\rishe - Copy\src\presentation.rs"
+path = os.path.join(_root, "src", "presentation.rs")
 with open(path, "w", encoding="utf-8", newline="\n") as f:
     f.write("\n".join(lines) + "\n")
 print("wrote", path)

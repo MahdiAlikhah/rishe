@@ -185,6 +185,13 @@ def _safe_filename(inferred: str) -> str:
         raise ValueError(
             "cannot infer a filename from the URL; it is a reserved device name"
         )
+    # Windows strips a trailing dot or space, so `model.vec.` resolves to the same
+    # file as `model.vec` and would overwrite a pinned model while the collision
+    # check compared two different strings.
+    if name.endswith((".", " ")):
+        raise ValueError(
+            "cannot infer a filename from the URL; a trailing dot or space is not allowed"
+        )
     return name
 
 
@@ -208,6 +215,16 @@ def pull(
         return _pull_pack(name_or_url, force=force)
 
     model = MODELS.get(name_or_url)
+    if model is not None:
+        # The registry pins this name's digest, so a caller-supplied one has
+        # nothing to apply to. Refusing matches `hub pull --sha256` in Rust;
+        # silently ignoring it read as a pin that never happened.
+        if sha256 is not None:
+            raise ValueError(
+                "registered models are pinned to their published digest; omit sha256="
+            )
+        if filename is not None:
+            raise ValueError("registered models fix their file name; omit filename=")
     if model is None:
         if not sha256:
             raise ValueError(
@@ -231,7 +248,10 @@ def pull(
         # A custom URL must not land on a registered model's cache file: the bytes
         # are only as trustworthy as the digest the caller passed.
         for known_name, known in MODELS.items():
-            if known.filename == safe_name:
+            # Case-insensitive: Windows and default macOS resolve
+            # `RISHE-EMBED-FA-300.VEC` to the pinned `rishe-embed-fa-300.vec`,
+            # so an exact match check let a custom URL overwrite a model.
+            if known.filename.lower() == safe_name.lower():
                 raise ValueError(
                     f"{safe_name} belongs to the registered model {known_name!r}; "
                     "pass filename= to pick a different name"

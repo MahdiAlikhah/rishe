@@ -277,6 +277,40 @@ class DownloadTest(unittest.TestCase):
             hub.pull(f"http://mirror/{name}", sha256="0" * 64)
         self.assertIn("belongs to the registered model", str(caught.exception))
 
+    def test_a_registered_model_name_cannot_be_matched_by_case(self):
+        """Windows and default macOS resolve the cache names case-insensitively.
+
+        `RISHE-EMBED-FA-300.VEC` wrote over the pinned `rishe-embed-fa-300.vec`
+        while an exact string compare said the names differed.
+        """
+        name = hub.MODELS["rishe-embed-fa-300"].filename
+        for variant in (name.upper(), name.capitalize(), name.title()):
+            with self.assertRaises(ValueError) as caught:
+                hub.pull(f"http://mirror/{variant}", sha256="0" * 64)
+            self.assertIn("belongs to the registered model", str(caught.exception))
+
+    def test_a_trailing_dot_or_space_is_refused(self):
+        """Windows strips these, so `model.vec.` names the pinned `model.vec`."""
+        name = hub.MODELS["rishe-embed-fa-300"].filename
+        for variant in (name + ".", name + " "):
+            with self.assertRaises(ValueError):
+                hub._safe_filename(variant)
+            with self.assertRaises(ValueError):
+                hub.pull(f"http://mirror/{variant}", sha256="0" * 64)
+        self.assertEqual(hub._safe_filename("plain.vec"), "plain.vec")
+
+    def test_a_registered_model_refuses_a_pin_instead_of_ignoring_it(self):
+        """A silently dropped `sha256=` reads as a pin that never happened."""
+        with self.assertRaises(ValueError) as caught:
+            hub.pull("rishe-embed-fa-300", sha256="0" * 64)
+        self.assertIn("pinned to their published digest", str(caught.exception))
+        with self.assertRaises(ValueError) as caught:
+            hub.pull("rishe-embed-fa-300", sha256="0" * 64, force=True)
+        self.assertIn("pinned to their published digest", str(caught.exception))
+        with self.assertRaises(ValueError) as caught:
+            hub.pull("rishe-embed-fa-300", filename="evil.vec")
+        self.assertIn("fix their file name", str(caught.exception))
+
     def test_only_http_urls_are_downloaded(self):
         """`file:`/`ftp:`/`data:` copied local bytes into the model cache."""
         for url in (

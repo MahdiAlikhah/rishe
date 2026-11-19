@@ -6,7 +6,13 @@ use std::sync::OnceLock;
 
 const PERSIAN_DIGITS: &str = "۰۱۲۳۴۵۶۷۸۹";
 const ARABIC_DIGITS: &str = "٠١٢٣٤٥٦٧٨٩";
-const DIACRITICS: &str = "ًٌٍَُِّْ";
+/// Arabic combining marks, U+064B..U+0656 plus U+0670.
+///
+/// This is the same range `Normalizer::classify_char` drops, so
+/// `compat(remove_diacritics=True)` and `normalize` agree: the masker used to
+/// list only the eight harakat, which left `ا` + U+0653 MADDAH (`آب`) alone and
+/// made the compatibility layer disagree with itself.
+const DIACRITICS: &str = "\u{064B}\u{064C}\u{064D}\u{064E}\u{064F}\u{0650}\u{0651}\u{0652}\u{0653}\u{0654}\u{0655}\u{0656}\u{0670}";
 const VS16: char = '\u{FE0F}';
 const ZWJ: char = '\u{200D}';
 const OFFENSIVE_WORDS: &str = include_str!("../data/offensive_words.txt");
@@ -108,26 +114,53 @@ impl MaskOp {
     }
 }
 
-/// Placeholders `url`/`email` write, and the stand-in used between maskers.
+/// Stand-ins absent from `text`, one per protected string, increasing in length.
 ///
 /// A masker only sees a string, so `html` read `<URL>` as a tag and deleted it,
-/// and `non_persian`/`punctuation` ate its letters. No Persian word doubles `ژ`
-/// or `چ`, so these two shields cannot occur in real text.
-const SHIELDS: [(&str, &str); 2] = [("<URL>", "ژژ"), ("<EMAIL>", "چچ")];
+/// and `non_persian`/`punctuation` ate its letters: the placeholders have to be
+/// swapped out between stages. The stand-in must be a run of ZWNJ, because
+/// `non_persian` deletes every other non-Persian character. It must also be
+/// absent from the text: a fixed pair (this used `ژژ`/`چچ`) corrupted real words,
+/// since `چچ` is a Persian word and doubled `ژ` occurs too. Increasing length
+/// makes no run a substring of another.
+fn build_shields(text: &str, count: usize) -> Vec<String> {
+    let mut shields = Vec::with_capacity(count);
+    let mut width = 2;
+    while shields.len() < count {
+        let candidate = "\u{200C}".repeat(width);
+        width += 1;
+        if !text.contains(&candidate) {
+            shields.push(candidate);
+        }
+    }
+    shields
+}
 
-/// Run `ops` in order, keeping each stage's placeholders out of the next stage.
+/// Run `ops` in order, keeping each stage's output out of the next stage.
+///
+/// The caller's `mask` is protected too: without that, stage one wrote `[MASK]`
+/// and stage two masked its letters, so `[MASK]` came back as `[MASK]MASK[MASK]`.
 pub(crate) fn apply_chain(text: &str, ops: &[MaskOp], mask: Option<&str>) -> String {
+    let mut protected = vec!["<URL>", "<EMAIL>"];
+    if let Some(token) = mask {
+        if !token.is_empty() && !protected.contains(&token) {
+            protected.push(token);
+        }
+    }
+    let shields = build_shields(text, protected.len());
+
     let mut current = text.to_string();
     for op in ops {
-        for (placeholder, shield) in SHIELDS {
+        for (placeholder, shield) in protected.iter().zip(&shields) {
             if current.contains(placeholder) {
                 current = current.replace(placeholder, shield);
             }
         }
         current = op.apply(&current, mask);
-        for (placeholder, shield) in SHIELDS {
-            if current.contains(shield) {
-                current = current.replace(shield, placeholder);
+        // Longest first, so a shorter shield never splits a longer one.
+        for (placeholder, shield) in protected.iter().zip(&shields).rev() {
+            if current.contains(shield.as_str()) {
+                current = current.replace(shield.as_str(), placeholder);
             }
         }
     }
@@ -339,10 +372,13 @@ pub(crate) fn is_emoji_base(ch: char) -> bool {
         ch as u32,
         0x231A..=0x231B
             | 0x23E9..=0x23F3
+            // 2B00..2BFF is the Misc Symbols and Arrows block: it holds the emoji
+            // ⬛ U+2B1B, ⭕ U+2B55, ⬅ U+2B05 and friends. Without it those were
+            // glued to the neighbouring word while every other pictograph split.
+            | 0x2B00..=0x2BFF
             | 0x2600..=0x26FF
             | 0x2700..=0x2775
             | 0x2794..=0x27BF
-            | 0x2B50
             | 0x1F000..=0x1F02F
             | 0x1F0A0..=0x1F0FF
             | 0x1F100..=0x1F1FF
@@ -642,6 +678,11 @@ pub fn mask_digits(text: &str, mask: &str) -> String {
 
 /// Replace each diacritic with `mask`.
 pub fn mask_diacritics(text: &str, mask: &str) -> String {
+    // Compose first, exactly like `Normalizer`: a decomposed `ا` + U+0653 MADDAH
+    // is the letter `آ`, so stripping the mark alone would turn `آب` into `اب`
+    // instead of leaving the word alone.
+    let composed = crate::normalizer::compose_decomposed(text);
+    let text = composed.as_deref().unwrap_or(text);
     let mut out = String::with_capacity(text.len());
     for ch in text.chars() {
         if DIACRITICS.contains(ch) {
@@ -942,6 +983,45 @@ mod tests {
     }
 
     #[test]
+    fn the_diacritics_masker_agrees_with_the_normalizer() {
+        // The masker listed only the eight harakat while `Normalizer` strips the
+        // whole U+064B..U+0656 range plus U+0670, so `آب` (`ا` + MADDAH) lost its
+        // mark instead of composing to `آ` and `compat(remove_diacritics=True)`
+        // disagreed with `normalize`.
+        assert_eq!(MaskOp::Diacritics.apply("ا\u{0653}ب", None), "آب");
+        assert_eq!(MaskOp::Diacritics.apply("آب", None), "آب");
+        for ch in ['\u{0653}', '\u{0654}', '\u{0655}', '\u{0656}', '\u{0670}'] {
+            assert_eq!(
+                MaskOp::Diacritics.apply(&format!("ب{ch}"), None),
+                "ب",
+                "U+{:04X} was not stripped",
+                ch as u32
+            );
+        }
+    }
+
+    #[test]
+    fn the_emoji_ranges_cover_misc_symbols_and_arrows() {
+        // The Misc Symbols and Arrows block was missing, so ⬛ ⭕ ⬅ stuck to the
+        // neighbouring word while every other pictograph split off cleanly.
+        for ch in ['\u{2B1B}', '\u{2B55}', '\u{2B05}', '\u{2B50}'] {
+            assert!(
+                is_emoji_base(ch),
+                "U+{:04X} should be treated as an emoji",
+                ch as u32
+            );
+        }
+        // Pictographs of numbers are not emoji and must keep their meaning.
+        for ch in ['\u{2776}', '\u{2777}', '\u{2793}'] {
+            assert!(
+                !is_emoji_base(ch),
+                "U+{:04X} is a number pictograph, not an emoji",
+                ch as u32
+            );
+        }
+    }
+
+    #[test]
     fn a_pass_without_matches_leaves_the_text_alone() {
         assert_eq!(MaskOp::Url.apply("  a  b  ", None), "  a  b  ");
         assert_eq!(MaskOp::Mention.apply("  a  b  ", None), "  a  b  ");
@@ -985,6 +1065,33 @@ mod tests {
                 "{ch:?}: 8x the input took {}x the time, so the scan is not linear",
                 large / small
             );
+        }
+    }
+
+    #[test]
+    fn a_chain_leaves_text_its_placeholders_cannot_collide_with() {
+        // The shields used to be the fixed pairs `ژژ`/`چچ`, which real words
+        // contain, so masking invented a URL or an email out of the text.
+        let ops = [MaskOp::Url, MaskOp::Email];
+        for text in ["سلام ژژ دنیا", "چچ", "غژژ", "فژژ", "چچار"] {
+            assert_eq!(apply_chain(text, &ops, None), text, "{text:?} was altered");
+        }
+        // A shield run derived from a text that already contains ZWNJ runs.
+        let hostile = "می\u{200C}\u{200C}\u{200C}\u{200C}روم";
+        assert_eq!(apply_chain(hostile, &ops, None), hostile);
+    }
+
+    #[test]
+    fn a_chain_keeps_the_callers_mask_token() {
+        // Stage one wrote `[MASK]` and the next stage masked its letters, so the
+        // token came back as `[MASK]MASK[MASK]`.
+        for token in ["[MASK]", "<X>", "URL", "**", "ژژ"] {
+            let out = apply_chain(
+                "info@a.co",
+                &[MaskOp::Email, MaskOp::NonPersian, MaskOp::Punctuation],
+                Some(token),
+            );
+            assert_eq!(out, token, "token {token:?} was re-masked");
         }
     }
 }

@@ -185,6 +185,24 @@ pub struct VerbRoots {
     pub preverb: String,
 }
 
+/// Split an imperfective verb into its preverb and its body.
+///
+/// `می‌روم` gives `("", "روم")` and `برمی‌گردم` gives `("بر", "گردم")`, which is
+/// the order `conjugation` emits. Returns `None` when the word has no `می`/`نمی`.
+fn split_imperfective(verb: &str) -> Option<(&str, &str)> {
+    // The marker is surrounded by a ZWNJ, so the split lands on a char boundary.
+    for marker in ["نمی", "می"] {
+        if let Some(at) = verb.find(marker) {
+            let after = &verb[at + marker.len()..];
+            let body = after.strip_prefix('\u{200C}').unwrap_or(after);
+            if !body.is_empty() {
+                return Some((&verb[..at], body));
+            }
+        }
+    }
+    None
+}
+
 // Present stems that cannot be picked by "longest variant" because the lexicon also
 // contains light-verb alternatives (بود -> است/هست/باش, گفت -> گو/گوی, آمد -> آ/آی).
 const PREFERRED_PRESENT: &[(&str, &str)] = &[
@@ -295,6 +313,140 @@ impl MorphologyEngine {
 
     /// Stems for a verb given in any known form, or `None` when it is not in the verb table.
     pub fn verb_roots(&self, verb: &str) -> Option<&VerbRoots> {
+        if let Some(roots) = self.direct_roots(verb) {
+            return Some(roots);
+        }
+        // An imperfective form carries `می`/`نمی`, optionally after a separable
+        // preverb (`برمی‌گردم`). `conjugate` emits that shape, so it has to read
+        // it back or it cannot recognize its own output.
+        if let Some((preverb, body)) = split_imperfective(verb) {
+            // Look the preverb back up: `گردم` alone resolves to the bare `گشت`,
+            // whose own preverb is empty, so the body has to be rejoined with the
+            // preverb to reach the entry that carries it.
+            let with_preverb = format!("{preverb}{body}");
+            for candidate in [with_preverb.as_str(), body] {
+                if let Some(roots) = self.direct_roots(candidate) {
+                    if preverb.is_empty() || roots.preverb == preverb {
+                        return Some(roots);
+                    }
+                }
+            }
+            // `گردم` is a present stem plus a person ending, so no table key holds
+            // it. Strip the ending and find the entry whose present stem, with the
+            // same preverb, is what is left. The past endings resolve the same way
+            // for `برمی‌گشتم`, whose body is a past stem plus an ending.
+            for ending in crate::conjugation::PRESENT_ENDINGS {
+                let Some(stem_body) = body.strip_suffix(ending) else {
+                    continue;
+                };
+                if stem_body.is_empty() {
+                    continue;
+                }
+                let wanted = format!("{preverb}{stem_body}");
+                if let Some(roots) = self
+                    .verb_roots
+                    .values()
+                    .find(|roots| roots.present == wanted && roots.preverb == preverb)
+                {
+                    return Some(roots);
+                }
+            }
+            for ending in crate::conjugation::PAST_ENDINGS {
+                let Some(stem_body) = body.strip_suffix(ending) else {
+                    continue;
+                };
+                if stem_body.is_empty() {
+                    continue;
+                }
+                let wanted = format!("{preverb}{stem_body}");
+                if let Some(roots) = self
+                    .verb_roots
+                    .values()
+                    .find(|roots| roots.past == wanted && roots.preverb == preverb)
+                {
+                    return Some(roots);
+                }
+            }
+        }
+        let lemma = self.lemmatize(verb);
+        if let Some(roots) = self.verb_roots.get(lemma.as_ref()) {
+            return Some(roots);
+        }
+        // A negated preverb form (`برنگشتم`, `برنمی‌گردم`) carries the `ن` between
+        // the preverb and the stem, so no table key holds it either.
+        if let Some(roots) = self.negated_preverb_roots(verb) {
+            return Some(roots);
+        }
+        None
+    }
+
+    /// Resolve a negated form whose `ن` sits between a separable preverb and the
+    /// stem, which is where `conjugation` puts it (`بر` + `ن` + `گشتم`).
+    fn negated_preverb_roots(&self, verb: &str) -> Option<&VerbRoots> {
+        for prefix in SHARED_VERBAL_PREFIXES {
+            let Some(rest) = verb.strip_prefix(*prefix) else {
+                continue;
+            };
+            // `نمی‌گردم` is handled by the imperfective path; this is the plain
+            // negative past, where `ن` follows the preverb directly.
+            if let Some(body) = rest.strip_prefix('ن') {
+                if let Some(roots) = self.preverb_stem_roots(prefix, body) {
+                    return Some(roots);
+                }
+            }
+            // The subjunctive of a preverb verb is the bare preverb plus a present
+            // stem (`برگردم`), with no `می` and no `ن`.
+            if let Some(roots) = self.preverb_stem_roots(prefix, rest) {
+                if roots.preverb == *prefix {
+                    return Some(roots);
+                }
+            }
+        }
+        None
+    }
+
+    /// The entry whose present stem is `prefix + body-without-a-person-ending`.
+    fn preverb_stem_roots(&self, prefix: &str, body: &str) -> Option<&VerbRoots> {
+        for ending in crate::conjugation::PRESENT_ENDINGS {
+            let Some(stem_body) = body.strip_suffix(ending) else {
+                continue;
+            };
+            if stem_body.is_empty() {
+                continue;
+            }
+            let wanted = format!("{prefix}{stem_body}");
+            if let Some(roots) = self
+                .verb_roots
+                .values()
+                .find(|roots| roots.present == wanted && roots.preverb == prefix)
+            {
+                return Some(roots);
+            }
+        }
+        for ending in crate::conjugation::PAST_ENDINGS {
+            let Some(stem_body) = body.strip_suffix(ending) else {
+                continue;
+            };
+            if stem_body.is_empty() {
+                continue;
+            }
+            let wanted = format!("{prefix}{stem_body}");
+            if let Some(roots) = self
+                .verb_roots
+                .values()
+                .find(|roots| roots.past == wanted && roots.preverb == prefix)
+            {
+                return Some(roots);
+            }
+        }
+        None
+    }
+
+    /// Look `verb` up as a table key, an infinitive, or a form's stored lemma.
+    ///
+    /// Split out of [`Self::verb_roots`] so the imperfective path can resolve the
+    /// rejoined `preverb + body` by the same three rules.
+    fn direct_roots(&self, verb: &str) -> Option<&VerbRoots> {
         if let Some(roots) = self.verb_roots.get(verb) {
             return Some(roots);
         }
@@ -309,8 +461,7 @@ impl MorphologyEngine {
                 return Some(roots);
             }
         }
-        let lemma = self.lemmatize(verb);
-        self.verb_roots.get(lemma.as_ref())
+        None
     }
 
     /// Present stem of a verb lemma, or `None` when the lemma has none.
@@ -429,10 +580,19 @@ impl MorphologyEngine {
         // verb analysis below handle them when the token is a known stem + ه.
         // ponytail: stem+ه heuristic with a stoplist for lexicalized nouns. A POS-aware
         // participle check would generalize better, but needs tagged training data.
-        let participle = token.strip_suffix('ه').is_some_and(|stem| {
-            self.is_known_verb_stem(stem) && !NON_PARTICIPLE_NOUNS.contains(&token)
-        });
-        if !participle {
+        // The stem has to be a PAST stem: a participle is past stem + `ه`, so
+        // accepting any verb stem let `شماره` (`شمار`) and `کافه` (`کاف`) read as
+        // participles and turn into the unrelated past stems `شمرد`/`کافت`.
+        let participle = token
+            .strip_suffix('ه')
+            .is_some_and(|stem| self.is_past_stem(stem) && !NON_PARTICIPLE_NOUNS.contains(&token));
+        // The noun table is a 187,582-entry surface-frequency list, so it also holds
+        // verb forms (`نیامد`, `بیاید`). A ب/ن + ی-glide form of a vowel-initial verb
+        // is only treated as a noun when the grammar cannot account for it, i.e.
+        // when the token is not actually in the candidate verb's paradigm. This is
+        // what keeps `نیاز` (not a form of `آزد`) and `بیار` (not `آرد`) as nouns.
+        let glided = self.glided_verb_lemma(token);
+        if !participle && glided.is_none() {
             if let Some(packed) = self.noun_lexicon.get(token) {
                 return Self::unpack_lemma(packed, token);
             }
@@ -440,6 +600,9 @@ impl MorphologyEngine {
 
         // 4. Conjugated Verbs (past, subjunctive ب..., negative ن...). Try the full token first:
         // بودم/بودند/نوشت are verbs, not ب/ن-prefixed forms.
+        if let Some(verb_lemma) = glided {
+            return Cow::Borrowed(verb_lemma);
+        }
         if let Some(verb_lemma) = self.match_verb_lemma(token) {
             return Cow::Borrowed(verb_lemma);
         }
@@ -492,7 +655,47 @@ impl MorphologyEngine {
     }
 
     #[inline]
+    /// Resolve `ب`/`ن` + `ی`-glide forms of a vowel-initial verb.
+    ///
+    /// `آمد` starts with a vowel, so the negative and subjunctive prefixes insert a
+    /// `ی` glide and drop the madda: `نیامدم` is ن + ی + امد, `بیایم` is
+    /// ب + ی + ایم. The noun table is a surface-frequency list that also holds these
+    /// spellings, so the match is only accepted when the token really is in the
+    /// candidate verb's paradigm — otherwise `نیاز` would read as `آزد` and `بیار`
+    /// as `آرد`.
+    fn glided_verb_lemma(&self, token: &str) -> Option<&'static str> {
+        let rest = token
+            .strip_prefix('ب')
+            .or_else(|| token.strip_prefix('ن'))?;
+        let glided = rest.strip_prefix('ی')?;
+        let restored = match glided.strip_prefix('ا') {
+            Some(after_alef) => format!("آ{after_alef}"),
+            None => glided.to_string(),
+        };
+        let lemma = self.match_verb_lemma(&restored)?;
+        let roots = self.verb_roots.get(lemma)?;
+        let paradigm = crate::conjugation::Conjugation::from_roots(roots);
+        let is_form = [
+            &paradigm.negative_past,
+            &paradigm.subjunctive,
+            &paradigm.negative_present,
+        ]
+        .into_iter()
+        .flatten()
+        .any(|form| form == token);
+        is_form.then_some(lemma)
+    }
+
     fn match_verb_lemma(&self, body: &str) -> Option<&'static str> {
+        // The whole token first: `ترساند` is the past stem of `ترساندن`, but the
+        // ending-strip below reads its final `د` as a 3sg present ending, leaving
+        // `ترسان`, which is a form of the *different* verb `ترسید`. A stem that is
+        // in the table whole is never a stem plus an ending.
+        if let Some(packed) = self.verb_stems.get(body) {
+            if let Some(lemma) = lemma_from_blob(packed) {
+                return Some(lemma);
+            }
+        }
         for ending in VERB_PERSON_ENDINGS {
             if let Some(cand) = body.strip_suffix(ending) {
                 if let Some(packed) = self.verb_stems.get(cand) {

@@ -319,8 +319,17 @@ struct Rng(u64);
 impl Rng {
     fn new(seed: u64) -> Self {
         // `seed.max(1)` silently made `seed=0` identical to `seed=1`. Mixing the
-        // seed instead keeps every seed distinct and keeps xorshift off zero.
-        Self(seed ^ 0x9E37_79B9_7F4A_7C15)
+        // seed instead keeps every seed distinct and keeps xorshift off zero — but
+        // a bare XOR maps the golden-ratio constant to exactly 0, which is the one
+        // state xorshift cannot leave, so the stream became `0` forever.
+        // SplitMix64's finalizer spreads the seed so that no single input lands on
+        // zero and neighbouring seeds do not share a stream.
+        let mut x = seed ^ 0x9E37_79B9_7F4A_7C15;
+        x = (x ^ (x >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        x = (x ^ (x >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        x ^= x >> 31;
+        // Even a fully mixed seed may be 0; xorshift never leaves 0.
+        Self(if x == 0 { 0x9E37_79B9_7F4A_7C15 } else { x })
     }
 
     fn next_u64(&mut self) -> u64 {
@@ -422,6 +431,24 @@ mod tests {
         let output = ocr_noise("بپ", options);
         assert_eq!(output.chars().count(), 2);
         assert!(output.chars().all(|ch| "پتثب".contains(ch)));
+    }
+
+    #[test]
+    fn the_golden_ratio_seed_is_not_a_dead_stream() {
+        // `Rng::new` XORed the seed with the golden-ratio constant, so the seed that
+        // EQUALS that constant produced state 0 — the one state xorshift cannot
+        // leave. Every draw returned 0 and `keyboard_noise` emitted a single space.
+        let dead = 0x9E37_79B9_7F4A_7C15u64;
+        let mut rng = Rng::new(dead);
+        assert_ne!(rng.0, 0, "the seed must not zero the xorshift state");
+        let draws: Vec<u64> = (0..8).map(|_| rng.next_u64()).collect();
+        assert!(
+            draws.iter().any(|&value| value != 0),
+            "the stream stayed at zero: {draws:?}"
+        );
+        // And it must differ from its neighbours, not collapse onto one stream.
+        let mut near = Rng::new(dead - 1);
+        assert_ne!(near.next_u64(), Rng::new(dead).next_u64());
     }
 
     #[test]

@@ -17,8 +17,9 @@ shapes are the contract.
 
 `2` covers only parser-level rejections. A value the parser accepts stays on the
 command line and so belongs to `1` when it turns out to be unusable — an
-out-of-vocabulary word, an unknown masker name, a `--top` below 1, a pack that is
-not there, an unknown Hub name.
+out-of-vocabulary word, an unknown masker name, a pack that is not there, an
+unknown Hub name. `--top` below 1 is the one exception: both binaries reject it
+before loading anything and exit `2`, so the status never depends on the cache.
 
 ### Status 0
 
@@ -162,7 +163,8 @@ CPython 3.13.15, Windows x86_64:
 | non-finite embedding value | `OSError` | `rishe.Embeddings(bad)` → `line 2: non-finite value "nan"` |
 | Hub name not registered | `ValueError` | `hub.path("unknown-model")` → `unknown model or pack 'unknown-model'; models: ...; packs: ...` |
 | Hub name registered but not cached | `FileNotFoundError` | `hub.path("rishe-embed-fa-300")` → `'rishe-embed-fa-300' is not cached; run: rishe hub pull ...` |
-| pack load failure | `ValueError` | `Pipeline(pos_pack="missing-dir")` → `model pack is not a directory: ...`; a missing component → `labels.json is missing from ...` |
+| pack directory missing | `FileNotFoundError` | `Pipeline(pos_pack="missing-dir")` → `no such model pack directory for pos: missing-dir` |
+| pack load failure | `ValueError` | a missing component → `labels.json is missing from ...`; malformed contents keep raising `ValueError` |
 | word out of vocabulary | no exception | `Embeddings.similarity(a, b)` returns `None`; `most_similar` returns `[]`; `vector` returns `None` |
 | unparseable date | no exception | `rishe.parse_date("not a date")` returns `None` |
 

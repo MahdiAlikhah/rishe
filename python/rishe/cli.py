@@ -85,7 +85,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         # One value per flag, not `nargs="+"`: a greedy flag swallowed the
         # positional text (`rishe mask --maskers url "متن"` failed).
         action="append",
-        default=list(DEFAULT_MASKERS),
+        # `None`, not the default list: this flag chooses the chain, so it has to
+        # replace the defaults. Appending to them meant `--maskers stopwords` also
+        # masked URLs and emails, unlike the Rust binary.
+        default=None,
         help="maskers to apply, in order (repeat the flag or use commas)",
     )
     mask.add_argument("--mask-token", default=None, help="override every mask default")
@@ -213,9 +216,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         elif args.command == "lemmatize":
             result = pipe(text).lemmas
         elif args.command == "mask":
-            maskers = [
-                masker for value in args.maskers for masker in value.split(",") if masker
-            ]
+            if args.maskers is None:
+                maskers = list(DEFAULT_MASKERS)
+            else:
+                maskers = [
+                    masker for value in args.maskers for masker in value.split(",") if masker
+                ]
             result = pipe.mask(text, maskers, args.mask_token)
         else:
             # Unreachable: the required subparser rejects unknown commands with

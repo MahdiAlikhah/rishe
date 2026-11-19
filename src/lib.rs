@@ -497,8 +497,27 @@ impl Pipeline {
 
     /// Normalize then correct unknown words of three or more characters.
     pub fn spell_correct(&self, text: &str) -> String {
-        let normalized = self.normalizer.normalize(text);
-        self.spell.correct(&normalized)
+        // Per line: `detokenize` joins tokens with spaces, so correcting a whole
+        // paragraph collapsed every line break into one space and turned a
+        // multi-line document into a single run-on line.
+        if !text.contains('\n') && !text.contains('\r') {
+            let normalized = self.normalizer.normalize(text);
+            return self.spell.correct(&normalized);
+        }
+        let mut out = String::with_capacity(text.len());
+        for (index, line) in text.split('\n').enumerate() {
+            if index > 0 {
+                out.push('\n');
+            }
+            // Keep a trailing `\r` so CRLF input round-trips.
+            let (body, carriage) = match line.strip_suffix('\r') {
+                Some(body) => (body, "\r"),
+                None => (line, ""),
+            };
+            out.push_str(&self.spell_correct(body));
+            out.push_str(carriage);
+        }
+        out
     }
 
     /// Comparative form of an adjective.
@@ -1546,6 +1565,145 @@ mod tests {
     }
 
     #[test]
+    fn a_preverb_verb_conjugates_preverb_first_and_reads_itself_back() {
+        let nlp = Pipeline::create(true, true, true);
+        let forms = nlp.conjugate("برگشت").expect("برگشت is a known verb");
+        // The preverb leads and the imperfective marker attaches to the stem:
+        // `برمی‌گردم`, not `می‌برگردم`. The normalizer folds `بر می‌گردم` to the
+        // same string, so the two features now agree about one word.
+        for form in [
+            "برمی\u{200C}گردم",
+            "برنمی\u{200C}گردم",
+            "برمی\u{200C}گشتم",
+            "برنگشتم",
+            "برگردم",
+        ] {
+            assert!(
+                forms
+                    .present
+                    .iter()
+                    .chain(&forms.negative_present)
+                    .chain(&forms.imperfective_past)
+                    .chain(&forms.negative_past)
+                    .chain(&forms.subjunctive)
+                    .any(|candidate| candidate == form),
+                "{form:?} missing: present={:?}",
+                forms.present
+            );
+            // And every emitted form is a word `conjugate` recognizes, so the
+            // function is closed over its own output.
+            assert!(
+                nlp.conjugate(form).is_some(),
+                "conjugate cannot read back {form:?}"
+            );
+        }
+        // A verb without a preverb is unchanged.
+        let plain = nlp.conjugate("رفت").expect("رفت is a known verb");
+        assert!(plain.present.contains(&"می\u{200C}روم".to_string()));
+    }
+
+    #[test]
+    fn a_non_word_is_not_given_a_verb_paradigm() {
+        // `verbs.tsv` keyed the real present stems گذر/شنو/یاب to the lemmas گدشت/
+        // شنفت/یابید, which are not Persian words: absent from all 187,582 nouns
+        // and all 27,132 frequency entries. `conjugate` then built a full paradigm
+        // for a spelling nobody writes. The present-stem rows stay (they carry
+        // می‌گذرم / می‌شنوم / می‌یابم) and point at the real lemmas.
+        let nlp = Pipeline::create(true, true, true);
+        // `گدشت` and `شنفت` are misspellings of `گذشت` and `شنید`: neither appears
+        // in all 187,582 nouns or all 27,132 frequency entries. `یابید` was also
+        // listed as a fake lemma, but it is a real word (2pl present of `یافت`), so
+        // only its bogus *lemma* row was removed — conjugating it is correct.
+        for typo in ["گدشت", "شنفت"] {
+            assert!(
+                nlp.conjugate(typo).is_none(),
+                "{typo:?} must not conjugate as a verb"
+            );
+        }
+        assert_eq!(
+            nlp.lemmatize_verb("یابید").0,
+            "یافت",
+            "یابید is a form of یافت, not a lemma of its own"
+        );
+        // The real verbs they were confused with still work, both directions.
+        for (form, lemma) in [
+            ("می\u{200C}گذرم", "گذشت"),
+            ("می\u{200C}شنوم", "شنید"),
+            ("می\u{200C}یابم", "یافت"),
+            ("گذشتم", "گذشت"),
+            ("شنیدم", "شنید"),
+            ("یافتم", "یافت"),
+        ] {
+            assert!(nlp.conjugate(form).is_some(), "conjugate lost {form:?}");
+            let lemmas = nlp.process(form).lemmas;
+            assert!(
+                lemmas.iter().any(|found| found == lemma),
+                "{form:?} -> {lemmas:?}, expected {lemma:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_vowel_initial_verbs_glided_paradigm_reads_itself_back() {
+        // `آمد` starts with a vowel, so the ب/ن prefixes add a `ی` glide and drop
+        // the madda (`نیامدم`, `بیایم`). The noun table is a surface-frequency list
+        // that also holds those spellings, so the glide match is only accepted when
+        // the token is really in the candidate verb's paradigm — otherwise `نیاز`
+        // reads as `آزد` and `بیار` as `آرد`.
+        let nlp = Pipeline::create(true, true, true);
+        let forms = nlp.conjugate("آمد").expect("آمد is a known verb");
+        let mut checked = 0;
+        for group in [
+            &forms.past,
+            &forms.negative_past,
+            &forms.imperfective_past,
+            &forms.present,
+            &forms.negative_present,
+            &forms.subjunctive,
+        ] {
+            for form in group {
+                checked += 1;
+                assert!(
+                    nlp.conjugate(form).is_some(),
+                    "conjugate cannot read back {form:?}"
+                );
+                assert_eq!(
+                    nlp.lemmatize_verb(form).0,
+                    "آمد",
+                    "{form:?} did not resolve to آمد"
+                );
+            }
+        }
+        assert!(checked >= 36, "only {checked} forms checked");
+        // Real nouns that merely look like glide forms stay nouns.
+        for noun in ["نیاز", "بیار", "بیابان", "بیدار", "بیاور"] {
+            assert_eq!(
+                nlp.lemmatize_verb(noun).0,
+                noun,
+                "{noun} was read as a verb"
+            );
+        }
+    }
+
+    #[test]
+    fn spell_correct_keeps_line_breaks_and_negation() {
+        // `detokenize` joins tokens with spaces, so correcting a whole paragraph
+        // collapsed every line break into one space and turned a multi-line
+        // document into a single run-on line.
+        let nlp = Pipeline::create(true, true, true);
+        assert_eq!(nlp.spell_correct("سلام\nدنیا"), "سلام\nدنیا");
+        assert_eq!(
+            nlp.spell_correct("خط اول\nخط دوم\nخط سوم"),
+            "خط اول\nخط دوم\nخط سوم"
+        );
+        assert_eq!(nlp.spell_correct("a\n\nb"), "a\n\nb");
+        assert_eq!(nlp.spell_correct("سلام\r\nدنیا"), "سلام\r\nدنیا");
+        // A negated verb is a known form, not a misspelling to "fix".
+        assert_eq!(nlp.spell_correct("او دیروز نیامد"), "او دیروز نیامد");
+        assert_eq!(nlp.spell_correct("من نمی\u{200C}روم"), "من نمی\u{200C}روم");
+    }
+
+    #[test]
     fn test_inflection() {
         let nlp = Pipeline::create(true, true, true);
         assert_eq!(nlp.comparative("خوب"), "بهتر");
@@ -1780,6 +1938,50 @@ mod tests {
             ("رفت".to_string(), Some("رو".to_string()))
         );
         assert_eq!(nlp.lemmatize_verb("کتاب"), ("کتاب".to_string(), None));
+    }
+
+    #[test]
+    fn a_noun_ending_in_heh_keeps_its_own_lemma() {
+        // The participle heuristic accepted any verb stem, so `شماره` (`شمار`)
+        // and `کافه` (`کاف`) were read as participles and turned into the
+        // unrelated past stems `شمرد`/`کافت`. A participle is PAST stem + `ه`.
+        let nlp = Pipeline::create(true, true, true);
+        let lemma = |word: &str| {
+            nlp.process(word)
+                .lemmas
+                .into_iter()
+                .next()
+                .unwrap_or_default()
+        };
+        for noun in ["شماره", "کافه", "نامه", "دانه", "خانه", "باده", "لانه"]
+        {
+            assert_eq!(lemma(noun), noun, "{noun} was re-lemmatized");
+            assert_eq!(nlp.stem(noun), noun, "{noun} was stemmed away");
+        }
+        // Genuine past participles still reduce to their verb.
+        for (participle, expected) in [("آزموده", "آزمود"), ("آسوده", "آسود"), ("آشفته", "آشفت")]
+        {
+            assert_eq!(lemma(participle), expected, "{participle}");
+        }
+    }
+
+    #[test]
+    fn a_stem_in_the_table_whole_is_not_a_stem_plus_an_ending() {
+        // `ترساند` is the past stem of the causative `ترساندن`, but its final `د`
+        // read as a 3sg present ending left `ترسان`, a form of `ترسید`: a different
+        // verb with a different present stem (`می‌ترسانم` vs `می‌ترسم`).
+        let nlp = Pipeline::create(true, true, true);
+        let lemma = |word: &str| {
+            nlp.process(word)
+                .lemmas
+                .into_iter()
+                .next()
+                .unwrap_or_default()
+        };
+        assert_eq!(lemma("ترساند"), "ترساند");
+        assert_eq!(lemma("ترسید"), "ترسید");
+        assert_eq!(lemma("ترساندم"), "ترساند");
+        assert_eq!(lemma("ترسیدم"), "ترسید");
     }
 
     #[test]

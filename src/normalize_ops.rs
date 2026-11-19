@@ -336,11 +336,14 @@ pub fn repeated_letters(input: &str) -> Cow<'_, str> {
         out.push(ch);
     }
 
-    let trimmed = out.trim();
-    if !changed && trimmed.len() == input.len() {
+    // Collapsing a run is this stage's job; trimming leading/trailing space is
+    // not, and it silently changed text the caller passed through untouched — and
+    // it also made the "nothing changed" fast path unreachable whenever the input
+    // had a space at either end.
+    if !changed {
         return Cow::Borrowed(input);
     }
-    Cow::Owned(trimmed.to_string())
+    Cow::Owned(out)
 }
 
 /// Collapse horizontal whitespace, drop invisible controls and keep at most one blank line.
@@ -351,8 +354,19 @@ pub fn orthographic_spacing(input: &str) -> Cow<'_, str> {
 
     let mut laid_out = String::with_capacity(input.len());
     let mut last_horizontal = false;
-    for ch in input.chars() {
-        if INVISIBLE.contains(ch) || ch == '\r' {
+    let mut chars = input.chars().peekable();
+    while let Some(ch) = chars.next() {
+        // A carriage return is a line ending on its own (old Mac) or the first
+        // half of CRLF. Dropping it joined the two lines: `خط اول\rخط دوم` lost
+        // its break and CRLF files looked like one long line.
+        if ch == '\r' {
+            if chars.peek() != Some(&'\n') {
+                laid_out.push('\n');
+                last_horizontal = false;
+            }
+            continue;
+        }
+        if INVISIBLE.contains(ch) {
             continue;
         }
         if ch == '\n' {
@@ -650,7 +664,14 @@ fn strip_space_before_closers(chars: Vec<char>) -> Vec<char> {
 fn insert_space_before_openers(chars: Vec<char>) -> Vec<char> {
     let mut out = Vec::with_capacity(chars.len() + 8);
     for ch in chars {
-        if OPENER_PUNCT.contains(ch) && out.last().is_some_and(|c: &char| !c.is_whitespace()) {
+        // A run of openers is one bracket pair (`((ب))`), so it opens with one
+        // space, not one per character: `((ب))` became `( (ب))`, which no longer
+        // matches the text it came from.
+        let after_opener = out.last().is_some_and(|c: &char| OPENER_PUNCT.contains(*c));
+        if OPENER_PUNCT.contains(ch)
+            && !after_opener
+            && out.last().is_some_and(|c: &char| !c.is_whitespace())
+        {
             out.push(' ');
         }
         out.push(ch);
@@ -658,7 +679,53 @@ fn insert_space_before_openers(chars: Vec<char>) -> Vec<char> {
     out
 }
 
+/// Indices that sit inside a token spacing must not split.
+///
+/// A URL, a path or a file name is one token: `https://rishe.example/docs` became
+/// `https: //rishe. example/docs`, which no reader or parser accepts. Spacing
+/// belongs between words, so every index of such a token is marked.
+fn unsplittable_tokens(chars: &[char]) -> Vec<bool> {
+    let mut protected = vec![false; chars.len()];
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i].is_whitespace() {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < chars.len() && !chars[i].is_whitespace() {
+            i += 1;
+        }
+        let token = &chars[start..i];
+        let has_scheme = token
+            .windows(3)
+            .any(|window| window[0] == ':' && window[1] == '/' && window[2] == '/');
+        let has_www = token.len() >= 4
+            && token[0] == 'w'
+            && token[1] == 'w'
+            && token[2] == 'w'
+            && token[3] == '.';
+        let has_both = token.contains(&':') && token.contains(&'/');
+        if has_scheme || has_www || has_both {
+            for slot in &mut protected[start..i] {
+                *slot = true;
+            }
+        }
+    }
+    protected
+}
+
+fn is_digit_char(ch: char) -> bool {
+    // ASCII, Persian and Arabic-Indic digits. A local range check keeps this
+    // module free of a dependency on `maskers`.
+    ch.is_ascii_digit() || matches!(ch as u32, 0x06F0..=0x06F9 | 0x0660..=0x0669)
+}
+
 fn insert_space_after_singles(chars: Vec<char>) -> Vec<char> {
+    // `3.14`, `12:30` and `v1.0.4` read as one value, so a `.`/`:` between two
+    // digits is not a word boundary. Digits on both sides is the whole test: a
+    // full stop after a number (`سال ۱۴۰۰.`) still gets its space.
+    let unsplittable = unsplittable_tokens(&chars);
     let mut out = Vec::with_capacity(chars.len() + 8);
     for (i, ch) in chars.iter().copied().enumerate() {
         out.push(ch);
@@ -666,8 +733,18 @@ fn insert_space_after_singles(chars: Vec<char>) -> Vec<char> {
         // was exempt at index 0, so `، دنیا` became `،دنیا` — the punctuation was
         // glued to the next word, the opposite of the rule this stage enforces.
         if SINGLE_PUNCT.contains(ch) || CLOSER_PUNCT.contains(ch) {
+            if unsplittable.get(i).copied().unwrap_or(false) {
+                continue;
+            }
             if let Some(&next) = chars.get(i + 1) {
-                if !next.is_whitespace()
+                let inside_number = i
+                    .checked_sub(1)
+                    .and_then(|j| chars.get(j).copied())
+                    .is_some_and(is_digit_char)
+                    && is_digit_char(next);
+                if !inside_number
+                    && !next.is_whitespace()
+                    && next != ZWNJ
                     && !SINGLE_PUNCT.contains(next)
                     && !CLOSER_PUNCT.contains(next)
                 {
@@ -1362,6 +1439,27 @@ mod tests {
     }
 
     #[test]
+    fn spacing_is_idempotent_and_does_not_split_a_bracket_pair() {
+        // `خوب؟‌ها` gained a space between `؟` and the ZWNJ on the first pass and
+        // lost the ZWNJ on the second, so the stage was not idempotent.
+        let once = punctuation_spacing("خوب؟\u{200C}ها");
+        assert_eq!(once, "خوب؟\u{200C}ها");
+        assert_eq!(punctuation_spacing(once.as_ref()), once.as_ref());
+        // A run of openers opens once: `((ب))` was `( (ب))`.
+        assert_eq!(punctuation_spacing("((ب))"), "((ب))");
+        assert_eq!(punctuation_spacing("سلام(ب)"), "سلام (ب)");
+    }
+
+    #[test]
+    fn repeated_letters_does_not_trim_the_edges() {
+        // Collapsing a run is this stage's job; trimming leading/trailing space is
+        // not, and it silently changed text the caller passed through untouched.
+        assert_eq!(repeated_letters("  سسسلام  "), "  سسلام  ");
+        assert_eq!(repeated_letters("سلامممم"), "سلامم");
+        assert_eq!(repeated_letters("سلام"), "سلام");
+    }
+
+    #[test]
     fn repeated_letters_collapses_runs() {
         assert_eq!(
             repeated_letters("اینــــجاااا یکــــــ متنــــــ نمونه است."),
@@ -1428,6 +1526,43 @@ mod tests {
         // it too; it used to be exempt, so ، دنیا came back as ،دنیا.
         assert_eq!(punctuation_spacing("، دنیا"), "، دنیا");
         assert_eq!(punctuation_spacing("… و بعد"), "… و بعد");
+    }
+
+    #[test]
+    fn punctuation_spacing_does_not_split_numbers_or_urls() {
+        // A `.`/`:` between digits, or a URL, is not a word boundary. Splitting
+        // these turned `3.14` into `3. 14` and a real link into
+        // `https: //rishe. example/docs`.
+        for text in [
+            "3.14",
+            "12:30",
+            "v1.0.4",
+            "۱۴.۵",
+            "https://rishe.example/docs",
+            "http://a.b/c?d=1",
+            "www.example.com",
+        ] {
+            assert_eq!(punctuation_spacing(text), text, "{text:?} was split");
+        }
+        // A full stop after a number is still a sentence boundary.
+        assert_eq!(punctuation_spacing("۱۴۰۰.سال"), "۱۴۰۰. سال");
+        assert_eq!(punctuation_spacing("عدد ۳:نوشته"), "عدد ۳: نوشته");
+    }
+
+    #[test]
+    fn orthographic_spacing_keeps_a_carriage_return_as_a_line_break() {
+        // Dropping `\r` joined the lines: CRLF files and old-Mac files collapsed
+        // into one long line.
+        assert_eq!(orthographic_spacing("خط اول\rخط دوم"), "خط اول\nخط دوم");
+        assert_eq!(orthographic_spacing("خط اول\r\nخط دوم"), "خط اول\nخط دوم");
+        assert_eq!(orthographic_spacing("a\r\rb"), "a\n\nb");
+        // A lone CR becomes a newline, which the trailing-whitespace trim then
+        // removes — the same as a lone `\n` today.
+        assert_eq!(orthographic_spacing("\r"), "");
+        assert_eq!(orthographic_spacing("\n"), "");
+        // A lone `\n` is untouched, and CRLF drops the CR instead of adding a break.
+        assert_eq!(orthographic_spacing("a\nb"), "a\nb");
+        assert_eq!(orthographic_spacing("a\r\n\r\nb"), "a\n\nb");
     }
 
     #[test]
