@@ -68,6 +68,15 @@ class SurfaceTest(unittest.TestCase):
     def test_stub_is_parsed(self):
         self.assertGreater(len(self.entries), 50)
 
+    def test_stub_holds_no_control_bytes(self):
+        # A form-feed byte once stood where the `f` of `format_persian` belonged,
+        # so the stub rendered as `:meth:ormat_persian` in every editor. Read the
+        # bytes, not the decoded text: a control char survives utf-8 decoding.
+        raw = STUB.read_bytes()
+        bad = [(offset, byte) for offset, byte in enumerate(raw) if byte < 0x20 and byte not in (0x0A, 0x0D)]
+        self.assertEqual(bad, [], f"control bytes in {STUB.name}: {bad[:5]}")
+        self.assertFalse(raw.startswith(b"\xef\xbb\xbf"), "stub starts with a BOM")
+
     def test_no_retired_suffixes(self):
         found = {name for _, name, _ in self.entries if name.endswith(BANNED_SUFFIXES)}
         self.assertEqual(

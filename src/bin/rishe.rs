@@ -827,7 +827,9 @@ fn emit_date(text: &str, json: bool) -> Result<(), String> {
     // `serve` returns, so the two cannot drift.
     let value = date_value(text).map_err(|error| {
         if error.starts_with("cannot parse date from ") {
-            format!("cannot parse a Jalali date from {text:?}")
+            // `docs/errors.md` and the Python CLI both quote this one with single
+            // quotes; `{text:?}` would print double quotes and diverge.
+            format!("cannot parse a Jalali date from '{text}'")
         } else {
             error
         }

@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Model packs are versioned separately from the crate; their versions are recorded
 in the pack manifest and on the model repository.
 
+## [1.0.6] - 2026-11-20
+
+### Fixed
+
+Four defects that the audits above left behind, plus one they introduced. No
+public item was added, renamed or removed, so this is a patch like 1.0.5.
+
+- **`spell_correct` overflowed the stack on a lone `\r`** (`"a\rb"`, `"آ\rب"`).
+  The 1.0.5 per-line fix guarded on `\r` but split only on `\n`, so a
+  carriage return that was not a line ending came back as one line, survived
+  the suffix strip, and the recursive call received the identical input until
+  the process died. Correcting it crashed; it now yields a space, which is what
+  the normalizer does with a bare `\r`, and CRLF input still round-trips.
+- **A form-feed byte stood in for the `f` of `:meth:format_persian`** in
+  `python/rishe/_core.pyi`, so the stub rendered as `:meth:ormat_persian` in
+  every editor and type checker. `python/tests/test_surface.py` now reads the
+  stub's bytes, not its decoded text, so a control character cannot return.
+- **`❓` (U+2753) was not normalized.** Its slot in `PUNCTUATION_GROUPS` held
+  U+FFFD, the replacement character, so the black question ornament passed
+  through untouched while `❔` and every other question mark became `؟`. U+FFFD
+  itself now passes through unmapped.
+- **`rishe date "not a date"` printed double quotes from the Rust binary** while
+  the Python CLI and `docs/errors.md` both use single quotes. `tests/cli.rs`
+  now asserts the message, not only the exit code.
+
 ## [1.0.5] - 2026-11-19
 
 ### Fixed

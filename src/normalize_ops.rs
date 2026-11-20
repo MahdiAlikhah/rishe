@@ -1320,7 +1320,7 @@ const PUNCTUATION_GROUPS: &[(&str, &str)] = &[
     // `ー` (katakana) are letters of other scripts, not Persian punctuation.
     ("—–̶", "-"),
     ("▁_̲", "_"),
-    ("❔?�؟", "؟"),
+    ("❔?❓؟", "؟"),
     ("❕！", "!"),
     ("⁉", "!؟"),
     ("‼", "!!"),
@@ -1363,6 +1363,12 @@ mod tests {
     fn punctuation_maps_symbols() {
         assert_eq!(punctuation("چیست?"), "چیست؟");
         assert_eq!(punctuation("⁉"), "!؟");
+        // `❓` is the black partner of `❔`; its table slot held U+FFFD, so it
+        // passed through while every other question ornament was rewritten.
+        assert_eq!(punctuation("❓"), "؟");
+        assert_eq!(punctuation("❔❓?"), "؟؟؟");
+        // A replacement character is not punctuation anyone typed on purpose.
+        assert_eq!(punctuation("\u{FFFD}"), "\u{FFFD}");
     }
 
     #[test]

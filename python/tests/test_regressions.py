@@ -64,6 +64,20 @@ class CoreRegressionTest(unittest.TestCase):
     def test_future_auxiliary_joins_only_a_verb(self):
         """A `خواهم`-form joined whatever token followed it, punctuation included."""
         self.assertEqual(self.pipe.tokenize("خواهم رفت", join_verb_parts=True), ["خواهم_رفت"])
+
+    def test_spell_correct_survives_a_lone_carriage_return(self):
+        """A mid-string `\\r` recursed until the stack overflowed.
+
+        The per-line split guarded on `\\r` but split only on `\\n`, so one line
+        came back, the `\\r` survived, and the recursive call got the same input
+        forever. Correcting it crashes the process rather than raising, so this
+        test only has to run: crash means the bug is back.
+        """
+        self.assertEqual(self.pipe.spell_correct("a\rb"), "a b")
+        self.assertEqual(self.pipe.spell_correct("\rآ"), "آ")
+        self.assertEqual(self.pipe.spell_correct("آ\rب"), "آ ب")
+        # A real CRLF line ending still round-trips.
+        self.assertEqual(self.pipe.spell_correct("سلام\r\nدنیا"), "سلام\r\nدنیا")
         self.assertEqual(
             self.pipe.tokenize("او خواهد .", join_verb_parts=True), ["او", "خواهد", "."]
         )

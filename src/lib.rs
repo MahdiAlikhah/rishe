@@ -500,7 +500,11 @@ impl Pipeline {
         // Per line: `detokenize` joins tokens with spaces, so correcting a whole
         // paragraph collapsed every line break into one space and turned a
         // multi-line document into a single run-on line.
-        if !text.contains('\n') && !text.contains('\r') {
+        //
+        // Split on `\n` only. Testing for `\r` here recursed forever on a lone
+        // mid-string `\r` (`a\rb`): the split produced one line, `\r` survived
+        // as a non-suffix, and the recursive call saw the same input again.
+        if !text.contains('\n') {
             let normalized = self.normalizer.normalize(text);
             return self.spell.correct(&normalized);
         }
@@ -1698,6 +1702,13 @@ mod tests {
         );
         assert_eq!(nlp.spell_correct("a\n\nb"), "a\n\nb");
         assert_eq!(nlp.spell_correct("سلام\r\nدنیا"), "سلام\r\nدنیا");
+        // A lone `\r` that is not a line ending must not recurse forever. The
+        // guard used to test for `\r` while the split was on `\n`, so `a\rb`
+        // called itself with the identical input until the stack overflowed.
+        // The normalizer turns it into a space, which is the documented rule.
+        assert_eq!(nlp.spell_correct("a\rb"), "a b");
+        assert_eq!(nlp.spell_correct("\rآ"), "آ");
+        assert_eq!(nlp.spell_correct("آ\rب"), "آ ب");
         // A negated verb is a known form, not a misspelling to "fix".
         assert_eq!(nlp.spell_correct("او دیروز نیامد"), "او دیروز نیامد");
         assert_eq!(nlp.spell_correct("من نمی\u{200C}روم"), "من نمی\u{200C}روم");

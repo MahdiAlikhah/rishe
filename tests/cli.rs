@@ -578,6 +578,11 @@ fn reads_stdin_and_reports_bad_input() {
         .output()
         .expect("run rishe");
     assert_eq!(output.status.code(), Some(1));
+    // The Python CLI and `docs/errors.md` quote this in single quotes.
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr).trim(),
+        "cannot parse a Jalali date from 'not a date'"
+    );
 }
 
 #[test]

@@ -71,7 +71,7 @@ class JalaliDate:
 
         A year of 1700 or more formats but does not parse back: :func:parse_date
         reads a four-digit numeric year that large as Gregorian, so it returns
-        None there. Use :meth:ormat_persian, which names the month, for such a
+        None there. Use :meth:format_persian, which names the month, for such a
         date.
         """
         ...
