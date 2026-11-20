@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Model packs are versioned separately from the crate; their versions are recorded
 in the pack manifest and on the model repository.
 
+## [Unreleased]
+
+### Added
+
+- `scripts/fuzz_surfaces.py`, a seeded harness for the three surfaces that parse
+  bytes the crate did not produce: `serve` request lines, hub download responses
+  and `.vec`/`.rvec` files. 18,000 cases across five seeds found no defect, so
+  nothing was fixed and no behaviour changed; the harness ships because a future
+  change can now be checked against the same corpus. `--selftest` proves the
+  detectors still catch a known-bad input and runs in CI, so the tool cannot rot
+  into reporting green while testing nothing. Not part of the release gate: it
+  needs a built binary and spawns thousands of processes.
+
 ## [1.0.6] - 2026-11-20
 
 ### Fixed
