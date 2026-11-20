@@ -66,6 +66,29 @@ class EmbeddingsTest(unittest.TestCase):
         batch = self.embeddings.sentence_vectors(["کتاب", "خانه"])
         self.assertEqual(batch, [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
 
+    def test_alignment_similarity(self):
+        self.assertGreater(self.embeddings.alignment_similarity("کتاب", "کتاب"), 0.9999)
+        # Shared word scores 1.0, the extra word matches nothing: 0.75 overall.
+        # Mean-vector cosine gives 0.7071 for the same pair, so alignment is the
+        # higher score, which is why the API exists.
+        self.assertAlmostEqual(
+            self.embeddings.alignment_similarity("کتاب خانه", "کتاب"), 0.75, places=5
+        )
+        self.assertGreater(
+            self.embeddings.alignment_similarity("کتاب خانه", "کتاب"),
+            self.embeddings.sentence_similarity("کتاب خانه", "کتاب"),
+        )
+        # Not symmetric in general, but symmetric for these trivial inputs.
+        self.assertAlmostEqual(
+            self.embeddings.alignment_similarity("کتاب", "کتاب خانه"),
+            self.embeddings.alignment_similarity("کتاب خانه", "کتاب"),
+            places=6,
+        )
+        # Nothing shared, or nothing known: must not read as a match.
+        self.assertEqual(self.embeddings.alignment_similarity("کتاب", "سلام"), 0.0)
+        self.assertEqual(self.embeddings.alignment_similarity("ناموجود", "کتاب"), 0.0)
+        self.assertEqual(self.embeddings.alignment_similarity("کتاب", "ناموجود"), 0.0)
+
     def test_most_similar(self):
         nearest = self.embeddings.most_similar("کتاب", 2)
         self.assertEqual([word for word, _ in nearest], ["مردم", "مدرسه"])

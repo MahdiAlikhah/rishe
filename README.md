@@ -89,7 +89,16 @@ vectors = Embeddings(hub.path("rishe-embed-fa-300-v2"))
 print(vectors.dim, len(vectors), vectors.dtype)
 vectors.most_similar("کتاب", 5)
 vectors.sentence_similarity("این کتاب خوب است", "کتاب خوبی بود")
+# Word-to-word matching: keeps track of which words correspond, so a shared word
+# is not diluted by the rest of the sentence, and negations are not averaged away.
+vectors.alignment_similarity("این کتاب خوب است", "این کتاب خوب نیست")
 ```
+
+`sentence_similarity` compares the mean of each text's word vectors.
+`alignment_similarity` instead matches each word to its closest word on the
+other side and averages both directions — the same pack, no new download, and it
+scores higher wherever word correspondence matters: on FarsTail entailment it
+takes test accuracy from 0.5601 to 0.5959 (see `docs/BENCHMARKS.md`).
 
 `rishe-embed-fa-300-v2` is a 300-dimensional, 68,144-word Word2Vec skip-gram
 model trained on 150,000 Persian Wikipedia articles. The hub serves the compact

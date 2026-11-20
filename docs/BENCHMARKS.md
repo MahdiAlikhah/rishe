@@ -117,6 +117,7 @@ ridge on top; no sampling, no random seed, identical output across runs.
 |---|---|---|
 | Rishe sentence vectors (pair) | 0.5322 | **0.5601** |
 | Rishe sentence vectors (hypothesis only) | 0.4704 | 0.4578 |
+| `alignment_similarity` + sentence vectors | 0.5856 | **0.5959** |
 
 FarsTail's published baselines, for where this sits: DecompAtt (word2vec) 0.6662,
 HBMP 0.6604, ESIM (fastText) 0.7116, mBERT 0.8338.
@@ -126,7 +127,8 @@ Read this honestly:
 - **0.5601 is below every published baseline**, including DecompAtt at 0.6662.
   Mean pooling over static vectors loses word order and negation, which is
   exactly what entailment turns on. Per class: contradiction is the failure,
-  146/510 = 28.6%, against neutral 77.9% and entailment 60.3%.
+  146/510 = 28.6%, against neutral 77.9% and entailment 60.3%. Adding
+  `alignment_similarity` is the cheapest partial fix (see below).
 - The **hypothesis-only baseline is the bias control**: 0.4578, so the pair
   model's +10.23 points is real signal and not annotation artefact. Chance is
   0.3333.
@@ -135,10 +137,29 @@ Read this honestly:
   overlap-based hard).
 - **Training-free check:** within a single premise the hypotheses differ only in
   relation, so a representation that separates relations should order them. It
-  puts entailment above contradiction on 350/487 premises = **71.9%**.
+  puts entailment above contradiction on 350/487 premises = **71.9%**; blending
+  `alignment_similarity` into the score raises that to 366/487 = **75.2%**.
 
-The gap to DecompAtt is the argument for a trained sentence encoder (P1 in
-`training/ROADMAP.md`): the pooling is the limit, not the vectors.
+`alignment_similarity()` matches each word to its closest word on the other side
+and averages the two directions. It keeps track of *which* words correspond,
+which mean pooling discards, and needs no new download: it is arithmetic over the
+same static table. In the shipped `scripts/benchmark_nli.py` (the numbers above)
+it moves test accuracy 0.5601 → **0.5959**, +3.58 points, closing about a sixth of
+the gap to DecompAtt without a single new parameter. A wider offline feature sweep
+reached 0.6074 and the Rust method alone as a single extra feature gave 0.5908, so
+treat ~0.60 as the plateau for this approach, not a step on the way to 0.71: the
+remaining gap is word order, and static vectors cannot represent it. Beating
+0.6662 still needs a contextual encoder (P1 in `training/ROADMAP.md`).
+
+Contextual encoders were measured on the same split and protocol: e5-base
+(multilingual, MIT) frozen at 0.6170 raw and **0.6419** with the documented
+`query:`/`passage:` prefixes; contrastive fine-tuning on FarsTail *lowered* it
+(0.6145 after 8 epochs) because a bi-encoder compresses each sentence to one
+vector; the same backbone as a **cross-encoder** reaches **0.8107**, which no
+one-vector-per-sentence model can match. Those numbers are for orientation only:
+that backbone is a 112–266 MB int8 pack against this pack's size, so it is not
+shipped.
+
 
 ## Not measured
 

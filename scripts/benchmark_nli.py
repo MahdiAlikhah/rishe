@@ -25,6 +25,7 @@ random seed.
 """
 import csv
 import os
+import re
 import sys
 import urllib.request
 from pathlib import Path
@@ -38,6 +39,7 @@ BASE = "https://raw.githubusercontent.com/dml-qom/FarsTail/master/data"
 SPLITS = ("Train-word.csv", "Val-word.csv", "Test-word.csv")
 LABELS = {"e": 0, "c": 1, "n": 2}
 NAMES = ("entailment", "contradiction", "neutral")
+NEGATION = re.compile(r"(نمی|نبود|نیست|ندارد|ندار|نشد|نکرد|نه\b|هیچ|بدون|غیر)")
 
 
 def fetch(name):
@@ -103,22 +105,55 @@ def accuracy(rows, model, featurizer, params):
     return predict(X, params), y
 
 
-def ranked(model, rows):
+def alignment_features(model, premise, hypothesis):
+    """Standard pair features plus `alignment_similarity` and negation/overlap.
+
+    `alignment_similarity` scores word-to-word correspondence, which mean
+    pooling discards; the extra scalar features cover the remaining cheap
+    signals (whether a negation is present on one side only, and how much
+    vocabulary the two share). All of it is arithmetic over the same pack.
+    """
+    base = pair_features(model, premise, hypothesis)
+    premise_words, hypothesis_words = set(premise.split()), set(hypothesis.split())
+    shared = len(premise_words & hypothesis_words)
+    union = len(premise_words | hypothesis_words) or 1
+    premise_negation = len(NEGATION.findall(premise))
+    hypothesis_negation = len(NEGATION.findall(hypothesis))
+    extra = np.array([
+        model.alignment_similarity(premise, hypothesis),
+        premise_negation,
+        hypothesis_negation,
+        abs(premise_negation - hypothesis_negation),
+        shared / union,
+        shared / max(len(hypothesis_words), 1),
+        shared / max(len(premise_words), 1),
+    ], dtype=np.float32)
+    return np.concatenate([base, extra])
+
+
+def ranked(model, rows, use_alignment=False):
     """Share of premises where entailment scores above contradiction.
 
     Uses no training at all: within one premise the hypotheses differ only in
     relation, so a representation that separates relations should order them.
+    With `use_alignment` the score is cosine blended with `alignment_similarity`.
     """
     groups = {}
     for r in rows:
         groups.setdefault(r["premise"], []).append(r)
     considered, correct = 0, 0
-    for premise, group in groups.items():
+
+    def score(premise, hypothesis):
         pv = vector(model, premise)
-        if not pv.any():
+        if use_alignment:
+            return 0.5 * cosine(pv, vector(model, hypothesis)) + 0.5 * float(
+                model.alignment_similarity(premise, hypothesis))
+        return cosine(pv, vector(model, hypothesis))
+
+    for premise, group in groups.items():
+        if not vector(model, premise).any():
             continue
-        scored = [(cosine(pv, vector(model, r["hypothesis"])), r["label"])
-                  for r in group]
+        scored = [(score(premise, r["hypothesis"]), r["label"]) for r in group]
         entail = [s for s, label in scored if label == "e"]
         contradict = [s for s, label in scored if label == "c"]
         if entail and contradict:
@@ -166,6 +201,20 @@ def main():
     print(f"| Rishe sentence vectors (pair) | {val_pair_acc:.4f} | {pair_acc:.4f} |")
     print(f"| Rishe sentence vectors (hypothesis only) | "
           f"{val_only_acc:.4f} | {only_acc:.4f} |")
+
+    align = ridge(np.stack([alignment_features(model, r["premise"], r["hypothesis"])
+                            for r in train]),
+                  np.array([LABELS[r["label"]] for r in train]))
+    align_pred, _ = accuracy(test, model, alignment_features, align)
+    align_val, _ = accuracy(val, model, alignment_features, align)
+    align_acc = float((align_pred == test_y).mean())
+    align_val_acc = float((align_val == val_y).mean())
+    print(f"| `alignment_similarity` + sentence vectors | "
+          f"{align_val_acc:.4f} | {align_acc:.4f} |")
+    print(f"\n`alignment_similarity` adds "
+          f"{(align_acc - pair_acc) * 100:+.2f} points on test without a new "
+          f"download.")
+
     print(f"\nPair model beats the biased baseline by "
           f"{(pair_acc - only_acc) * 100:+.2f} points on test.")
 
@@ -177,6 +226,11 @@ def main():
     if considered:
         print(f"\nTraining-free ranking: entailment above contradiction on "
               f"{correct}/{considered} premises = {correct / considered:.1%}")
+    blended, blended_considered = ranked(model, test, use_alignment=True)
+    if blended_considered:
+        print(f"Training-free ranking with alignment blended in: "
+              f"{blended}/{blended_considered} = "
+              f"{blended / blended_considered:.1%}")
 
     print("\nError breakdown on test (pair model):")
     for index, name in enumerate(NAMES):

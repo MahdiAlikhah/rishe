@@ -230,6 +230,14 @@ class Embeddings:
     def sentence_similarity(self, first: str, second: str) -> float:
         """Return cosine similarity of two sentence vectors, 0.0 when either is empty."""
         ...
+    def alignment_similarity(self, first: str, second: str) -> float:
+        """Return word-alignment similarity, 0.0 when either has no known words.
+
+        Matches each word to its closest word on the other side and averages the
+        two directions. Unlike ``sentence_similarity`` it keeps track of which
+        words line up, so a shared word is not diluted by extra words.
+        """
+        ...
     def most_similar(self, word: str, n: int = 5) -> List[Tuple[str, float]]:
         """Return up to n most similar words with scores, best first.
 

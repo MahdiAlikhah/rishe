@@ -1286,6 +1286,13 @@ mod py_bindings {
             py.allow_threads(|| self.sentence_similarity(first, second))
         }
 
+        /// Python `alignment_similarity`: word-to-word best-match similarity.
+        #[pyo3(name = "alignment_similarity")]
+        #[pyo3(signature = (first, second))]
+        pub fn py_alignment_similarity(&self, py: Python<'_>, first: &str, second: &str) -> f32 {
+            py.allow_threads(|| self.alignment_similarity(first, second))
+        }
+
         /// Python `most_similar`: up to `n` neighbours by descending cosine similarity.
         #[pyo3(name = "most_similar", signature = (word, n=5))]
         pub fn py_most_similar(

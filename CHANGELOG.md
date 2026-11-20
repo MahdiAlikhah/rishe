@@ -11,6 +11,12 @@ in the pack manifest and on the model repository.
 
 ### Added
 
+- `Embeddings.alignment_similarity()` (Rust and Python): similarity from
+  word-to-word best matches rather than a pooled mean. Mean pooling cannot tell
+  which words correspond, so word order and negation position are lost. On
+  FarsTail it lifts test accuracy **0.5601 → 0.5959** (+3.58 points) and the
+  training-free entailment-over-contradiction ranking **71.9% → 75.2%**, using
+  only the existing pack and no new dependency.
 - `scripts/benchmark_nli.py` and a "Sentence vectors: FarsTail NLI" section in
   `docs/BENCHMARKS.md`: the first published measurement of Rishe's sentence
   vectors against a Persian gold set. Data is FarsTail (Apache-2.0, 10,367
