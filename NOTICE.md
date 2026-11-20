@@ -48,6 +48,22 @@ code license; keep the upstream attribution and share-alike terms when
 redistributing them. Each pack's `LICENSE` and `NOTICE.md` are published with
 the weights on Hugging Face (`MahdiAlikhah/rishe-models`, `embeddings/`).
 
+The NLI evaluation in `docs/BENCHMARKS.md` and `scripts/benchmark_nli.py` uses
+[FarsTail](https://github.com/dml-qom/FarsTail) by the Data Mining Lab,
+University of Qom, distributed under the **Apache-2.0** License. It is
+downloaded at run time into `data/corpora/farstail/`, which is not tracked by
+git, and is not redistributed with Rishe. If you use it, cite:
+
+Hossein Amirkhani, Mohammad AzariJafari, Soroush Faridan-Jahromi, Zeinab
+Kouhkan, Zohreh Pourjafari, Azadeh Amirak (2023). FarsTail: a Persian natural
+language inference dataset. *Soft Computing*.
+doi:10.1007/s00500-023-08959-3
+
+ParsiNLU (`persiannlp/*`) is **not** used for any published number here: it is
+CC BY-NC-SA 4.0, evaluation only, so it cannot back a benchmark. The synthetic
+Persian STS set used by FaMTEB carries no license tag, which grants no rights,
+so it is not used either.
+
 ---
 
 The MIT License (MIT)

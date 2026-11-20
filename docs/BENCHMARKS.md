@@ -96,13 +96,58 @@ below still holds.
 Two runs on this host spread about ±15%, so compare the range, not a single
 digit, when checking a later change. This is the reference for `1.0.0` onward.
 
+## Sentence vectors: FarsTail NLI
+
+The shipped pack is a static word-vector model and `sentence_vector()` is the
+mean of the vectors of its in-vocabulary tokens. That is **not** a trained
+sentence encoder, so this section measures what the current engine does rather
+than claiming a sentence-embedding quality. Reproduce with
+`python scripts/benchmark_nli.py` (downloads the data on first run).
+
+Data: [FarsTail](https://github.com/dml-qom/FarsTail), 10,367 Persian
+premise/hypothesis pairs labelled entailment, contradiction or neutral, by the
+Data Mining Lab at the University of Qom, **Apache-2.0**. It is used instead of
+ParsiNLU because ParsiNLU is CC BY-NC-SA (evaluation only), so a number measured
+on it could not be published here.
+
+Frozen features (cosine, difference, elementwise product) with a closed-form
+ridge on top; no sampling, no random seed, identical output across runs.
+
+| model | val accuracy | test accuracy |
+|---|---|---|
+| Rishe sentence vectors (pair) | 0.5322 | **0.5601** |
+| Rishe sentence vectors (hypothesis only) | 0.4704 | 0.4578 |
+
+FarsTail's published baselines, for where this sits: DecompAtt (word2vec) 0.6662,
+HBMP 0.6604, ESIM (fastText) 0.7116, mBERT 0.8338.
+
+Read this honestly:
+
+- **0.5601 is below every published baseline**, including DecompAtt at 0.6662.
+  Mean pooling over static vectors loses word order and negation, which is
+  exactly what entailment turns on. Per class: contradiction is the failure,
+  146/510 = 28.6%, against neutral 77.9% and entailment 60.3%.
+- The **hypothesis-only baseline is the bias control**: 0.4578, so the pair
+  model's +10.23 points is real signal and not annotation artefact. Chance is
+  0.3333.
+- On FarsTail's own hard subsets, where biased models are designed to fail, the
+  pair model gets 0.5050 (n=699, hypothesis-only hard) and 0.3671 (n=681,
+  overlap-based hard).
+- **Training-free check:** within a single premise the hypotheses differ only in
+  relation, so a representation that separates relations should order them. It
+  puts entailment above contradiction on 350/487 premises = **71.9%**.
+
+The gap to DecompAtt is the argument for a trained sentence encoder (P1 in
+`training/ROADMAP.md`): the pooling is the limit, not the vectors.
+
 ## Not measured
 
 - Sentence splitting: an earlier metric compared sentence *counts*, which
   cannot distinguish systems; it has been removed rather than replaced.
 - Informal → formal conversion and ezafe detection have no gold data here.
 - Hazm and Shekar offer features Rishe does not (POS tagging, NER, parsing,
-  embeddings, spell checking, classifiers). Use them for those.
+  classifiers). Use them for those. Embedding *quality* is measured above on
+  FarsTail; there is still no head-to-head embedding comparison here.
 
 ## Known limitations
 

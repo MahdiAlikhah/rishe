@@ -11,6 +11,15 @@ in the pack manifest and on the model repository.
 
 ### Added
 
+- `scripts/benchmark_nli.py` and a "Sentence vectors: FarsTail NLI" section in
+  `docs/BENCHMARKS.md`: the first published measurement of Rishe's sentence
+  vectors against a Persian gold set. Data is FarsTail (Apache-2.0, 10,367
+  pairs), chosen over ParsiNLU (CC BY-NC-SA, evaluation only) so the number can
+  be published. Result on the current engine: **0.5601 test accuracy**, below
+  all four published FarsTail baselines (DecompAtt 0.6662, HBMP 0.6604, ESIM
+  0.7116, mBERT 0.8338), with the hypothesis-only bias control at 0.4578 and
+  training-free entailment-over-contradiction ranking at 71.9%. This is the
+  floor a trained sentence encoder has to beat.
 - `scripts/fuzz_surfaces.py`, a seeded harness for the three surfaces that parse
   bytes the crate did not produce: `serve` request lines, hub download responses
   and `.vec`/`.rvec` files. 18,000 cases across five seeds found no defect, so
