@@ -423,15 +423,13 @@ impl ModelPack {
         // Most packs here take `(input_ids, attention_mask)`. The Hugging Face
         // XLM-R exports of e5 take a third segment-id input; feeding two fails
         // with "Wrong number of inputs for model. Expected 3 got 2".
+        //
+        // Only a 3-input graph gets the synthesized segment ids. The depparse
+        // packs take five and pass all five themselves, so rejecting an
+        // unexpected count here would refuse a pack that already works.
         let inputs = runnable
             .input_count()
             .map_err(|error| format!("cannot read input count: {error}"))?;
-        if !(2..=3).contains(&inputs) {
-            return Err(format!(
-                "{} takes {inputs} inputs; expected 2 or 3",
-                model_path.display()
-            ));
-        }
 
         Ok(Self {
             task,
@@ -1553,5 +1551,18 @@ mod tests {
         assert!(!tagging.needs_token_type_ids);
         // And it still tags, which is the behaviour a stray third input breaks.
         assert_eq!(tagging.tags("good bad").unwrap().len(), 2);
+    }
+
+    #[test]
+    fn a_pack_with_more_than_three_inputs_still_loads() {
+        // The depparse packs take five inputs and feed all five themselves, so
+        // rejecting an unusual count at load refused a pack that already worked.
+        // This is the local guard: the depparse pack test is env-gated, so
+        // without this fixture the regression only shows up in CI.
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/tiny-five-pack");
+        let pack = ModelPack::load(&path).expect("a five-input pack must load");
+        // Five inputs are not the e5 case, so no segment ids are synthesized.
+        assert!(!pack.needs_token_type_ids);
     }
 }
