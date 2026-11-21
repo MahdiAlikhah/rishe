@@ -108,6 +108,36 @@ binary's `rishe convert` rewrites any word2vec `.vec` file that way, and
 pack stays available as
 `rishe-embed-fa-300`. The vectors are CC BY-SA 4.0; see [NOTICE.md](NOTICE.md).
 
+### Semantic search
+
+Static word vectors are not a sentence embedding, so they retrieve badly: on
+MIRACL fa dev they find only 31.6% of relevant passages in their top 100. For
+search, pull the optional encoder instead (129 MB, MIT, its own download — the
+base install stays model-free):
+
+```bash
+rishe hub pull rishe-vector-e5-small-fa   # 129 MB, checksum-verified
+```
+
+```python
+from rishe import ModelPack, hub
+
+encoder = ModelPack(hub.path("rishe-vector-e5-small-fa"))
+vector = encoder.sentence_vector("این کتاب بسیار خوب است")
+# 384 floats, L2-normalised, so cosine similarity is a dot product.
+```
+
+Multilingual E5 small at int8, exported by Xenova and rehosted here so the bytes
+are pinned by digest. On MIRACL fa dev it takes nDCG@10 from 0.0804 to **0.4937**
+and recall@100 from 0.3155 to **0.8696**. A cross-encoder reranker reaches 0.5547
+but is not bundled; see [Benchmarks](docs/BENCHMARKS.md) for all of it, including
+what it still cannot do.
+
+The encoder answers "how similar are these two texts", not "does this follow
+from that". On FarsTail entailment it reaches 0.6394, ahead of the static pack's
+0.5959 but well short of a cross-encoder's 0.8107 — a three-way relation does not
+fit in one vector. Use it for retrieval and similarity, not classification.
+
 ## Architecture
 
 - **Rust core** — normalization, tokenization, morphology, embedding math and

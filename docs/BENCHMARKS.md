@@ -160,6 +160,75 @@ one-vector-per-sentence model can match. Those numbers are for orientation only:
 that backbone is a 112–266 MB int8 pack against this pack's size, so it is not
 shipped.
 
+## Semantic retrieval: MIRACL fa dev
+
+The section above measures entailment, and a single vector cannot carry a
+three-way relation. **Retrieval is the task this pack is actually for**, and it
+is where the static pack fails outright rather than merely scoring lower.
+
+Data: [MIRACL](https://project-miracl.github.io/) Persian dev split, **Apache-2.0**
+and ungated: 632 queries, 1,314 relevance judgements, 2,207,172 passages. All
+1,301 gold document ids were verified present before measuring, so a low score
+cannot be a missing-corpus artefact. Both systems were measured through the
+**installed package** (`Embeddings(hub.path(...))` and
+`ModelPack(hub.path(...)).sentence_vector()`), not a reimplementation.
+
+| system | nDCG@10 | R@10 | R@100 | download |
+|---|---|---|---|---|
+| `rishe-embed-fa-300-v2` (static word vectors) | 0.0804 | 0.1227 | 0.3155 | 42 MB |
+| `rishe-vector-e5-small-fa` (frozen encoder) | **0.4937** | 0.6087 | **0.8696** | 129 MB |
+
+Downloads are whole packs, model plus tokenizer; the encoder's graph alone is
+112.6 MB of that 129, the rest is an XLM-R tokenizer with a 250k vocabulary.
+
+Two things follow, and the second matters more than the first:
+
+- **A 6.1× gap in nDCG@10.** Mean pooling over static word vectors is not a
+  sentence embedding: it has no notion of which words correspond, so a passage
+  can share every topic word with a query and still be ranked wrongly.
+- **Recall, not ranking, is what the static pack loses.** It finds only **31.6%**
+  of relevant passages in its top 100, so it cannot be used as a first stage and
+  improved later — the candidates are simply not there. The encoder reaches
+  **86.96%**, which is what makes it a usable retriever.
+
+The encoder ships as an optional second download; the base install and the
+existing packs are unchanged.
+
+### Reranking on top of the encoder
+
+Because R@100 is 0.8696, the remaining headroom is in *ordering*, not recall.
+A cross-encoder reranker over the encoder's top 50, same queries:
+
+| reranker | license | nDCG@10 | R@10 |
+|---|---|---|---|
+| none | — | 0.4937 | 0.6087 |
+| FarsTail NLI cross-encoder (trained here) | MIT | 0.0672 | 0.1176 |
+| `BAAI/bge-reranker-base` | MIT | 0.2703 | 0.3995 |
+| `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1` | apache-2.0 | **0.5547** | 0.6808 |
+
+**+6.1 nDCG@10 for zero gradient steps**, and it beats the NLI cross-encoder
+trained in this repo. The reason is the objective, not the size: mMARCO is
+multilingual MS MARCO *retrieval* data, while entailment is a different question.
+Reranking by P(entailment) actively *hurts* — 0.4937 → 0.0672 — and that is a
+measured negative, not a tuning miss: across 20,000 (query, passage) pairs the
+NLI model labelled 19,258 **neutral**, with `pearson(P(entailment), relevant) =
++0.011`. "Does this follow from that?" carries no signal for "is this what they
+meant?".
+
+Knobs measured: `max_length` 256 vs 512 is within noise (0.5547 vs 0.5545);
+**top-50 beats top-100** (0.5547 vs 0.5466) because rescanning more candidates
+gives the reranker more chances to be fooled, at 29 s vs 42 s.
+
+The reranker is **not shipped**. It is a 113 MB cross-encoder: it scores a pair,
+so it cannot produce vectors, and it would be a third download bounded by the
+encoder's recall. The shipped encoder already gives a usable retriever.
+
+**Caveat on reproducibility:** unlike the sections above, these retrieval and
+reranker numbers have **no script in this repository** — they were measured in a
+notebook against a marimo kernel. Promoting that evaluation into `scripts/` is
+tracked in `training/ROADMAP.md` (P2). Treat the ratios as measured but not yet
+re-derivable here.
+
 
 ## Not measured
 
@@ -168,7 +237,10 @@ shipped.
 - Informal → formal conversion and ezafe detection have no gold data here.
 - Hazm and Shekar offer features Rishe does not (POS tagging, NER, parsing,
   classifiers). Use them for those. Embedding *quality* is measured above on
-  FarsTail; there is still no head-to-head embedding comparison here.
+  FarsTail (entailment) and MIRACL fa dev (retrieval); there is still no
+  head-to-head embedding comparison against another Persian embedding here, so
+  the retrieval numbers show what the pack does, not how it ranks against a
+  competitor.
 
 ## Known limitations
 
