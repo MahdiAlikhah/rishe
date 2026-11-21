@@ -9,8 +9,44 @@ in the pack manifest and on the model repository.
 
 ## [Unreleased]
 
+## [1.0.7] - 2026-11-21
+
 ### Added
 
+First release with a sentence encoder. Everything is additive: no existing item
+changed shape, and the four shipped task packs are untouched — the new pack
+carries its own manifest so a client already pinned to the shared one keeps
+working.
+
+- `rishe.__version__`, the crate version baked in at build time, so
+  `importlib.metadata.version("rishe")` is no longer the only way to read it.
+  It cannot drift from `Cargo.toml`; a test compares the two.
+- `rishe hub pull rishe-vector-e5-small-fa`: a 129 MB int8 sentence-encoder pack
+  (384-d, multilingual E5 small, MIT) as an optional download; the base install
+  stays weight-free. On MIRACL fa dev it reaches nDCG@10 **0.4937** and
+  Recall@100 **0.8696**, against nDCG@10 0.0804 for the bundled static vectors,
+  which are the wrong tool for retrieving a sentence. Vectors are L2-normalized,
+  so cosine similarity is a dot product.
+- `ModelPack.sentence_vector()` (Rust and Python): mean-pooled, L2-normalized
+  sentence embedding from a pack. Pooling averages the real tokens only, since
+  averaging the padded sequence would make the vector depend on whatever batch it
+  landed in. Verified against onnxruntime on the shipped int8 graph:
+  `max_abs_diff` 3.5e-08, cosine 1.00000012.
+- Packs whose ONNX takes a third `token_type_ids` input now load and run. The
+  Hugging Face XLM-R exports of E5 take `(input_ids, attention_mask,
+  token_type_ids)`, and feeding the usual two failed with "Wrong number of
+  inputs for model. Expected 3 got 2". The count is read from the model at load,
+  so the existing two-input packs are unaffected.
+- Special tokens resolve as `[CLS]`/`[SEP]` *or* `<s>`/`</s>`. Only the BERT
+  spellings were looked up, so every XLM-R pack failed to load with "tokenizer
+  has no [CLS] token" even though its own specials were present.
+- A pack whose task is `sentence` may ship an empty `labels` array, because a
+  sentence encoder names no classes. Every tagging task still requires labels.
+- A pack can carry its own manifest and pinned digest (`STANDALONE_PACKS`)
+  instead of appearing in the shared registry index. The shared
+  `manifest.json` digest is compiled into each release and a fresh mismatch is
+  fatal, so adding a task there would break `hub pull` for *all* packs on
+  installed copies. A separate manifest ships a new pack without that cost.
 - `Embeddings.alignment_similarity()` (Rust and Python): similarity from
   word-to-word best matches rather than a pooled mean. Mean pooling cannot tell
   which words correspond, so word order and negation position are lost. On
@@ -1178,7 +1214,10 @@ Removed in `1.0.0`; each emits `DeprecationWarning` today.
 - Python bindings (abi3) and a Rust core.
 - Benchmark suite and dual MIT/Apache-2.0 licensing.
 
-[Unreleased]: https://github.com/MahdiAlikhah/rishe/compare/v1.0.4...HEAD
+[Unreleased]: https://github.com/MahdiAlikhah/rishe/compare/v1.0.7...HEAD
+[1.0.7]: https://github.com/MahdiAlikhah/rishe/compare/v1.0.6...v1.0.7
+[1.0.6]: https://github.com/MahdiAlikhah/rishe/compare/v1.0.5...v1.0.6
+[1.0.5]: https://github.com/MahdiAlikhah/rishe/compare/v1.0.4...v1.0.5
 [1.0.4]: https://github.com/MahdiAlikhah/rishe/compare/v1.0.3...v1.0.4
 [1.0.3]: https://github.com/MahdiAlikhah/rishe/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/MahdiAlikhah/rishe/compare/v1.0.1...v1.0.2

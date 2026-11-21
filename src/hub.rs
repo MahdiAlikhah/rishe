@@ -32,6 +32,21 @@ const PACKS: &[(&str, &str)] = &[
     ("ezafe-compact", "ezafe"),
     ("depparse-compact", "depparse"),
 ];
+
+/// Packs that live under their own manifest instead of the shared registry.
+///
+/// Each entry is `(name, task, base URL, manifest sha256)`. These are kept apart
+/// from [`PACKS`] because their manifests are pinned separately: the shared
+/// `manifest.json` digest is compiled into every released client and a fresh
+/// digest mismatch is fatal, so adding a task there would break `hub pull` for
+/// *all* packs on installs that already exist. A separate manifest lets a new
+/// pack ship without touching the shared index.
+const STANDALONE_PACKS: &[(&str, &str, &str, &str)] = &[(
+    "rishe-vector-e5-small-fa",
+    "sentence",
+    "https://huggingface.co/MahdiAlikhah/rishe-models/resolve/main/vector/e5-small-fa",
+    "129737d3fa726182313db093a956e5d062440f414e4125de54c2bfe5c8f4089b",
+)];
 const PACK_BASE: &str = "https://huggingface.co/MahdiAlikhah/rishe-models/resolve/main";
 const PACK_MANIFEST_SHA256: &str =
     "60885efc0680a47a3f7efbd3bc699c19766dc33c6b072b44c31086811d43f12e";
@@ -225,8 +240,8 @@ fn pull(args: &[String]) -> Result<(), HubError> {
         index += 1;
     }
 
-    if let Some((_, task)) = PACKS.iter().find(|(pack, _)| pack == name) {
-        // A pack is verified against the digests in the registry manifest, so a
+    if let Some(pack) = known_pack(name) {
+        // A pack is verified against the digests in its manifest, so a
         // caller-supplied digest has nothing to apply to. Refuse it rather than
         // ignore it: ignoring reads as a pin that never happened. This is a value
         // the parser accepted, so it is a runtime failure (exit 1), matching
@@ -236,7 +251,11 @@ fn pull(args: &[String]) -> Result<(), HubError> {
                 "task packs do not accept --sha256".to_string(),
             ));
         }
-        let path = pull_pack(name, task, force).map_err(HubError::Runtime)?;
+        // `pack.task` and `pack.name` borrow from a row of a `const` table, so
+        // they already live for the program; copy them out to drop the borrow
+        // before calling a function that takes `&str`.
+        let (pack_name, task) = (pack.name, pack.task);
+        let path = pull_pack(pack_name, task, force).map_err(HubError::Runtime)?;
         println!("{}", path.display());
         return Ok(());
     }
@@ -335,6 +354,17 @@ fn list() -> Result<(), String> {
         };
         println!("{name}\t{status}\tpack");
     }
+    for (name, _, _, _) in STANDALONE_PACKS {
+        let target = cache_dir()?.join(name);
+        let status = if cached_pack(name)?.is_some() {
+            "cached"
+        } else if target.is_dir() {
+            "partial"
+        } else {
+            "missing"
+        };
+        println!("{name}\t{status}\tpack");
+    }
     Ok(())
 }
 
@@ -355,7 +385,7 @@ fn info(name: &str) -> Result<(), String> {
         }
         let bytes = path.metadata().map_err(|error| error.to_string())?.len();
         (path, bytes)
-    } else if PACKS.iter().any(|(pack, _)| *pack == name) {
+    } else if is_pack(name) {
         let target = cache_dir()?.join(name);
         match cached_pack(name)? {
             Some(path) => (path.clone(), directory_size(&path)?),
@@ -374,7 +404,10 @@ fn info(name: &str) -> Result<(), String> {
             }
         }
     } else {
-        return Err(format!("unknown model or pack {name:?}"));
+        return Err(format!(
+            "unknown model or pack {name:?}; known packs: {}",
+            pack_name_list()
+        ));
     };
     println!("{name}\t{}\t{bytes} bytes", path.display());
     Ok(())
@@ -385,7 +418,7 @@ fn path(name: &str) -> Result<(), String> {
     // `hub.path("pos-compact")` and the Python implementation already does.
     let found = if MODELS.iter().any(|(model, _, _, _)| *model == name) {
         cached_model(name)?
-    } else if PACKS.iter().any(|(pack, _)| *pack == name) {
+    } else if is_pack(name) {
         cached_pack(name)?
     } else {
         return Err(format!(
@@ -405,13 +438,15 @@ fn path(name: &str) -> Result<(), String> {
 }
 
 fn remove(name: &str) -> Result<(), String> {
-    let is_pack = PACKS.iter().any(|(pack, _)| *pack == name);
     let path = if let Some((_, _, _, filename)) = MODELS.iter().find(|item| item.0 == name) {
         cache_dir()?.join(filename)
-    } else if is_pack {
+    } else if is_pack(name) {
         cache_dir()?.join(name)
     } else {
-        return Err(format!("unknown model or pack {name:?}"));
+        return Err(format!(
+            "unknown model or pack {name:?}; known packs: {}",
+            pack_name_list()
+        ));
     };
     let mut removed = false;
     if path.is_dir() {
@@ -433,10 +468,10 @@ fn remove(name: &str) -> Result<(), String> {
     if lock.is_file() {
         targets.push(lock);
     }
-    // An interrupted `load_manifest` leaves a part file in the cache root that no
-    // model or pack owns, so a pack removal also clears it.
-    if is_pack {
-        let manifest = cache_dir()?.join("rishe-models-manifest.json");
+    // An interrupted manifest fetch leaves a part file in the cache root that no
+    // model or pack owns, so a pack removal also clears the manifest it reads.
+    if let Some(pack) = known_pack(name) {
+        let manifest = pack_manifest_path(&pack)?;
         for stale in [part_path(&manifest), lock_path(&manifest)] {
             if stale.is_file() {
                 targets.push(stale);
@@ -460,16 +495,19 @@ fn remove(name: &str) -> Result<(), String> {
 fn unlock(name: &str) -> Result<(), String> {
     let path = if let Some((_, _, _, filename)) = MODELS.iter().find(|item| item.0 == name) {
         cache_dir()?.join(filename)
-    } else if PACKS.iter().any(|(pack, _)| *pack == name) {
+    } else if is_pack(name) {
         cache_dir()?.join(name)
     } else {
-        return Err(format!("unknown model or pack {name:?}"));
+        return Err(format!(
+            "unknown model or pack {name:?}; known packs: {}",
+            pack_name_list()
+        ));
     };
     let mut cleared = false;
     let mut targets = vec![lock_path(&path)];
-    if PACKS.iter().any(|(pack, _)| *pack == name) {
-        // A pack pull locks the shared manifest, not the pack directory.
-        let manifest = cache_dir()?.join("rishe-models-manifest.json");
+    if let Some(pack) = known_pack(name) {
+        // A pack pull locks the manifest it reads, not the pack directory.
+        let manifest = pack_manifest_path(&pack)?;
         targets.push(lock_path(&manifest));
     }
     for lock in targets {
@@ -482,6 +520,65 @@ fn unlock(name: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// A pack the registry knows, from either table.
+struct KnownPack<'a> {
+    name: &'a str,
+    task: &'a str,
+    /// Where the pack's manifest lives, and its pinned digest.
+    manifest: PackManifest<'a>,
+}
+
+/// How to reach a pack's manifest.
+enum PackManifest<'a> {
+    /// One manifest shared by every task pack in [`PACKS`].
+    Shared,
+    /// A manifest belonging to this pack alone.
+    Standalone(&'a str, &'a str),
+}
+
+/// Look a pack up by name in both tables.
+fn known_pack(name: &str) -> Option<KnownPack<'_>> {
+    if let Some((found, task)) = PACKS.iter().find(|(pack, _)| *pack == name) {
+        return Some(KnownPack {
+            name: found,
+            task,
+            manifest: PackManifest::Shared,
+        });
+    }
+    STANDALONE_PACKS
+        .iter()
+        .find(|(pack, _, _, _)| *pack == name)
+        .map(|(found, task, base, sha)| KnownPack {
+            name: found,
+            task,
+            manifest: PackManifest::Standalone(base, sha),
+        })
+}
+
+/// Every pack name the registry knows, in both tables.
+fn pack_names() -> impl Iterator<Item = &'static str> {
+    PACKS
+        .iter()
+        .map(|(pack, _)| *pack)
+        .chain(STANDALONE_PACKS.iter().map(|(pack, _, _, _)| *pack))
+}
+
+/// Whether `name` is a pack of either kind.
+fn is_pack(name: &str) -> bool {
+    known_pack(name).is_some()
+}
+
+/// Name of the file a pack's manifest is cached under.
+///
+/// Task packs share one file; a standalone pack gets its own so a new pack can
+/// be published without changing the shared manifest or its pinned digest.
+fn pack_manifest_path(pack: &KnownPack<'_>) -> Result<PathBuf, String> {
+    let name = match pack.manifest {
+        PackManifest::Shared => "rishe-models-manifest.json".to_string(),
+        PackManifest::Standalone(_, _) => format!("{}-manifest.json", pack.name),
+    };
+    Ok(cache_dir()?.join(name))
+}
 /// Verify a cached model or pack, printing `verified` or `invalid`.
 ///
 /// Returns whether the cached files matched. The caller turns `false` into a
@@ -491,25 +588,29 @@ fn verify(name: &str) -> Result<bool, String> {
     let valid = if let Some((_, _, sha, filename)) = MODELS.iter().find(|item| item.0 == name) {
         let path = cache_dir()?.join(filename);
         path.is_file() && sha256_file(&path)? == *sha
-    } else if let Some((_, task)) = PACKS.iter().find(|(pack, _)| *pack == name) {
-        verify_pack(name, task)?
+    } else if let Some(pack) = known_pack(name) {
+        verify_pack(&pack)?
     } else {
-        return Err(format!("unknown model or pack {name:?}"));
+        return Err(format!(
+            "unknown model or pack {name:?}; known packs: {}",
+            pack_name_list()
+        ));
     };
     println!("{}", if valid { "verified" } else { "invalid" });
     Ok(valid)
 }
 
 fn pull_pack(name: &str, task: &str, force: bool) -> Result<PathBuf, String> {
+    let pack = known_pack(name).ok_or_else(|| format!("unknown pack {name:?}"))?;
     let target = cache_dir()?.join(name);
     // A full-looking directory is not a valid pack: an older manifest or an
     // interrupted download leaves the same three files behind. Verify the hashes
     // before returning.
-    if !force && verify_pack(name, task)? {
+    if !force && verify_pack(&pack)? {
         return Ok(target);
     }
     fs::create_dir_all(&target).map_err(|error| error.to_string())?;
-    let manifest = load_manifest()?;
+    let manifest = load_pack_manifest(&pack)?;
     let files = manifest
         .get("tasks")
         .and_then(|tasks| tasks.get(task))
@@ -526,7 +627,7 @@ fn pull_pack(name: &str, task: &str, force: bool) -> Result<PathBuf, String> {
             .and_then(|value| value.to_str())
             .ok_or_else(|| format!("invalid pack filename {filename:?}"))?;
         download(
-            &format!("{}/{task}/{local_name}", pack_base()),
+            &pack_file_url(&pack, local_name),
             &target.join(local_name),
             sha,
             force,
@@ -538,6 +639,62 @@ fn pull_pack(name: &str, task: &str, force: bool) -> Result<PathBuf, String> {
         }
     }
     Ok(target)
+}
+
+/// Base URL a pack's files are served from.
+///
+/// Task packs share the registry base and nest files under the task name; a
+/// standalone pack's base already points at its own directory.
+fn pack_base_of(pack: &KnownPack<'_>) -> String {
+    match pack.manifest {
+        PackManifest::Shared => pack_base().to_string(),
+        PackManifest::Standalone(base, _) => base.trim_end_matches('/').to_string(),
+    }
+}
+
+/// URL of one file inside a pack.
+///
+/// Task packs live at `<base>/<task>/<file>`. A standalone pack's base is the
+/// pack directory itself, so its files sit directly under `<base>/<file>`.
+fn pack_file_url(pack: &KnownPack<'_>, filename: &str) -> String {
+    let base = pack_base_of(pack);
+    match pack.manifest {
+        PackManifest::Shared => format!("{base}/{}/{filename}", pack.task),
+        PackManifest::Standalone(_, _) => format!("{base}/{filename}"),
+    }
+}
+
+/// Fetch a pack's manifest and parse it.
+///
+/// A standalone pack pins its own digest, so unlike the shared manifest it can
+/// be republished without invalidating the pin baked into existing clients.
+fn load_pack_manifest(pack: &KnownPack<'_>) -> Result<Value, String> {
+    let (base, sha) = match pack.manifest {
+        PackManifest::Shared => return load_manifest(),
+        PackManifest::Standalone(base, sha) => (base.trim_end_matches('/'), sha),
+    };
+    let path = pack_manifest_path(pack)?;
+    let attempt = download(&format!("{base}/manifest.json"), &path, sha, false);
+    if let Err(error) = attempt {
+        if !error.contains("another rishe process is downloading") {
+            return Err(error);
+        }
+        let deadline = Instant::now() + MANIFEST_WAIT;
+        loop {
+            if manifest_matches_with(&path, sha)? {
+                break;
+            }
+            if Instant::now() >= deadline {
+                return Err(format!(
+                    "{error} (waited {}s for the pack manifest)",
+                    MANIFEST_WAIT.as_secs()
+                ));
+            }
+            std::thread::sleep(Duration::from_millis(200));
+        }
+    }
+    let text = fs::read_to_string(&path).map_err(|error| error.to_string())?;
+    parse_manifest(&text)
 }
 
 /// Validate the `schema` field of a parsed manifest and return the version.
@@ -603,23 +760,32 @@ fn load_manifest() -> Result<Value, String> {
 
 /// Whether the cached manifest is present and carries the pinned digest.
 fn manifest_matches(path: &Path) -> Result<bool, String> {
-    Ok(path.is_file() && sha256_file(path)? == PACK_MANIFEST_SHA256)
+    manifest_matches_with(path, PACK_MANIFEST_SHA256)
 }
 
-fn verify_pack(name: &str, task: &str) -> Result<bool, String> {
-    let target = cache_dir()?.join(name);
-    let manifest_path = cache_dir()?.join("rishe-models-manifest.json");
-    if !target.is_dir()
-        || !manifest_path.is_file()
-        || sha256_file(&manifest_path)? != PACK_MANIFEST_SHA256
-    {
+/// Whether `path` is present and carries `digest`.
+///
+/// `manifest_matches_with` with an explicit digest, so a standalone pack can pin
+/// its own manifest and a test needs no network.
+fn manifest_matches_with(path: &Path, digest: &str) -> Result<bool, String> {
+    Ok(path.is_file() && sha256_file(path)? == digest)
+}
+
+fn verify_pack(pack: &KnownPack<'_>) -> Result<bool, String> {
+    let target = cache_dir()?.join(pack.name);
+    let manifest_path = pack_manifest_path(pack)?;
+    let expected = match pack.manifest {
+        PackManifest::Shared => PACK_MANIFEST_SHA256,
+        PackManifest::Standalone(_, sha) => sha,
+    };
+    if !target.is_dir() || !manifest_matches_with(&manifest_path, expected)? {
         return Ok(false);
     }
     let text = fs::read_to_string(&manifest_path).map_err(|error| error.to_string())?;
     let manifest = parse_manifest(&text)?;
     let Some(files) = manifest
         .get("tasks")
-        .and_then(|tasks| tasks.get(task))
+        .and_then(|tasks| tasks.get(pack.task))
         .and_then(|task| task.get("files"))
         .and_then(Value::as_object)
     else {
@@ -1034,6 +1200,14 @@ fn model_names() -> String {
         .join(", ")
 }
 
+/// Every registered pack name, for the "unknown pack" message.
+///
+/// Without this a user who mistypes the vector pack is told only about the four
+/// task packs, so the pack they wanted looks like it does not exist.
+fn pack_name_list() -> String {
+    pack_names().collect::<Vec<_>>().join(", ")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1208,6 +1382,85 @@ mod tests {
     #[test]
     fn absent_schema_means_version_one() {
         assert_eq!(manifest_schema(&manifest(r#"{"tasks":{}}"#)), Ok(1));
+    }
+
+    #[test]
+    fn a_standalone_pack_is_known_and_task_packs_are_not_disturbed() {
+        // The vector pack lives in its own table so publishing it never touches
+        // the shared manifest, whose digest every released client pins.
+        let pack = known_pack("rishe-vector-e5-small-fa").expect("vector pack is known");
+        assert_eq!(pack.task, "sentence");
+        assert!(matches!(pack.manifest, PackManifest::Standalone(_, _)));
+        assert!(is_pack("rishe-vector-e5-small-fa"));
+
+        // The four task packs keep using the shared manifest.
+        for name in [
+            "pos-compact",
+            "ner-compact",
+            "ezafe-compact",
+            "depparse-compact",
+        ] {
+            let found = known_pack(name).expect(name);
+            assert!(
+                matches!(found.manifest, PackManifest::Shared),
+                "{name} must use the shared manifest"
+            );
+        }
+        assert!(known_pack("rishe-embed-fa-300-v2").is_none());
+    }
+
+    #[test]
+    fn a_standalone_pack_reads_its_own_manifest_file() {
+        // Sharing the task-pack manifest file would mean two packs of different
+        // versions overwriting each other's pinned digest in one cache slot.
+        let standalone = known_pack("rishe-vector-e5-small-fa").expect("pack");
+        let shared = known_pack("pos-compact").expect("pack");
+        assert_ne!(
+            pack_manifest_path(&standalone).unwrap(),
+            pack_manifest_path(&shared).unwrap()
+        );
+        assert!(pack_manifest_path(&standalone)
+            .unwrap()
+            .ends_with("rishe-vector-e5-small-fa-manifest.json"));
+    }
+
+    #[test]
+    fn a_standalone_pack_nests_files_under_its_own_base() {
+        // Task packs serve `<base>/<task>/<file>`; a standalone pack's base is
+        // already its directory, so it must serve `<base>/<file>`. Getting this
+        // wrong 404s every file: `.../e5-small-fa/sentence/model.onnx`.
+        let standalone = known_pack("rishe-vector-e5-small-fa").expect("pack");
+        assert_eq!(
+            pack_file_url(&standalone, "model.onnx"),
+            "https://huggingface.co/MahdiAlikhah/rishe-models/resolve/main/vector/e5-small-fa/model.onnx"
+        );
+        let shared = known_pack("pos-compact").expect("pack");
+        assert!(pack_file_url(&shared, "model.onnx").ends_with("/pos/model.onnx"));
+    }
+
+    #[test]
+    fn every_pack_name_is_listed_once() {
+        let names: Vec<_> = pack_names().collect();
+        assert_eq!(names.len(), PACKS.len() + STANDALONE_PACKS.len());
+        let mut sorted = names.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted.len(), names.len(), "duplicate pack name");
+        assert!(names.contains(&"rishe-vector-e5-small-fa"));
+    }
+
+    #[test]
+    fn the_standalone_pin_is_well_formed() {
+        // A typo in the pinned digest would fail every pull with a checksum
+        // mismatch, which reads as a corrupted upload rather than a bad constant.
+        for (name, _, base, sha) in STANDALONE_PACKS {
+            assert!(
+                sha.len() == 64 && sha.bytes().all(|byte| byte.is_ascii_hexdigit()),
+                "{name} has a malformed manifest digest"
+            );
+            assert!(base.starts_with("https://"), "{name} base is not https");
+            assert!(!base.ends_with('/'), "{name} base has a trailing slash");
+        }
     }
 
     #[test]

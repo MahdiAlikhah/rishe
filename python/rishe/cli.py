@@ -6,11 +6,10 @@ import argparse
 import json
 import os
 import sys
-from importlib.metadata import PackageNotFoundError, version as _distribution_version
 from pathlib import Path
 from typing import List, Optional, Union
 
-from . import Embeddings, Pipeline, hub, parse_date
+from . import Embeddings, Pipeline, __version__, hub, parse_date
 from .api import DEFAULT_MASKERS
 
 # Longest request line ``serve`` accepts, matching `MAX_LINE` in src/bin/rishe.rs.
@@ -36,11 +35,8 @@ def _configure_stdio() -> None:
 
 
 def _version() -> str:
-    """Return the installed package version (``unknown`` for an uninstalled tree)."""
-    try:
-        return _distribution_version("rishe")
-    except PackageNotFoundError:  # pragma: no cover - running from a bare source tree
-        return "unknown"
+    """Return the installed package version."""
+    return __version__
 
 
 def main(argv: Optional[List[str]] = None) -> int:

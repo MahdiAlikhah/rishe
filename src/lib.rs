@@ -1394,6 +1394,13 @@ mod py_bindings {
                 .map_err(pyo3::exceptions::PyValueError::new_err)
         }
 
+        /// Python `sentence_vector`: L2-normalised mean-pooled vector.
+        #[pyo3(name = "sentence_vector")]
+        pub fn py_sentence_vector(&self, py: Python<'_>, text: &str) -> PyResult<Vec<f32>> {
+            py.allow_threads(|| self.sentence_vector(text))
+                .map_err(pyo3::exceptions::PyValueError::new_err)
+        }
+
         /// Python `labels`: label names as owned strings.
         #[pyo3(name = "labels")]
         pub fn py_labels(&self) -> Vec<String> {
@@ -1415,6 +1422,8 @@ mod py_bindings {
 
     #[pymodule]
     pub fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
+        // From the crate manifest, so it cannot drift from Cargo.toml.
+        m.add("__version__", env!("CARGO_PKG_VERSION"))?;
         m.add("DEFAULT_MASKERS", crate::maskers::DEFAULT_MASKERS.to_vec())?;
         m.add_class::<Pipeline>()?;
         m.add_class::<ProcessedDoc>()?;

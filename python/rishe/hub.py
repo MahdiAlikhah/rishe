@@ -21,7 +21,7 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Dict, NamedTuple, Optional
+from typing import Dict, NamedTuple, Optional, Tuple
 from urllib.parse import urlparse
 
 __all__ = [
@@ -68,6 +68,22 @@ PACKS: Dict[str, str] = {
     "ner-compact": "ner",
     "ezafe-compact": "ezafe",
     "depparse-compact": "depparse",
+}
+
+# Packs that carry their own manifest instead of the shared registry one.
+#
+# Each value is (task, base URL, manifest sha256). They are kept apart from
+# PACKS because their manifests are pinned separately: the shared manifest's
+# digest is compiled into every released client and a fresh digest mismatch is
+# fatal, so adding a task there would break `hub pull` for *all* packs on
+# installs that already exist. A separate manifest lets a new pack ship without
+# touching the shared index.
+STANDALONE_PACKS: Dict[str, Tuple[str, str, str]] = {
+    "rishe-vector-e5-small-fa": (
+        "sentence",
+        "https://huggingface.co/MahdiAlikhah/rishe-models/resolve/main/vector/e5-small-fa",
+        "129737d3fa726182313db093a956e5d062440f414e4125de54c2bfe5c8f4089b",
+    ),
 }
 PACK_BASE = "https://huggingface.co/MahdiAlikhah/rishe-models/resolve/main"
 PACK_MANIFEST_SHA256 = "60885efc0680a47a3f7efbd3bc699c19766dc33c6b072b44c31086811d43f12e"
@@ -124,13 +140,63 @@ def cache_dir() -> Path:
 def _unknown(name: str) -> str:
     return (
         f"unknown model or pack {name!r}; "
-        f"models: {', '.join(MODELS)}; packs: {', '.join(PACKS)}"
+        f"models: {', '.join(MODELS)}; "
+        f"packs: {', '.join(list(PACKS) + list(STANDALONE_PACKS))}"
     )
+
+
+def _pack_manifest_name(name: str) -> str:
+    """Cache file name a pack's manifest is stored under.
+
+    Task packs share one manifest; a standalone pack gets its own so a new pack
+    can be published without changing the shared manifest or its pinned digest.
+    """
+    if name in STANDALONE_PACKS:
+        return f"{name}-manifest.json"
+    return "rishe-models-manifest.json"
+
+
+def _pack_base_for(name: str) -> str:
+    """Base URL a pack's files are served from."""
+    if name in STANDALONE_PACKS:
+        return STANDALONE_PACKS[name][1].rstrip("/")
+    return _pack_base()
+
+
+def _pack_file_url(name: str, filename: str) -> str:
+    """URL of one file inside a pack.
+
+    Task packs live at ``<base>/<task>/<file>``. A standalone pack's base is the
+    pack directory itself, so its files sit directly under ``<base>/<file>``.
+    """
+    base = _pack_base_for(name)
+    if name in STANDALONE_PACKS:
+        return f"{base}/{filename}"
+    return f"{base}/{_pack_task(name)}/{filename}"
+
+
+def _pack_manifest_digest(name: str) -> str:
+    """Pinned digest of the manifest a pack reads."""
+    if name in STANDALONE_PACKS:
+        return STANDALONE_PACKS[name][2]
+    return PACK_MANIFEST_SHA256
+
+
+def _pack_task(name: str) -> str:
+    """Task a pack serves, from either table."""
+    if name in PACKS:
+        return PACKS[name]
+    return STANDALONE_PACKS[name][0]
+
+
+def _pack_files(manifest: dict, name: str) -> dict:
+    """Files object for a pack's task in a parsed manifest."""
+    return manifest.get("tasks", {}).get(_pack_task(name), {}).get("files", {})
 
 
 def is_pack(name: str) -> bool:
     """Whether ``name`` refers to a task pack rather than a single model file."""
-    return name in PACKS
+    return name in PACKS or name in STANDALONE_PACKS
 
 
 def cached(name: str) -> Optional[Path]:
@@ -138,7 +204,7 @@ def cached(name: str) -> Optional[Path]:
 
     Models resolve to a file, task packs to a directory.
     """
-    if name in PACKS:
+    if is_pack(name):
         target = cache_dir() / name
         return target if all((target / file).is_file() for file in PACK_REQUIRED) else None
     model = MODELS.get(name)
@@ -209,7 +275,7 @@ def pull(
     An already cached file is hashed again on every pull; use ``cached`` when
     you only need the path.
     """
-    if name_or_url in PACKS:
+    if is_pack(name_or_url):
         if sha256 or filename:
             raise ValueError("task packs do not accept sha256= or filename=")
         return _pull_pack(name_or_url, force=force)
@@ -320,7 +386,7 @@ def unlock(name: str) -> bool:
     ``remove`` also drops the cached payload. A pack's lock belongs to the shared
     manifest, which blocks every pack.
     """
-    if name not in PACKS and name not in MODELS:
+    if not is_pack(name) and name not in MODELS:
         raise ValueError(_unknown(name))
     cleared = False
     if name in MODELS:
@@ -474,7 +540,7 @@ def info(name: str) -> Optional[dict]:
     The returned dict always carries the same five keys, including ``partial``,
     so a caller can test it without ``.get`` or a ``KeyError``.
     """
-    if name not in PACKS and name not in MODELS:
+    if not is_pack(name) and name not in MODELS:
         raise ValueError(_unknown(name))
     target = cached(name)
     if target is None:
@@ -508,7 +574,7 @@ def info(name: str) -> Optional[dict]:
         size = target.stat().st_size
     return {
         "name": name,
-        "kind": "pack" if name in PACKS else "model",
+        "kind": "pack" if is_pack(name) else "model",
         "path": str(target),
         "bytes": size,
         "partial": False,
@@ -517,14 +583,14 @@ def info(name: str) -> Optional[dict]:
 
 def remove(name: str) -> bool:
     """Remove a cached model or pack. Returns whether anything was removed."""
-    if name not in PACKS and name not in MODELS:
+    if not is_pack(name) and name not in MODELS:
         raise ValueError(_unknown(name))
     removed = False
     target = cached(name)
     if target is None:
         # Clean up a partial pack directory as well.
         partial = cache_dir() / name
-        if name in PACKS and partial.is_dir():
+        if is_pack(name) and partial.is_dir():
             shutil.rmtree(partial)
             removed = True
     elif target.is_dir():
@@ -543,7 +609,7 @@ def remove(name: str) -> bool:
         if lock.is_file():
             lock.unlink()
             removed = True
-    if name in PACKS:
+    if is_pack(name):
         # A killed pack pull also leaves the shared manifest's part and lock in
         # the cache root; `remove` is the only command that can clear them.
         pack_lock = cache_dir() / (name + ".lock")
@@ -566,16 +632,16 @@ def verify(name: str) -> bool:
     if name in MODELS:
         target = cached(name)
         return target is not None and _sha256(target) == MODELS[name].sha256
-    if name in PACKS:
+    if is_pack(name):
         target = cache_dir() / name
-        manifest_path = cache_dir() / "rishe-models-manifest.json"
+        manifest_path = cache_dir() / _pack_manifest_name(name)
         if not target.is_dir() or not manifest_path.is_file():
             return False
-        if _sha256(manifest_path) != PACK_MANIFEST_SHA256:
+        if _sha256(manifest_path) != _pack_manifest_digest(name):
             return False
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         _manifest_schema(manifest)
-        files = manifest.get("tasks", {}).get(PACKS[name], {}).get("files", {})
+        files = _pack_files(manifest, name)
         # An empty `files` object used to make the loop below run zero times and
         # bless an empty directory as a verified pack.
         if not files:
@@ -590,9 +656,12 @@ def verify(name: str) -> bool:
 
 def _pull_pack(name: str, *, force: bool = False) -> Path:
     """Download a task pack (model, tokenizer and labels) and return its directory."""
-    task = PACKS.get(name)
-    if task is None:
-        raise ValueError(f"unknown pack {name!r}; known packs: {', '.join(PACKS)}")
+    if not is_pack(name):
+        raise ValueError(
+            f"unknown pack {name!r}; known packs: "
+            f"{', '.join(list(PACKS) + list(STANDALONE_PACKS))}"
+        )
+    task = _pack_task(name)
     target = cache_dir() / name
     # A full-looking directory is not a valid pack: an older manifest or an
     # interrupted download leaves the same three files behind. Verify the hashes
@@ -601,24 +670,24 @@ def _pull_pack(name: str, *, force: bool = False) -> Path:
         return target
     target.mkdir(parents=True, exist_ok=True)
 
-    manifest_path = cache_dir() / "rishe-models-manifest.json"
+    manifest_path = cache_dir() / _pack_manifest_name(name)
     # The manifest is sha-pinned, so a cached copy with the right digest is the
     # same file; re-fetching it costs a round trip and fails offline for nothing.
     _download(
-        f"{_pack_base()}/manifest.json",
+        f"{_pack_base_for(name)}/manifest.json",
         manifest_path,
-        PACK_MANIFEST_SHA256,
+        _pack_manifest_digest(name),
         force=False,
     )
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     _manifest_schema(manifest)
-    files = manifest.get("tasks", {}).get(task, {}).get("files", {})
+    files = _pack_files(manifest, name)
     if not files:
         raise ValueError(f"manifest has no files for task {task!r}")
 
     for filename, metadata in files.items():
         _download(
-            f"{_pack_base()}/{task}/{Path(filename).name}",
+            _pack_file_url(name, Path(filename).name),
             target / Path(filename).name,
             metadata["sha256"],
             force=force,

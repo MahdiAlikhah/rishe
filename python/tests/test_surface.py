@@ -146,5 +146,37 @@ class SurfaceTest(unittest.TestCase):
         )
 
 
+class VersionTest(unittest.TestCase):
+    """`__version__` must match Cargo.toml, since it is baked in at build time."""
+
+    CARGO = Path(__file__).resolve().parents[2] / "Cargo.toml"
+
+    def manifest_version(self):
+        text = self.CARGO.read_text(encoding="utf-8")
+        match = re.search(r'^version = "([^"]+)"', text, re.MULTILINE)
+        self.assertIsNotNone(match, "Cargo.toml has no version")
+        return match.group(1)
+
+    def test_version_matches_the_crate_manifest(self):
+        # A stale extension reports the version it was compiled from, so this
+        # catches a rebuilt Cargo.toml paired with an old `_core.pyd`.
+        import rishe
+
+        self.assertEqual(rishe.__version__, self.manifest_version())
+
+    def test_version_is_exported(self):
+        import rishe
+
+        self.assertIn("__version__", rishe.__all__)
+        self.assertIsInstance(rishe.__version__, str)
+        self.assertRegex(rishe.__version__, r"^\d+\.\d+\.\d+")
+
+    def test_the_cli_reports_the_same_version(self):
+        import rishe
+        from rishe.cli import _version
+
+        self.assertEqual(_version(), rishe.__version__)
+
+
 if __name__ == "__main__":
     unittest.main()

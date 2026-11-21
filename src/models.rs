@@ -300,6 +300,12 @@ pub struct ModelPack {
     max_len: usize,
     tokenizer: ModelTokenizer,
     runnable: Runnable,
+    /// Whether the model takes `token_type_ids` as a third input.
+    ///
+    /// Most packs here take `(input_ids, attention_mask)`. The Hugging Face
+    /// XLM-R exports of e5 take a third all-zero segment id, and feeding two
+    /// inputs fails with "Wrong number of inputs for model. Expected 3 got 2".
+    needs_token_type_ids: bool,
 }
 
 /// Encoded ids, per-word positions, the words kept, and how many input words
@@ -357,7 +363,15 @@ impl ModelPack {
             ));
         }
         if labels.is_empty() {
-            return Err(format!("{} has no labels", labels_path.display()));
+            // A sentence encoder produces a vector, not a class, so it has no
+            // labels to name. Every tagging task still needs them.
+            let is_sentence = metadata
+                .get("task")
+                .and_then(|value| value.as_str())
+                .is_some_and(|task| task == "sentence");
+            if !is_sentence {
+                return Err(format!("{} has no labels", labels_path.display()));
+            }
         }
         let task = metadata
             .get("task")
@@ -406,6 +420,18 @@ impl ModelPack {
         let runnable = runtime
             .prepare(model)
             .map_err(|error| format!("cannot prepare {}: {error}", model_path.display()))?;
+        // Most packs here take `(input_ids, attention_mask)`. The Hugging Face
+        // XLM-R exports of e5 take a third segment-id input; feeding two fails
+        // with "Wrong number of inputs for model. Expected 3 got 2".
+        let inputs = runnable
+            .input_count()
+            .map_err(|error| format!("cannot read input count: {error}"))?;
+        if !(2..=3).contains(&inputs) {
+            return Err(format!(
+                "{} takes {inputs} inputs; expected 2 or 3",
+                model_path.display()
+            ));
+        }
 
         Ok(Self {
             task,
@@ -413,6 +439,7 @@ impl ModelPack {
             max_len,
             tokenizer,
             runnable,
+            needs_token_type_ids: inputs == 3,
         })
     }
 
@@ -486,20 +513,66 @@ impl ModelPack {
             .collect())
     }
 
+    /// Resolve a special token by either spelling this crate's packs use.
+    ///
+    /// The ALBERT packs are BERT-style (`[CLS]`/`[SEP]`); the e5 and mMARCO packs
+    /// are XLM-R-style (`<s>`/`</s>`). Looking up only the BERT names made every
+    /// XLM-R pack fail to load with "tokenizer has no [CLS] token".
+    fn special_id(&self, bert: &str, xlm_roberta: &str) -> Option<i64> {
+        self.tokenizer
+            .token_to_id(bert)
+            .or_else(|| self.tokenizer.token_to_id(xlm_roberta))
+            .map(|id| id as i64)
+    }
+
+    /// Run the graph, supplying the all-zero segment ids a 3-input export needs.
+    ///
+    /// Returns the outputs the same shape `runnable.run` does. `inputs` is the
+    /// usual two-tensor list; the third is zero-filled here so `sentence_vector`
+    /// and the taggers do not each have to know which export they are holding.
+    fn run_with_segments(
+        &self,
+        input_ids: ndarray::Array2<i64>,
+        attention_mask: ndarray::Array2<i64>,
+    ) -> Result<Vec<tract::Tensor>, String> {
+        let dimensions = attention_mask.dim();
+        let input_ids = input_ids
+            .tract()
+            .map_err(|error| format!("cannot build input tensor: {error}"))?;
+        let attention_mask_typed = attention_mask
+            .tract()
+            .map_err(|error| format!("cannot build attention mask: {error}"))?;
+        let outputs = if self.needs_token_type_ids {
+            let segments = Array2::<i64>::zeros(dimensions);
+            let segments = segments
+                .tract()
+                .map_err(|error| format!("cannot build segment ids: {error}"))?;
+            self.runnable
+                .run([input_ids, attention_mask_typed, segments])
+                .map_err(|error| format!("inference failed: {error}"))?
+        } else {
+            self.runnable
+                .run([input_ids, attention_mask_typed])
+                .map_err(|error| format!("inference failed: {error}"))?
+        };
+        Ok(outputs)
+    }
+
     fn encode_words(&self, words: &[&str]) -> Result<Option<EncodedWords>, String> {
         if words.is_empty() {
             return Ok(None);
         }
 
         let cls = self
-            .tokenizer
-            .token_to_id("[CLS]")
-            .ok_or_else(|| "tokenizer has no [CLS] token".to_string())? as i64;
+            .special_id("[CLS]", "<s>")
+            .ok_or_else(|| "tokenizer has no [CLS] or <s> token".to_string())?;
         let sep = self
+            .special_id("[SEP]", "</s>")
+            .ok_or_else(|| "tokenizer has no [SEP] or </s> token".to_string())?;
+        let unk = self
             .tokenizer
-            .token_to_id("[SEP]")
-            .ok_or_else(|| "tokenizer has no [SEP] token".to_string())? as i64;
-        let unk = self.tokenizer.token_to_id("<unk>");
+            .token_to_id("<unk>")
+            .or_else(|| self.tokenizer.token_to_id("[UNK]"));
 
         let mut ids = Vec::with_capacity(self.max_len);
         let mut positions = Vec::new();
@@ -535,6 +608,75 @@ impl ModelPack {
         }
         ids.push(sep);
         Ok(Some((ids, positions, kept, visited)))
+    }
+
+    /// Mean-pool one text into a sentence vector, the way sentence-transformers
+    /// does for an e5 pack.
+    ///
+    /// Pooling averages over the real tokens only; averaging over the padded
+    /// sequence would change the vector with the batch it happened to land in.
+    /// The result is L2-normalised so cosine similarity is a plain dot product.
+    pub fn sentence_vector(&self, text: &str) -> Result<Vec<f32>, String> {
+        let cls = self
+            .special_id("[CLS]", "<s>")
+            .ok_or_else(|| "tokenizer has no [CLS] or <s> token".to_string())?;
+        let sep = self
+            .special_id("[SEP]", "</s>")
+            .ok_or_else(|| "tokenizer has no [SEP] or </s> token".to_string())?;
+
+        // Encode the whole text as pieces, not per word: a sentence vector has no
+        // word offsets to preserve, and the model's own template wants one
+        // sequence.
+        let encoding = self
+            .tokenizer
+            .encode(text, false)
+            .map_err(|error| format!("cannot tokenize {text:?}: {error}"))?;
+        let mut ids = vec![cls];
+        ids.extend(encoding.get_ids().iter().map(|&id| i64::from(id)));
+        // Leave room for the separator so the sequence never exceeds `max_len`.
+        if ids.len() >= self.max_len {
+            ids.truncate(self.max_len - 1);
+        }
+        ids.push(sep);
+        if ids.len() <= 2 {
+            return Err(format!("{text:?} has no tokens to embed"));
+        }
+
+        let shape = (1, ids.len());
+        let input_ids = Array2::from_shape_vec(shape, ids)
+            .map_err(|error| format!("invalid input shape: {error}"))?;
+        let attention_mask = Array2::<i64>::ones(shape);
+
+        let outputs = self.run_with_segments(input_ids, attention_mask)?;
+        let hidden = outputs
+            .first()
+            .ok_or_else(|| "model returned no outputs".to_string())?
+            .ndarray::<f32>()
+            .map_err(|error| format!("cannot read hidden states: {error}"))?;
+
+        let sequence = hidden.shape().get(1).copied().unwrap_or(0);
+        let dim = hidden.shape().get(2).copied().unwrap_or(0);
+        if sequence == 0 || dim == 0 {
+            return Err(format!(
+                "hidden states have an unexpected shape {:?}",
+                hidden.shape()
+            ));
+        }
+
+        let mut pooled = vec![0f32; dim];
+        for token in 0..sequence {
+            for (index, value) in pooled.iter_mut().enumerate() {
+                *value += hidden[[0, token, index]];
+            }
+        }
+        let norm = pooled.iter().map(|value| value * value).sum::<f32>().sqrt();
+        if !norm.is_finite() || norm <= 1e-12 {
+            return Err(format!("{text:?} produced a degenerate embedding"));
+        }
+        for value in &mut pooled {
+            *value /= norm;
+        }
+        Ok(pooled)
     }
 
     /// Word-level single call: tag pre-tokenized words, returning `(word, tag)`.
@@ -1268,5 +1410,148 @@ mod tests {
                 ("bad".to_string(), "B".to_string()),
             ]
         );
+    }
+
+    #[test]
+    fn an_xlm_roberta_pack_resolves_its_own_special_tokens() {
+        // The e5 and mMARCO packs are XLM-R-style: their specials are `<s>` and
+        // `</s>`, with no `[CLS]`/`[SEP]` in the vocabulary at all. `encode_words`
+        // looked up only the BERT names, so every XLM-R pack failed to load with
+        // "tokenizer has no [CLS] token". Same tiny ONNX, XLM-R vocabulary.
+        let source =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/tiny-pack");
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("rishe-xlm-roberta-pack");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::copy(source.join("model.onnx"), dir.join("model.onnx")).unwrap();
+        std::fs::write(
+            dir.join("tokenizer.json"),
+            r###"{"version":"1.0","truncation":null,"padding":null,"added_tokens":[],"normalizer":null,"pre_tokenizer":{"type":"Whitespace"},"post_processor":null,"decoder":null,"model":{"type":"WordPiece","vocab":{"<pad>":0,"<unk>":1,"<s>":2,"</s>":3,"a":4},"unk_token":"<unk>","continuing_subword_prefix":"##","max_input_chars_per_word":100}}"###,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("labels.json"),
+            r#"{"task":"pos","labels":["A","B","C"],"max_len":8}"#,
+        )
+        .unwrap();
+
+        let pack = ModelPack::load(&dir).expect("an XLM-R pack loads");
+        assert_eq!(pack.special_id("[CLS]", "<s>"), Some(2));
+        assert_eq!(pack.special_id("[SEP]", "</s>"), Some(3));
+        // The ids it builds must be the XLM-R ones, not a hardcoded BERT id.
+        let (ids, _, kept, _) = pack.encode_words(&["a"]).expect("encode").unwrap();
+        assert_eq!(kept, vec!["a".to_string()]);
+        assert_eq!(ids.first(), Some(&2));
+        assert_eq!(ids.last(), Some(&3));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Copy the tiny 3-input pack into a scratch directory named for `label`.
+    ///
+    /// Tests run in parallel, so the directory must be unique per test: a shared
+    /// one gets deleted by whichever test finishes first and the rest panic
+    /// loading a directory that no longer exists.
+    fn tiny_vector_pack(label: &str) -> (ModelPack, std::path::PathBuf) {
+        let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/tiny-vector-pack");
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join(format!("rishe-tiny-vector-pack-{label}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        for name in ["model.onnx", "tokenizer.json", "labels.json"] {
+            std::fs::copy(source.join(name), dir.join(name)).unwrap();
+        }
+        (ModelPack::load(&dir).expect("load tiny vector pack"), dir)
+    }
+
+    #[test]
+    fn a_sentence_pack_needs_no_labels() {
+        // A sentence encoder returns a vector, so it has nothing to label. The
+        // loader rejected an empty `labels` array for every pack, which would
+        // have blocked the vector pack outright.
+        let (pack, dir) = tiny_vector_pack("nolabels");
+        assert_eq!(pack.task(), "sentence");
+        assert!(pack.labels().is_empty());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_tagging_pack_still_needs_labels() {
+        // The exemption above must not leak: a pos pack with no labels would
+        // report class indices that map to nothing.
+        let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/tiny-vector-pack");
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("rishe-tiny-nolabels-pack");
+        std::fs::create_dir_all(&dir).unwrap();
+        for name in ["model.onnx", "tokenizer.json"] {
+            std::fs::copy(source.join(name), dir.join(name)).unwrap();
+        }
+        std::fs::write(
+            dir.join("labels.json"),
+            r#"{"task":"pos","labels":[],"max_len":16}"#,
+        )
+        .unwrap();
+        let error = match ModelPack::load(&dir) {
+            Ok(_) => panic!("a pos pack with no labels must be refused"),
+            Err(error) => error,
+        };
+        assert!(error.contains("has no labels"), "got: {error}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn sentence_vector_supplies_zeroed_segment_ids() {
+        // The fixture concatenates the token ids with the segment ids, so the
+        // pooled vector encodes both. "a b" is ids [<s>, a, b, </s>] = [2,4,5,3]
+        // and zero segments, so the mean is [3.5, 0] and normalising gives
+        // [1.0, 0.0]. Segments of ones would yank the second component to ~0.27.
+        let (pack, dir) = tiny_vector_pack("segments");
+        let vector = pack.sentence_vector("a b").expect("sentence vector");
+        assert_eq!(vector.len(), 2);
+        assert!((vector[0] - 1.0).abs() < 1e-6, "got {vector:?}");
+        assert!(vector[1].abs() < 1e-6, "got {vector:?}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn sentence_vector_is_normalised() {
+        let (pack, dir) = tiny_vector_pack("normalised");
+        for text in ["a b", "b", "a"] {
+            let vector = pack.sentence_vector(text).expect("sentence vector");
+            let norm: f32 = vector.iter().map(|value| value * value).sum::<f32>().sqrt();
+            assert!((norm - 1.0).abs() < 1e-6, "{text:?} has norm {norm}");
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn sentence_vector_refuses_text_with_no_tokens() {
+        let (pack, dir) = tiny_vector_pack("notokens");
+        let error = match pack.sentence_vector("   ") {
+            Ok(vector) => panic!("whitespace should not embed, got {vector:?}"),
+            Err(error) => error,
+        };
+        assert!(error.contains("no tokens"), "got: {error}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_two_input_pack_never_gets_a_third_tensor() {
+        // The taggers feed two tensors. Adding a segment input to a 2-input
+        // model would break every existing pack, so the flag is what keeps them
+        // working; this pins the flag to the model's real input count.
+        let (pack, dir) = tiny_vector_pack("twoinput");
+        assert!(pack.needs_token_type_ids);
+        std::fs::remove_dir_all(&dir).ok();
+
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/tiny-pack");
+        let tagging = ModelPack::load(&path).expect("load tiny pack");
+        assert!(!tagging.needs_token_type_ids);
+        // And it still tags, which is the behaviour a stray third input breaks.
+        assert_eq!(tagging.tags("good bad").unwrap().len(), 2);
     }
 }

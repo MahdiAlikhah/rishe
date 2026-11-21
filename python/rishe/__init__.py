@@ -14,6 +14,7 @@ from ._core import (
     Pipeline,
     ProcessedDoc,
     TaggedToken,
+    __version__,
 )
 from .api import (
     DEFAULT_MASKERS,
@@ -40,6 +41,7 @@ from .compat import (
 from .corpora import ConlluReader, PeymaReader, PlainTextReader, Sentence, Token
 
 __all__ = [
+    "__version__",
     "Pipeline",
     "ProcessedDoc",
     "JalaliDate",

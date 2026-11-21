@@ -533,7 +533,11 @@ jobs:
     permissions:
       contents: write
     steps:
+      # The tag's subject is the release title, and a shallow clone does not
+      # fetch the tag object, so `git tag -l` would come back empty.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Check GitHub for an existing release
         id: release
         shell: bash
@@ -553,6 +557,8 @@ jobs:
         run: |
           version="${GITHUB_REF_NAME#v}"
           python scripts/release_notes.py "$version" > notes.md
+          # The tag's subject is the release title, so the two cannot drift.
+          title="$(git tag -l --format='%(contents:subject)' "$GITHUB_REF_NAME")"
           gh release create "$GITHUB_REF_NAME" \
-            --title "Rishe $version" \
+            --title "${title:-Rishe $version}" \
             --notes-file notes.md

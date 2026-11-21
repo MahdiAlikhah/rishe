@@ -18,6 +18,43 @@ DEPPARSE_PACK = (
     else None
 )
 TINY_PACK = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "tiny-pack"
+TINY_VECTOR_PACK = (
+    Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "tiny-vector-pack"
+)
+
+
+class TinyVectorPackTest(unittest.TestCase):
+    """A sentence-encoder pack: three ONNX inputs and no labels."""
+
+    def test_sentence_pack_has_no_labels(self):
+        pack = ModelPack(TINY_VECTOR_PACK)
+        self.assertEqual(pack.task, "sentence")
+        self.assertEqual(pack.labels(), [])
+
+    def test_sentence_vector_is_normalized(self):
+        pack = ModelPack(TINY_VECTOR_PACK)
+        vector = pack.sentence_vector("a b")
+        self.assertEqual(len(vector), 2)
+        self.assertAlmostEqual(vector[0], 1.0, places=6)
+        self.assertAlmostEqual(vector[1], 0.0, places=6)
+        self.assertAlmostEqual(sum(value * value for value in vector) ** 0.5, 1.0, places=6)
+
+    def test_sentence_vector_matches_reference(self):
+        # The fixture concatenates token ids with segment ids, so the pooled
+        # vector is [mean(ids), mean(segments)]. "a b" tokenizes to
+        # [<s>, a, b, </s>] = [2, 4, 5, 3] with zero segments: mean [3.5, 0],
+        # normalized to [1.0, 0.0]. Segment ids of ones would move the second
+        # component to about 0.2747.
+        pack = ModelPack(TINY_VECTOR_PACK)
+        for text in ("a b", "b", "a"):
+            vector = pack.sentence_vector(text)
+            self.assertAlmostEqual(vector[0], 1.0, places=6, msg=text)
+            self.assertAlmostEqual(vector[1], 0.0, places=6, msg=text)
+
+    def test_sentence_vector_rejects_empty_text(self):
+        pack = ModelPack(TINY_VECTOR_PACK)
+        with self.assertRaisesRegex(ValueError, "no tokens"):
+            pack.sentence_vector("   ")
 
 
 class TinyPackTest(unittest.TestCase):

@@ -9,7 +9,9 @@ Main Python objects:
 - `ProcessedDoc` — the result of `pipe(text)`
 - `JalaliDate` / `parse_date` — Jalali parsing, formatting and Gregorian conversion
 - `Embeddings` — static word and sentence vectors
+- `ModelPack` — an ONNX task or sentence pack from `rishe.hub`
 - `Dependency` — one dependency arc from `Pipeline.depparse`
+- `rishe.__version__` — the crate version, baked in at build time
 - `rishe.hub` — explicit model download and cache
 - `rishe.corpora` — CoNLL-U, PEYMA and plain-text readers
 
@@ -87,6 +89,7 @@ from rishe import hub
 
 hub.pull("rishe-embed-fa-300-v2")     # 42 MB embedding download
 hub.pull("pos-compact")               # task pack download
+hub.pull("rishe-vector-e5-small-fa")  # 129 MB sentence encoder
 hub.path("pos-compact")               # cached directory
 hub.cached("rishe-embed-fa-300-v2")   # cached file, or None
 hub.verify("pos-compact")             # checksum check
@@ -94,3 +97,8 @@ hub.verify("pos-compact")             # checksum check
 
 The embedding model is a separate download (CC BY-SA 4.0). The base install does
 not bundle weights and importing `rishe` never touches the network.
+
+`rishe-vector-e5-small-fa` is a sentence encoder, not a tagger: load it with
+`ModelPack(hub.path(...))` and call `sentence_vector(text)` for an L2-normalized
+384-d embedding. A cross-encoder reranker over it lifts MIRACL fa retrieval from
+nDCG@10 0.4937 to 0.5547, but that is a second download.

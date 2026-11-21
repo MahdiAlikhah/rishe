@@ -9,6 +9,9 @@ PathVariable = Union[str, PathLike]
 DEFAULT_MASKERS: list[str]
 """Masker names applied by mask when maskers are omitted, in order."""
 
+__version__: str
+"""The rishe version, from the crate manifest at build time."""
+
 class JalaliDate:
     """A date on the Jalali, solar Hijri, calendar.
 
@@ -176,6 +179,17 @@ class ModelPack:
         ...
     def entities_batch(self, texts: List[str]) -> List[List[Entity]]:
         """Return named entities for many texts, one result per input."""
+        ...
+    def sentence_vector(self, text: str) -> List[float]:
+        """Return an L2-normalized, mean-pooled sentence embedding.
+
+        Only meaningful for a sentence-encoder pack (``task`` of ``sentence``),
+        such as an e5 export. Because the vector is unit length, cosine
+        similarity is a plain dot product.
+
+        Raises ValueError for text with no tokens or when the model returns a
+        degenerate embedding.
+        """
         ...
     def labels(self) -> List[str]:
         """Return the label names the model can emit."""
