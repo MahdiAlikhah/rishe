@@ -128,15 +128,40 @@ vector = encoder.sentence_vector("این کتاب بسیار خوب است")
 ```
 
 Multilingual E5 small at int8, exported by Xenova and rehosted here so the bytes
-are pinned by digest. On MIRACL fa dev it takes nDCG@10 from 0.0804 to **0.4937**
-and recall@100 from 0.3155 to **0.8696**. A cross-encoder reranker reaches 0.5547
-but is not bundled; see [Benchmarks](docs/BENCHMARKS.md) for all of it, including
-what it still cannot do.
+are pinned by digest. On MIRACL fa dev it takes nDCG@10 from 0.0804 to **0.4918**
+and recall@100 from 0.3155 to **0.8889**. See [Benchmarks](docs/BENCHMARKS.md)
+for what it still cannot do.
 
 The encoder answers "how similar are these two texts", not "does this follow
-from that". On FarsTail entailment it reaches 0.6394, ahead of the static pack's
-0.5959 but well short of a cross-encoder's 0.8107 — a three-way relation does not
-fit in one vector. Use it for retrieval and similarity, not classification.
+from that". On FarsTail entailment a frozen e5 backbone reaches 0.6170 raw and
+0.6419 with the documented `query:`/`passage:` prefixes — ahead of the static
+pack's 0.5959 but well short of a cross-encoder's 0.8107, because a three-way
+relation does not fit in one vector. Use it for retrieval and similarity, not
+classification.
+
+### Reranking
+
+An encoder scores each text on its own, so it cannot tell that two passages
+answer the same query differently. A cross-encoder reads the pair together and
+orders the shortlist — the second optional download (130 MB, Apache 2.0):
+
+```bash
+rishe hub pull rishe-rerank-mmarco-minilmv2   # 130 MB, checksum-verified
+```
+
+```python
+from rishe import ModelPack, hub
+
+encoder = ModelPack(hub.path("rishe-vector-e5-small-fa"))
+reranker = ModelPack(hub.path("rishe-rerank-mmarco-minilmv2"))
+
+# Fetch with the encoder, order with the reranker.
+order = sorted(shortlist, key=lambda text: -reranker.score_pairs(query, text))
+```
+
+`score_pairs` returns a raw logit, not a probability: higher is more relevant,
+and it is only comparable within one pack. It cannot produce vectors, so it
+never replaces the encoder — it rides on top of it.
 
 ## Architecture
 

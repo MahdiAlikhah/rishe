@@ -90,6 +90,7 @@ from rishe import hub
 hub.pull("rishe-embed-fa-300-v2")     # 42 MB embedding download
 hub.pull("pos-compact")               # task pack download
 hub.pull("rishe-vector-e5-small-fa")  # 129 MB sentence encoder
+hub.pull("rishe-rerank-mmarco-minilmv2")  # 130 MB cross-encoder reranker
 hub.path("pos-compact")               # cached directory
 hub.cached("rishe-embed-fa-300-v2")   # cached file, or None
 hub.verify("pos-compact")             # checksum check
@@ -100,5 +101,20 @@ not bundle weights and importing `rishe` never touches the network.
 
 `rishe-vector-e5-small-fa` is a sentence encoder, not a tagger: load it with
 `ModelPack(hub.path(...))` and call `sentence_vector(text)` for an L2-normalized
-384-d embedding. A cross-encoder reranker over it lifts MIRACL fa retrieval from
-nDCG@10 0.4937 to 0.5547, but that is a second download.
+384-d embedding.
+
+`rishe-rerank-mmarco-minilmv2` is a cross-encoder reranker (Apache 2.0). It
+scores a `(query, passage)` pair with `score_pairs(query, passage)` and returns
+one logit — higher is more relevant. It cannot produce vectors, so use it to
+reorder candidates the encoder already fetched:
+
+```python
+encoder = ModelPack(hub.path("rishe-vector-e5-small-fa"))
+reranker = ModelPack(hub.path("rishe-rerank-mmarco-minilmv2"))
+
+vectors = [encoder.sentence_vector(doc) for doc in candidates]
+# ... rank by dot product, keep the top N ...
+order = sorted(candidates, key=lambda doc: -reranker.score_pairs(query, doc))
+```
+
+Both downloads are optional; nothing above is needed for tagging.

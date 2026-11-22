@@ -677,6 +677,85 @@ impl ModelPack {
         Ok(pooled)
     }
 
+    /// Score how well `passage` answers `query`, for a cross-encoder reranker.
+    ///
+    /// A cross-encoder reads both texts in one pass and returns one number, so it
+    /// orders candidates but cannot produce vectors; pair it with
+    /// `sentence_vector` to fetch them. Higher is more relevant. The value is a
+    /// raw logit, not a probability: it is only comparable within one pack, and
+    /// only the ordering is meaningful, which is what reranking needs.
+    pub fn score_pairs(&self, query: &str, passage: &str) -> Result<f32, String> {
+        // `encode` with `add_special_tokens: false` and explicit ids below would
+        // repeat what the pair template already does; let the tokenizer apply it.
+        let encoding = self
+            .tokenizer
+            .encode((query, passage), true)
+            .map_err(|error| format!("cannot tokenize pair: {error}"))?;
+        let mut ids: Vec<i64> = encoding.get_ids().iter().map(|&id| i64::from(id)).collect();
+        // Truncate the body but keep the trailing template tokens: slicing the
+        // flat id list instead drops the closing separator, and the model then
+        // sees an unterminated sequence. That is a real score change (~0.18 on a
+        // long passage), not cosmetic.
+        if ids.len() > self.max_len {
+            let len = ids.len();
+            let mask = encoding.get_special_tokens_mask();
+            let trailing = mask
+                .iter()
+                .rev()
+                .take_while(|&&flag| flag == 1)
+                .count()
+                .min(self.max_len);
+            let keep = self.max_len - trailing;
+            let tail = ids[len - trailing..].to_vec();
+            ids.truncate(keep);
+            ids.extend_from_slice(&tail);
+        }
+        // Both texts empty still yields the separator scaffolding, so a token
+        // count is not enough: scoring it would report a real-looking number for
+        // a pair with no content.
+        if encoding
+            .get_special_tokens_mask()
+            .iter()
+            .all(|&flag| flag == 1)
+        {
+            return Err("pair has no tokens to score".to_string());
+        }
+
+        let shape = (1, ids.len());
+        let input_ids = Array2::from_shape_vec(shape, ids)
+            .map_err(|error| format!("invalid input shape: {error}"))?;
+        let attention_mask = Array2::<i64>::ones(shape);
+
+        let outputs = self.run_with_segments(input_ids, attention_mask)?;
+        let logits = outputs
+            .first()
+            .ok_or_else(|| "model returned no outputs".to_string())?
+            .ndarray::<f32>()
+            .map_err(|error| format!("cannot read logits: {error}"))?;
+
+        // A reranker emits one score per pair (`[1, 1]`), or one row per class
+        // (`[1, 2]`). Anything else is a tagging or encoder pack, whose output is
+        // per token; returning its last value would be a plausible-looking wrong
+        // number rather than an error.
+        let values: Vec<f32> = logits.iter().copied().collect();
+        let score = match values.as_slice() {
+            [score] => *score,
+            // Positive class is last in the usual Hugging Face layout.
+            [_, positive] => *positive,
+            _ => {
+                return Err(format!(
+                    "model returned {} values, not one score per pair; \
+                     this pack is not a reranker",
+                    values.len()
+                ))
+            }
+        };
+        if !score.is_finite() {
+            return Err(format!("model returned a non-finite score: {score}"));
+        }
+        Ok(score)
+    }
+
     /// Word-level single call: tag pre-tokenized words, returning `(word, tag)`.
     ///
     /// One model pass holds only the words that fit in `max_len` subword pieces,
@@ -1551,6 +1630,35 @@ mod tests {
         assert!(!tagging.needs_token_type_ids);
         // And it still tags, which is the behaviour a stray third input breaks.
         assert_eq!(tagging.tags("good bad").unwrap().len(), 2);
+    }
+
+    #[test]
+    fn score_pairs_rejects_a_pack_that_does_not_score() {
+        // A tagger emits per-token logits, so its output is not one score. Taking
+        // the last value would return a plausible number for a pack that cannot
+        // rerank, which is worse than an error.
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/tiny-pack");
+        let pack = ModelPack::load(&path).expect("load tiny pack");
+        let error = match pack.score_pairs("good", "bad") {
+            Ok(score) => panic!("a per-token pack must not score, got {score}"),
+            Err(error) => error,
+        };
+        assert!(error.contains("not a reranker"), "got: {error}");
+    }
+
+    #[test]
+    fn score_pairs_refuses_a_pair_with_no_content() {
+        // The pair template wraps empty text in separators, so the encoder still
+        // sees tokens and the model would return a real-looking score.
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/tiny-pack");
+        let pack = ModelPack::load(&path).expect("load tiny pack");
+        let error = match pack.score_pairs("", "") {
+            Ok(score) => panic!("an empty pair must not score, got {score}"),
+            Err(error) => error,
+        };
+        assert!(error.contains("no tokens"), "got: {error}");
     }
 
     #[test]

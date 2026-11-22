@@ -9,7 +9,38 @@ in the pack manifest and on the model repository.
 
 ## [Unreleased]
 
+## [1.0.8] - 2026-11-22
+
 ### Added
+
+- `ModelPack::score_pairs(query, passage)` (Python: `score_pairs`) scores a pair
+  with a cross-encoder reranker and returns one logit, higher meaning more
+  relevant. It complements `sentence_vector`: the encoder fetches candidates, the
+  reranker orders them, and neither can do the other's job — a cross-encoder has
+  no vector output, and a bi-encoder scores each side blind to the other. The
+  shipped `rishe-rerank-mmarco-minilmv2` pack (130 MB, Apache 2.0) is the int8
+  `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1` export, unmodified; pull it with
+  `hub pull`. Its graph takes two inputs, so it loads through the existing path
+  with no new Cargo feature.
+
+  The value is a raw logit, not a probability, so it is comparable only within
+  one pack and only the ordering is meaningful. Two shapes are rejected rather
+  than guessed at: a pack whose output is per token, which is a tagger and would
+  otherwise return a plausible wrong number, and a pair whose text is empty,
+  which the tokenizer still wraps in separator tokens and would otherwise score.
+
+  Measured end to end on MIRACL fa dev (632 queries, 2,207,172 passages): the
+  encoder gets nDCG@10 0.4918, and reranking its top 50 with this pack takes it to
+  **0.5609** (+6.9 points, +14% relative) with R@10 0.7092. Recall is not the
+  constraint — the encoder already reaches R@100 0.8889 — so ordering is the only
+  place left to gain. A top-100 pass scores 0.5526, slightly worse than top-50.
+
+  Because int8 kernels differ, the same graph through tract and through
+  onnxruntime orders candidates closely but not identically: over 480 real pairs
+  from 12 queries, Kendall tau 0.92 (range 0.86–0.95), top-10 overlap 94%, mean
+  absolute logit difference 0.22. The figures above came from onnxruntime, so
+  expect a tract run to land within a few nDCG points rather than bit-identical,
+  and compare logits only within one runtime.
 
 - The README and `docs/BENCHMARKS.md` now document the sentence encoder. 1.0.7
   shipped the `rishe-vector-e5-small-fa` pack, but the README only offered the
@@ -17,8 +48,8 @@ in the pack manifest and on the model repository.
   lived in `training/ROADMAP.md`, which is excluded from the repository — so the
   strongest argument for the pack was in a file no reader could open. The new
   "Semantic search" section and the "Semantic retrieval: MIRACL fa dev" section
-  state what the pack is for and what it is not: nDCG@10 0.0804 → 0.4937 and
-  R@100 0.3155 → 0.8696 on MIRACL fa dev, while reranking by P(entailment)
+  state what the pack is for and what it is not: nDCG@10 0.0804 → 0.4918 and
+  R@100 0.3155 → 0.8889 on MIRACL fa dev, while reranking by P(entailment)
   collapses it to 0.0672. Those numbers have no script here yet, and the section
   says so rather than implying they are reproducible.
 
@@ -1240,6 +1271,7 @@ Removed in `1.0.0`; each emits `DeprecationWarning` today.
 - Benchmark suite and dual MIT/Apache-2.0 licensing.
 
 [Unreleased]: https://github.com/MahdiAlikhah/rishe/compare/v1.0.7...HEAD
+[1.0.8]: https://github.com/MahdiAlikhah/rishe/compare/v1.0.7...v1.0.8
 [1.0.7]: https://github.com/MahdiAlikhah/rishe/compare/v1.0.6...v1.0.7
 [1.0.6]: https://github.com/MahdiAlikhah/rishe/compare/v1.0.5...v1.0.6
 [1.0.5]: https://github.com/MahdiAlikhah/rishe/compare/v1.0.4...v1.0.5

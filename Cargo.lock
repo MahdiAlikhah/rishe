@@ -2025,7 +2025,7 @@ dependencies = [
 
 [[package]]
 name = "rishe"
-version = "1.0.7"
+version = "1.0.8"
 dependencies = [
  "aho-corasick",
  "criterion",

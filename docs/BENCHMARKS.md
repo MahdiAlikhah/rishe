@@ -176,7 +176,7 @@ cannot be a missing-corpus artefact. Both systems were measured through the
 | system | nDCG@10 | R@10 | R@100 | download |
 |---|---|---|---|---|
 | `rishe-embed-fa-300-v2` (static word vectors) | 0.0804 | 0.1227 | 0.3155 | 42 MB |
-| `rishe-vector-e5-small-fa` (frozen encoder) | **0.4937** | 0.6087 | **0.8696** | 129 MB |
+| `rishe-vector-e5-small-fa` (frozen encoder) | **0.4918** | 0.6267 | **0.8889** | 129 MB |
 
 Downloads are whole packs, model plus tokenizer; the encoder's graph alone is
 112.6 MB of that 129, the rest is an XLM-R tokenizer with a 250k vocabulary.
@@ -189,39 +189,55 @@ Two things follow, and the second matters more than the first:
 - **Recall, not ranking, is what the static pack loses.** It finds only **31.6%**
   of relevant passages in its top 100, so it cannot be used as a first stage and
   improved later — the candidates are simply not there. The encoder reaches
-  **86.96%**, which is what makes it a usable retriever.
+  **88.89%**, which is what makes it a usable retriever.
 
 The encoder ships as an optional second download; the base install and the
 existing packs are unchanged.
 
 ### Reranking on top of the encoder
 
-Because R@100 is 0.8696, the remaining headroom is in *ordering*, not recall.
+Because R@100 is 0.8889, the remaining headroom is in *ordering*, not recall.
 A cross-encoder reranker over the encoder's top 50, same queries:
 
 | reranker | license | nDCG@10 | R@10 |
 |---|---|---|---|
-| none | — | 0.4937 | 0.6087 |
+| none | — | 0.4918 | 0.6267 |
 | FarsTail NLI cross-encoder (trained here) | MIT | 0.0672 | 0.1176 |
 | `BAAI/bge-reranker-base` | MIT | 0.2703 | 0.3995 |
-| `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1` | apache-2.0 | **0.5547** | 0.6808 |
+| `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1` | apache-2.0 | **0.5609** | 0.7092 |
 
-**+6.1 nDCG@10 for zero gradient steps**, and it beats the NLI cross-encoder
+The shipped pack is that last row, re-measured end to end on this release:
+2,207,172 passages, 632 queries, 1,314 relevance judgements, scoring one pair at
+a time with no padding (padding shifts a logit by −0.25). Top-50 beats top-100
+(0.5609 vs 0.5526), matching the earlier sweep. Reranking permutes candidates,
+so it cannot change set recall — that is why R@100 for a top-50 pass is capped at
+R@50, and why a top-100 pass reproduces the encoder's 0.8889 exactly.
+
+**+6.9 nDCG@10 for zero gradient steps**, and it beats the NLI cross-encoder
 trained in this repo. The reason is the objective, not the size: mMARCO is
 multilingual MS MARCO *retrieval* data, while entailment is a different question.
-Reranking by P(entailment) actively *hurts* — 0.4937 → 0.0672 — and that is a
+Reranking by P(entailment) actively *hurts* — 0.4918 → 0.0672 — and that is a
 measured negative, not a tuning miss: across 20,000 (query, passage) pairs the
 NLI model labelled 19,258 **neutral**, with `pearson(P(entailment), relevant) =
 +0.011`. "Does this follow from that?" carries no signal for "is this what they
 meant?".
 
-Knobs measured: `max_length` 256 vs 512 is within noise (0.5547 vs 0.5545);
-**top-50 beats top-100** (0.5547 vs 0.5466) because rescanning more candidates
-gives the reranker more chances to be fooled, at 29 s vs 42 s.
+Knobs measured: `max_length` 256 vs 512 is within noise; **top-50 beats top-100**
+(0.5609 vs 0.5526) because rescanning more candidates gives the reranker more
+chances to be fooled, at 4.3 min vs 8.8 min for the full dev set.
 
-The reranker is **not shipped**. It is a 113 MB cross-encoder: it scores a pair,
-so it cannot produce vectors, and it would be a third download bounded by the
-encoder's recall. The shipped encoder already gives a usable retriever.
+The reranker ships as `rishe-rerank-mmarco-minilmv2` (130 MB, Apache-2.0), pulled
+separately with `hub pull` — nobody downloads it unless they ask for it. It is a
+cross-encoder, so it scores a pair and cannot produce vectors; it is only useful
+on top of the encoder's shortlist, bounded by the encoder's recall.
+
+**Runtime caveat:** the figures above were measured through onnxruntime, while the
+crate runs the same int8 graph through tract. On 480 real benchmark pairs from 12
+queries the two order candidates closely but not identically — Kendall tau 0.92
+(range 0.86–0.95), top-10 overlap 94%, mean absolute logit difference 0.22 (worst
+1.03). Expect a tract-based run to land within a few nDCG points rather than
+bit-identical, and compare logits only within one runtime. The reranker's value is
+the ordering, not the number.
 
 **Caveat on reproducibility:** unlike the sections above, these retrieval and
 reranker numbers have **no script in this repository** — they were measured in a

@@ -191,6 +191,20 @@ class ModelPack:
         degenerate embedding.
         """
         ...
+    def score_pairs(self, query: str, passage: str) -> float:
+        """Return a cross-encoder relevance logit for ``query`` and ``passage``.
+
+        Only meaningful for a reranker pack (``task`` of ``rerank``). Higher is
+        more relevant. The value is a raw logit, not a probability: compare it
+        only against scores from the same pack, and only to order candidates.
+
+        Use :meth:`sentence_vector` to fetch candidates; a cross-encoder cannot
+        produce vectors itself.
+
+        Raises ValueError for a pair with no tokens or when the model returns
+        nothing.
+        """
+        ...
     def labels(self) -> List[str]:
         """Return the label names the model can emit."""
         ...

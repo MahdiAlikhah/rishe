@@ -1401,6 +1401,13 @@ mod py_bindings {
                 .map_err(pyo3::exceptions::PyValueError::new_err)
         }
 
+        /// Python `score_pairs`: cross-encoder relevance logit for a pair.
+        #[pyo3(name = "score_pairs")]
+        pub fn py_score_pairs(&self, py: Python<'_>, query: &str, passage: &str) -> PyResult<f32> {
+            py.allow_threads(|| self.score_pairs(query, passage))
+                .map_err(pyo3::exceptions::PyValueError::new_err)
+        }
+
         /// Python `labels`: label names as owned strings.
         #[pyo3(name = "labels")]
         pub fn py_labels(&self) -> Vec<String> {

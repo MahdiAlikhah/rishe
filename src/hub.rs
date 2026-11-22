@@ -41,12 +41,20 @@ const PACKS: &[(&str, &str)] = &[
 /// digest mismatch is fatal, so adding a task there would break `hub pull` for
 /// *all* packs on installs that already exist. A separate manifest lets a new
 /// pack ship without touching the shared index.
-const STANDALONE_PACKS: &[(&str, &str, &str, &str)] = &[(
-    "rishe-vector-e5-small-fa",
-    "sentence",
-    "https://huggingface.co/MahdiAlikhah/rishe-models/resolve/main/vector/e5-small-fa",
-    "129737d3fa726182313db093a956e5d062440f414e4125de54c2bfe5c8f4089b",
-)];
+const STANDALONE_PACKS: &[(&str, &str, &str, &str)] = &[
+    (
+        "rishe-vector-e5-small-fa",
+        "sentence",
+        "https://huggingface.co/MahdiAlikhah/rishe-models/resolve/main/vector/e5-small-fa",
+        "129737d3fa726182313db093a956e5d062440f414e4125de54c2bfe5c8f4089b",
+    ),
+    (
+        "rishe-rerank-mmarco-minilmv2",
+        "rerank",
+        "https://huggingface.co/MahdiAlikhah/rishe-models/resolve/main/rerank/mmarco-minilmv2",
+        "0997d3f3e97c25de266ee4eaf48189aa3ac1a6be4a728e3095b71810552ccb23",
+    ),
+];
 const PACK_BASE: &str = "https://huggingface.co/MahdiAlikhah/rishe-models/resolve/main";
 const PACK_MANIFEST_SHA256: &str =
     "60885efc0680a47a3f7efbd3bc699c19766dc33c6b072b44c31086811d43f12e";

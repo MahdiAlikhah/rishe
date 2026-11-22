@@ -84,6 +84,11 @@ STANDALONE_PACKS: Dict[str, Tuple[str, str, str]] = {
         "https://huggingface.co/MahdiAlikhah/rishe-models/resolve/main/vector/e5-small-fa",
         "129737d3fa726182313db093a956e5d062440f414e4125de54c2bfe5c8f4089b",
     ),
+    "rishe-rerank-mmarco-minilmv2": (
+        "rerank",
+        "https://huggingface.co/MahdiAlikhah/rishe-models/resolve/main/rerank/mmarco-minilmv2",
+        "0997d3f3e97c25de266ee4eaf48189aa3ac1a6be4a728e3095b71810552ccb23",
+    ),
 }
 PACK_BASE = "https://huggingface.co/MahdiAlikhah/rishe-models/resolve/main"
 PACK_MANIFEST_SHA256 = "60885efc0680a47a3f7efbd3bc699c19766dc33c6b072b44c31086811d43f12e"
