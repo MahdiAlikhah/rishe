@@ -354,15 +354,15 @@ jobs:
           # Python 3.9 job then failed on the newer glibc.
           - { target: x86_64-unknown-linux-gnu, os: ubuntu-24.04, manylinux: auto, container: "", args: "--release --out dist" }
           # glibc ARM: without this row every Raspberry Pi / Graviton user falls
-          # back to the sdist, which needs a Rust toolchain. `container: auto`
-          # asks maturin to cross-compile inside a manylinux image.
+          # back to the sdist, which needs a Rust toolchain.
           #
-          # `soft: true` because ring 0.17.14 cannot assemble its ARM asm in the
-          # current manylinux cross image (`ARM assembler must define
-          # __ARM_ARCH`): the step is allowed to fail (the job box stays green,
-          # the failure is a warning annotation) and no artifact is uploaded
-          # until the dependency is updated. Every other target must still pass.
-          - { target: aarch64-unknown-linux-gnu, os: ubuntu-24.04, manylinux: auto, container: "auto", args: "--release --out dist", soft: true }
+          # `--zig` with `container: off`, not `container: auto`: the manylinux
+          # cross image's gcc does not define `__ARM_ARCH`, so ring 0.17.14 fails
+          # its ARM asm with `#error "ARM assembler must define __ARM_ARCH"` and
+          # this row uploaded nothing for four releases while the job stayed green.
+          # Zig's clang defines it, which is why the aarch64 musl row below
+          # already worked; maturin tags the result manylinux_2_17 for `auto`.
+          - { target: aarch64-unknown-linux-gnu, os: ubuntu-24.04, manylinux: auto, container: "off", args: "--release --out dist --zig" }
           - { target: x86_64-unknown-linux-musl, os: ubuntu-24.04, manylinux: musllinux_1_2, container: "off", args: "--release --out dist --zig" }
           - { target: aarch64-unknown-linux-musl, os: ubuntu-24.04, manylinux: musllinux_1_2, container: "off", args: "--release --out dist --zig" }
           # macOS: Intel runners, both rows. The arm64 macOS hosted runners are
@@ -381,27 +381,28 @@ jobs:
         with:
           targets: aarch64-apple-darwin
       - uses: PyO3/maturin-action@v1
-        continue-on-error: ${{ matrix.soft == true }}
         with:
           target: ${{ matrix.target }}
           manylinux: ${{ matrix.manylinux }}
           container: ${{ matrix.container }}
           args: ${{ matrix.args }} --locked
           rust-toolchain: stable
+      # No `continue-on-error`: every row must produce its wheel. One did not for
+      # four releases and only this step's `if-no-files-found` would have said so.
       - uses: actions/upload-artifact@v4
         with:
           name: wheels-${{ matrix.target }}
           path: dist/*.whl
-          # A soft row may legitimately produce nothing; the missing wheel is the
-          # `soft: true` failure above, not a second error here.
-          if-no-files-found: ${{ matrix.soft == true && 'warn' || 'error' }}
+          if-no-files-found: error
 
   # Every wheel is built on its own runner and then never opened, so a broken
   # one could publish green. Each row installs the artifact built for its own
   # platform and calls into it. The musllinux and aarch64-musl wheels are not
   # covered here: running them needs an emulated Alpine container, where the
-  # `actions/download-artifact` node action is unavailable. The arm64 macOS
-  # wheel is cross-compiled and not smoked either: its runner is the same
+  # `actions/download-artifact` node action is unavailable. The aarch64 glibc
+  # wheel is in the same position — it compiles under zig but is not run, so
+  # "the build succeeded" is all this pipeline ever proves about it. The arm64
+  # macOS wheel is cross-compiled and not smoked either: its runner is the same
   # capacity-constrained arm64 pool that kept cancelling jobs, so the Intel
   # macOS wheel carries the macOS smoke instead.
   wheel-smoke:

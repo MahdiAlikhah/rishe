@@ -9,6 +9,18 @@ in the pack manifest and on the model repository.
 
 ## [Unreleased]
 
+### Fixed
+
+- Build the `aarch64-unknown-linux-gnu` wheel again. Its matrix row asked the
+  manylinux cross image to compile, and that image's gcc does not define
+  `__ARM_ARCH`, so `ring`'s ARM assembly failed with `#error "ARM assembler must
+  define __ARM_ARCH"`. The row was marked `soft`, so the job stayed green while
+  uploading nothing — PyPI shipped 6 wheels instead of 7 in every release from
+  1.0.4 to 1.0.7, and glibc ARM users (Raspberry Pi, Graviton) fell back to the
+  sdist. It now builds with `--zig`, the same toolchain the aarch64 musl wheel
+  already used, and the `soft` escape hatch is gone so a missing wheel fails the
+  job instead of passing quietly.
+
 ## [1.0.7] - 2026-11-21
 
 ### Added
