@@ -9,6 +9,19 @@ in the pack manifest and on the model repository.
 
 ## [Unreleased]
 
+### Added
+
+- The README and `docs/BENCHMARKS.md` now document the sentence encoder. 1.0.7
+  shipped the `rishe-vector-e5-small-fa` pack, but the README only offered the
+  42 MB static vectors and the measurement that justifies the 129 MB download
+  lived in `training/ROADMAP.md`, which is excluded from the repository — so the
+  strongest argument for the pack was in a file no reader could open. The new
+  "Semantic search" section and the "Semantic retrieval: MIRACL fa dev" section
+  state what the pack is for and what it is not: nDCG@10 0.0804 → 0.4937 and
+  R@100 0.3155 → 0.8696 on MIRACL fa dev, while reranking by P(entailment)
+  collapses it to 0.0672. Those numbers have no script here yet, and the section
+  says so rather than implying they are reproducible.
+
 ### Fixed
 
 - Build the `aarch64-unknown-linux-gnu` wheel again. Its matrix row asked the
