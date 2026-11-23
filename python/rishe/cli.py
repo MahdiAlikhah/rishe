@@ -116,7 +116,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     score = subparsers.add_parser(
         "score", help="Cross-encoder relevance logit for a query/passage pair."
     )
-    score.add_argument("text", nargs=2, metavar=("query", "passage"))
+    # A tuple metavar would read nicer ("query passage"), but argparse before
+    # 3.12 joins required-action names with `', '.join(...)` and raises
+    # TypeError on a tuple, so a wrong count crashed instead of exiting 2.
+    # `nargs=2` repeats any string metavar, so the order is spelled out here.
+    score.add_argument("text", nargs=2, metavar="text", help="query then passage")
     score.add_argument("--pack", default=None, help="reranker pack directory (required)")
     score.add_argument("--json", action="store_true", help="emit JSON")
 

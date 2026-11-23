@@ -117,9 +117,13 @@ class CliTest(unittest.TestCase):
         code, _ = self.run_cli(["score", "query", "passage"])
         self.assertEqual(code, 1)
         # argparse owns the two-positional grammar, so a wrong count is exit 2.
-        with self.assertRaises(SystemExit) as caught:
-            self.run_cli(["score", "only-one"])
-        self.assertEqual(caught.exception.code, 2)
+        # Three texts is checked as well as one: a tuple `metavar` with
+        # `nargs=2` raised TypeError instead of exiting 2 on Python 3.9-3.11,
+        # because argparse there joins required-action names with `', '.join`.
+        for texts in (["only-one"], ["a", "b", "c"]):
+            with self.assertRaises(SystemExit) as caught:
+                self.run_cli(["score"] + texts)
+            self.assertEqual(caught.exception.code, 2, texts)
 
     def test_a_byte_order_mark_on_stdin_is_ignored(self):
         """`utf-8` keeps the BOM as part of the first word, so `rishe date` failed."""
