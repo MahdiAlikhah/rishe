@@ -26,11 +26,19 @@ a pack is identified by its name and its checksum, and a new pack is a new name.
 | change | version |
 |---|---|
 | fix a bug without changing documented behaviour | patch (`x.y.Z`) |
-| add a method, keyword argument, command, response field, Cargo feature, pack or doc | minor (`x.Y.0`) |
-| add a deprecated alias (it keeps working) | minor |
+| add a method, keyword argument, command, response field or doc, where every existing call still behaves the same | patch (`x.y.Z`) |
+| add a Cargo feature, a pack, or a deprecated alias | minor (`x.Y.0`) |
 | change a default (for example the default Hub pack), with a CHANGELOG note; every published name keeps resolving | minor |
 | change performance, error message wording, logging or internal structure | any release |
 | remove or rename a public name, change a return type, change documented behaviour, remove a CLI flag, remove a Python or Rust version, change `.rvec` or manifest semantics | major (`X.0.0`) only |
+
+The line between the first two rows is **opt-in surface**: a patch may add a name
+that nobody is forced to use, because an existing caller cannot observe it. A new
+Cargo feature or alias is different — it lands in the resolved build or the name
+table, so it moves to a minor. A new pack is a separate question again: packs are
+versioned on their own (above), so shipping one is not by itself a crate version
+event. `1.0.7` added `__version__` and a pack as a patch; `1.0.8` added
+`score_pairs` as a patch. Both are consistent with this table.
 
 `1.0.0` is the freeze, and the table above is what it promises. Up to and
 including `0.11.0` the minor numbers renamed public names; that window is closed.

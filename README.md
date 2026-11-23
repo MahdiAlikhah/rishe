@@ -150,18 +150,28 @@ rishe hub pull rishe-rerank-mmarco-minilmv2   # 130 MB, checksum-verified
 ```
 
 ```python
-from rishe import ModelPack, hub
+from rishe import ModelPack, SentenceEmbedder, hub
 
-encoder = ModelPack(hub.path("rishe-vector-e5-small-fa"))
+encoder = SentenceEmbedder(hub.path("rishe-vector-e5-small-fa"))
 reranker = ModelPack(hub.path("rishe-rerank-mmarco-minilmv2"))
 
 # Fetch with the encoder, order with the reranker.
-order = sorted(shortlist, key=lambda text: -reranker.score_pairs(query, text))
+shortlist = encoder.rank(query, candidates)[:50]
+order = sorted(shortlist, key=lambda item: -reranker.score_pairs(query, item[1]))
 ```
 
 `score_pairs` returns a raw logit, not a probability: higher is more relevant,
 and it is only comparable within one pack. It cannot produce vectors, so it
-never replaces the encoder — it rides on top of it.
+never replaces the encoder — it rides on top of it. `SentenceEmbedder` is the
+encoder side: `embed`, `embed_batch`, `similarity` and `rank`, and it refuses a
+pack that is not a sentence encoder. `score_pairs_batch` does many pairs at once.
+
+From the shell:
+
+```bash
+rishe score --pack "$(rishe hub path rishe-rerank-mmarco-minilmv2)" \
+  "پایتخت ایران کجاست" "تهران پایتخت ایران است"
+```
 
 ## Architecture
 

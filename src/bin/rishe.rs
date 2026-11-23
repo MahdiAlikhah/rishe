@@ -33,6 +33,7 @@ Commands:
   ezafe       Ezafe tagging with a model pack (needs `models`).
   depparse    Dependency parsing with a model pack (needs `models`).
   embed       Mean embedding vector for the input text.
+  score       Cross-encoder relevance logit for a query/passage pair.
   similar     Nearest words to a word (needs an embedding model).
   similarity  Cosine similarity between two words.
   convert     Rewrite an embedding `.vec` file as a compact `.rvec` file.
@@ -251,6 +252,18 @@ fn run() -> Result<(), CliError> {
     if matches!(command.as_str(), "embed" | "similar" | "similarity") {
         return embedding_command(&command, &options);
     }
+    // Before `read_text`: `score` takes two positionals, and read_text folds
+    // everything into one string for the single-text commands. The count is
+    // checked here so a bad invocation is a usage error on every build, not a
+    // "built without models" runtime error on some.
+    if command == "score" {
+        if options.text.len() != 2 {
+            return Err(CliError::Usage(
+                "score needs exactly two texts: query then passage".to_string(),
+            ));
+        }
+        return pack_score(&options);
+    }
 
     let text = read_text(&options.text)?;
     let pipe = Pipeline::create(true, true, true);
@@ -435,6 +448,31 @@ fn load_embeddings(model: Option<&str>) -> Result<Embeddings, String> {
             .ok_or_else(|| format!("{name:?} is not cached; run `rishe hub pull {name}`"))?
     };
     Embeddings::load(path)
+}
+
+#[cfg(feature = "models")]
+fn pack_score(options: &Options) -> Result<(), CliError> {
+    let pack = options
+        .pack
+        .as_deref()
+        .ok_or_else(|| CliError::Runtime("score needs --pack <dir>".to_string()))?;
+    let reranker = rishe::models::ModelPack::load(pack)?;
+    let score = reranker.score_pairs(&options.text[0], &options.text[1])?;
+    if options.json {
+        println!("{}", json!({"score": score}));
+    } else {
+        println!("{score:.6}");
+    }
+    Ok(())
+}
+
+#[cfg(not(feature = "models"))]
+fn pack_score(_options: &Options) -> Result<(), CliError> {
+    Err(CliError::Runtime(
+        "this rishe binary was built without the `models` feature; install with \
+         `cargo install rishe --features models`"
+            .to_owned(),
+    ))
 }
 
 fn serve(args: &[String]) -> Result<(), CliError> {

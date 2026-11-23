@@ -99,22 +99,39 @@ hub.verify("pos-compact")             # checksum check
 The embedding model is a separate download (CC BY-SA 4.0). The base install does
 not bundle weights and importing `rishe` never touches the network.
 
-`rishe-vector-e5-small-fa` is a sentence encoder, not a tagger: load it with
-`ModelPack(hub.path(...))` and call `sentence_vector(text)` for an L2-normalized
-384-d embedding.
+`rishe-vector-e5-small-fa` is a sentence encoder, not a tagger. `SentenceEmbedder`
+wraps it and refuses a pack that is not a sentence encoder, so a POS pack cannot
+be pooled into a vector that looks like an embedding but means nothing:
+
+```python
+from rishe import SentenceEmbedder, hub
+
+encoder = SentenceEmbedder(hub.path("rishe-vector-e5-small-fa"))
+encoder.embed("این کتاب بسیار خوب است")        # 384 floats, L2-normalized
+encoder.embed_batch(["متن یک", "متن دو"])      # one vector per text, in order
+encoder.similarity("کتاب خوب", "کتاب بد")      # cosine, a plain dot product
+encoder.rank("کتاب", candidates)               # [(score, text)] best first
+```
+
+`ModelPack` still works directly when you already have one; the wrapper adds the
+task check and the cosine helpers.
 
 `rishe-rerank-mmarco-minilmv2` is a cross-encoder reranker (Apache 2.0). It
 scores a `(query, passage)` pair with `score_pairs(query, passage)` and returns
-one logit — higher is more relevant. It cannot produce vectors, so use it to
-reorder candidates the encoder already fetched:
+one logit — higher is more relevant. `score_pairs_batch(pairs)` does many at once
+and keeps input order. It cannot produce vectors, so use it to reorder candidates
+the encoder already fetched:
 
 ```python
-encoder = ModelPack(hub.path("rishe-vector-e5-small-fa"))
+from rishe import ModelPack, hub
+
+encoder = SentenceEmbedder(hub.path("rishe-vector-e5-small-fa"))
 reranker = ModelPack(hub.path("rishe-rerank-mmarco-minilmv2"))
 
-vectors = [encoder.sentence_vector(doc) for doc in candidates]
+vectors = encoder.embed_batch(candidates)
 # ... rank by dot product, keep the top N ...
-order = sorted(candidates, key=lambda doc: -reranker.score_pairs(query, doc))
+shortlist = candidates[:50]
+order = sorted(shortlist, key=lambda doc: -reranker.score_pairs(query, doc))
 ```
 
 Both downloads are optional; nothing above is needed for tagging.

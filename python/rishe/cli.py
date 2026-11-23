@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 from typing import List, Optional, Union
 
-from . import Embeddings, Pipeline, __version__, hub, parse_date
+from . import Embeddings, ModelPack, Pipeline, __version__, hub, parse_date
 from .api import DEFAULT_MASKERS
 
 # Longest request line ``serve`` accepts, matching `MAX_LINE` in src/bin/rishe.rs.
@@ -113,6 +113,13 @@ def main(argv: Optional[List[str]] = None) -> int:
         command.add_argument("--pack", default=None, help="pack directory (required at run time)")
         command.add_argument("--json", action="store_true", help="emit JSON")
 
+    score = subparsers.add_parser(
+        "score", help="Cross-encoder relevance logit for a query/passage pair."
+    )
+    score.add_argument("text", nargs=2, metavar=("query", "passage"))
+    score.add_argument("--pack", default=None, help="reranker pack directory (required)")
+    score.add_argument("--json", action="store_true", help="emit JSON")
+
     serve = subparsers.add_parser("serve", help="JSON-lines server on stdin/stdout.")
     serve.add_argument(
         "--maskers",
@@ -178,6 +185,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         return _depparse(args)
     if args.command in ("pos", "ner", "ezafe"):
         return _pack(args)
+    if args.command == "score":
+        return _score(args)
 
     if args.command in ("embed", "similar", "similarity"):
         return _embedding(args)
@@ -341,6 +350,24 @@ def _pack(args) -> int:
         for item in items:
             label = item.label if task == "ner" else item.tag
             print(f"{item.text}\t{label}")
+    return 0
+
+
+def _score(args) -> int:
+    if not args.pack:
+        print("score needs --pack <dir>", file=sys.stderr)
+        return 1
+    query, passage = args.text
+    try:
+        score = ModelPack(args.pack).score_pairs(query, passage)
+    except (OSError, ValueError) as error:
+        print(error, file=sys.stderr)
+        return 1
+
+    if args.json:
+        print(json.dumps({"score": score}))
+    else:
+        print(f"{score:.6f}")
     return 0
 
 

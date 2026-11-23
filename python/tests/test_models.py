@@ -8,7 +8,7 @@ from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
-from rishe import Entity, ModelPack, Pipeline, TaggedToken, hub
+from rishe import Entity, ModelPack, Pipeline, SentenceEmbedder, TaggedToken, hub
 from rishe.cli import main
 
 PACK_ROOT = Path(os.environ["RISHE_TEST_PACK"]) if os.environ.get("RISHE_TEST_PACK") else None
@@ -55,6 +55,50 @@ class TinyVectorPackTest(unittest.TestCase):
         pack = ModelPack(TINY_VECTOR_PACK)
         with self.assertRaisesRegex(ValueError, "no tokens"):
             pack.sentence_vector("   ")
+
+    def test_sentence_vectors_keeps_one_vector_per_text(self):
+        pack = ModelPack(TINY_VECTOR_PACK)
+        texts = ["a b", "a"]
+        vectors = pack.sentence_vectors(texts)
+        self.assertEqual(len(vectors), len(texts))
+        for text, vector in zip(texts, vectors):
+            self.assertEqual(vector, pack.sentence_vector(text), text)
+
+    def test_a_tagging_pack_cannot_produce_vectors(self):
+        # A POS pack returns hidden states too, so pooling them used to yield a
+        # unit vector that looked like an embedding and meant nothing.
+        pack = ModelPack(TINY_PACK)
+        with self.assertRaisesRegex(ValueError, "cannot produce vectors"):
+            pack.sentence_vector("good bad")
+
+
+class SentenceEmbedderTest(unittest.TestCase):
+    """The wrapper refuses a pack that is not a sentence encoder."""
+
+    def test_loads_a_sentence_pack(self):
+        encoder = SentenceEmbedder(TINY_VECTOR_PACK)
+        self.assertEqual(encoder.task, "sentence")
+        self.assertEqual(encoder.max_len, 16)
+
+    def test_embed_matches_the_pack(self):
+        encoder = SentenceEmbedder(TINY_VECTOR_PACK)
+        self.assertEqual(encoder.embed("a b"), ModelPack(TINY_VECTOR_PACK).sentence_vector("a b"))
+
+    def test_similarity_of_a_text_with_itself_is_one(self):
+        encoder = SentenceEmbedder(TINY_VECTOR_PACK)
+        self.assertAlmostEqual(encoder.similarity("a b", "a b"), 1.0, places=6)
+
+    def test_rank_puts_the_best_match_first(self):
+        encoder = SentenceEmbedder(TINY_VECTOR_PACK)
+        # Every text in this fixture pools to the same vector, so this pins the
+        # ordering contract rather than a discriminating score.
+        ranked = encoder.rank("a b", ["a", "b"])
+        self.assertEqual([text for _, text in ranked], ["a", "b"])
+        self.assertAlmostEqual(ranked[0][0], 1.0, places=6)
+
+    def test_a_tagging_pack_is_refused(self):
+        with self.assertRaisesRegex(ValueError, "not a sentence encoder"):
+            SentenceEmbedder(TINY_PACK)
 
 
 class TinyPackTest(unittest.TestCase):

@@ -112,6 +112,15 @@ class CliTest(unittest.TestCase):
             code, _ = self.run_cli([command, "متن"])
             self.assertEqual(code, 1, command)
 
+    def test_score_requires_pack_and_two_texts(self):
+        """`score` follows the same explicit `--pack` rule as the tag commands."""
+        code, _ = self.run_cli(["score", "query", "passage"])
+        self.assertEqual(code, 1)
+        # argparse owns the two-positional grammar, so a wrong count is exit 2.
+        with self.assertRaises(SystemExit) as caught:
+            self.run_cli(["score", "only-one"])
+        self.assertEqual(caught.exception.code, 2)
+
     def test_a_byte_order_mark_on_stdin_is_ignored(self):
         """`utf-8` keeps the BOM as part of the first word, so `rishe date` failed."""
         result = subprocess.run(

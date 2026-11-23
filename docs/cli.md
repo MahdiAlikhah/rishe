@@ -179,6 +179,23 @@ cache. A query string or fragment is dropped: `…/fa.vec?download=true` is cach
 `fa.vec`. A task pack is verified against the registry manifest's own digests, so
 `--sha256` is refused for a pack name instead of being ignored.
 
+### Reranking
+
+`rishe score` returns one cross-encoder relevance logit for a query/passage pair.
+Higher is more relevant; the value is only comparable within one pack, so use it
+to order candidates rather than to judge a passage on its own.
+
+```bash
+rishe hub pull rishe-rerank-mmarco-minilmv2    # 130 MB, Apache 2.0
+rishe score --pack "$(rishe hub path rishe-rerank-mmarco-minilmv2)" \
+  "پایتخت ایران کجاست" "تهران پایتخت ایران است"
+# 6.966631
+```
+
+Both texts are required: a wrong count is a usage error (exit 2) on every build,
+including one compiled without the `models` feature. `--json` emits
+`{"score": ...}`.
+
 ## JSON-lines server
 
 `rishe serve` reads one JSON object per line from stdin and writes one JSON

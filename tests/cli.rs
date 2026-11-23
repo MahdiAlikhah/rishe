@@ -710,3 +710,73 @@ fn hub_info_and_verify_report_a_missing_model_differently() {
     assert_eq!(unknown.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&unknown.stderr).contains("unknown model or pack"));
 }
+
+#[test]
+fn score_rejects_a_wrong_number_of_texts() {
+    // A usage error must not depend on the build: without `models` this used to
+    // be reachable only as a runtime error, and with `models` the packs would
+    // load before the count was checked.
+    for texts in [vec!["only-a-query"], vec!["a", "b", "c"]] {
+        let output = rishe()
+            .arg("score")
+            .args(&texts)
+            .output()
+            .expect("run rishe");
+        assert_eq!(output.status.code(), Some(2), "for {texts:?}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("exactly two texts"),
+            "for {texts:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
+#[cfg(feature = "models")]
+fn score_reports_a_missing_pack() {
+    let output = rishe()
+        .args(["score", "query", "passage"])
+        .output()
+        .expect("run rishe");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("--pack"),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+#[cfg(feature = "models")]
+fn score_survives_a_hostile_pack_argument() {
+    // `score` loads the path straight from the command line, so a missing,
+    // non-directory or wrong-task path must be an error rather than a panic or
+    // a hang. The empty-string pair is checked too: the pair template still
+    // wraps empty text in separators, so it used to score.
+    let scratch = ScratchDir::new("score-hostile");
+    let empty = scratch.path().join("empty-pack");
+    std::fs::create_dir_all(&empty).expect("create empty pack");
+    let a_file = scratch.path().join("not-a-dir");
+    std::fs::write(&a_file, b"x").expect("write file");
+    let tagging = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("tiny-pack");
+
+    for (label, pack, expected) in [
+        ("empty dir", &empty, "labels.json is missing"),
+        ("file, not a dir", &a_file, "not a directory"),
+        ("pos pack", &tagging, "not a reranker"),
+    ] {
+        let output = rishe()
+            .args(["score", "--pack"])
+            .arg(pack)
+            .args(["query", "passage"])
+            .output()
+            .expect("run rishe");
+        assert_eq!(output.status.code(), Some(1), "{label}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains(expected), "{label}: got {stderr}");
+        assert!(stderr.is_ascii(), "{label} leaked a panic: {stderr}");
+    }
+}

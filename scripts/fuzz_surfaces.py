@@ -274,6 +274,55 @@ def fuzz_hub(rng, cases, tmp):
     return crashes
 
 
+def fuzz_score(rng, cases, tmp):
+    """`rishe score` argument and pack-path handling.
+
+    Every case must end in a clean 1 (rejected) rather than a crash, a hang or a
+    traceback on stderr. The pack is a real path only when the case is meant to
+    reach the model; the rest point at paths that do not exist, are directories,
+    are files, or hold a wrong-task pack.
+    """
+    crashes = []
+    fixture = os.path.join(ROOT, "tests", "fixtures", "tiny-pack")
+    paths = ["", ".", "..", "/", "\\\\server\\share", "C:\\", "a" * 500,
+             os.path.join(tmp, "nope"), tmp, os.path.join(ROOT, "Cargo.toml"),
+             fixture, fixture + "/model.onnx"]
+    # A NUL cannot cross `exec` at all, so it never reaches the binary: keep the
+    # pool to bytes a real argv can carry.
+    texts = ["", "a", "\u0627", "a" * 1000, " ", "\n", "\t",
+             "-", "--pack", "\u202e", "\ufeff"]
+    for i in range(cases):
+        pick = rng.random()
+        if pick < 0.2:
+            # The argument-count grammar: nothing, one, three or more texts.
+            argv = [EXE, "score"] + [rng.choice(texts) for _ in range(rng.randint(0, 3))]
+        else:
+            pack = rng.choice(paths) if rng.random() < 0.5 else fixture
+            a, b = rng.choice(texts), rng.choice(texts)
+            if rng.random() < 0.3:
+                a = mutate(a.encode("utf-8"), rng).decode("utf-8", "replace")
+            argv = [EXE, "score", "--pack", pack, a, b]
+        if rng.random() < 0.2:
+            argv.append("--json")
+        # `mutate` can emit a NUL, which `exec` refuses before the binary is even
+        # started; `fuzz_hub` strips it for the same reason.
+        argv = [part.replace("\x00", "") for part in argv]
+        env = dict(os.environ, RISHE_HOME=tempfile.mkdtemp(dir=tmp, prefix="score-"))
+        rc, out, err = run(argv, env=env, timeout=TIMEOUT)
+        if rc == "TIMEOUT":
+            crashes.append(("score hang", argv[1:]))
+            continue
+        if rc not in (0, 1, 2):
+            crashes.append((f"score rc={rc}", argv[1:]))
+            continue
+        # A panic exits 101 and prints "panicked at"; neither is a rejection.
+        if b"panicked at" in err or b"RUST_BACKTRACE" in err:
+            crashes.append(("score panicked", argv[1:]))
+        if len(crashes) >= 3:
+            break
+    return crashes
+
+
 # A black-holed connection costs the designed 45s, so the network class is a
 # fixed small set with a real server rather than 2,000 random attempts.
 def fuzz_hub_net(rng, cases, tmp):
@@ -430,7 +479,7 @@ def main():
     parser.add_argument("--cases", type=int, default=CASES)
     parser.add_argument("--seed", type=int, default=20261120)
     parser.add_argument("--class", dest="only",
-                        choices=["serve", "embeddings", "hub", "hub-net"],
+                        choices=["serve", "embeddings", "hub", "hub-net", "score"],
                         help="run one class only")
     parser.add_argument("--selftest", action="store_true",
                         help="check the harness can detect a defect, then exit")
@@ -448,6 +497,7 @@ def main():
         ("embeddings", lambda r, n, t: fuzz_embeddings(r, n, t)),
         ("hub", lambda r, n, t: fuzz_hub(r, n, t)),
         ("hub-net", lambda r, n, t: fuzz_hub_net(r, n, t)),
+        ("score", lambda r, n, t: fuzz_score(r, n, t)),
     ]
     if args.only:
         classes = [c for c in classes if c[0] == args.only]

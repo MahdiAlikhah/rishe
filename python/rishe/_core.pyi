@@ -191,6 +191,14 @@ class ModelPack:
         degenerate embedding.
         """
         ...
+    def sentence_vectors(self, texts: List[str]) -> List[List[float]]:
+        """Return one L2-normalized sentence vector per text, in input order.
+
+        Only meaningful for a sentence-encoder pack (``task`` of ``sentence``).
+        Raises ValueError for a text with no tokens, for a degenerate embedding,
+        or when the pack is not a sentence encoder.
+        """
+        ...
     def score_pairs(self, query: str, passage: str) -> float:
         """Return a cross-encoder relevance logit for ``query`` and ``passage``.
 
@@ -203,6 +211,13 @@ class ModelPack:
 
         Raises ValueError for a pair with no tokens or when the model returns
         nothing.
+        """
+        ...
+    def score_pairs_batch(self, pairs: List[Tuple[str, str]]) -> List[float]:
+        """Return one relevance logit per ``(query, passage)`` pair, in order.
+
+        Same contract as :meth:`score_pairs`; raises ValueError when any pair has
+        no tokens or the pack is not a reranker.
         """
         ...
     def labels(self) -> List[str]:

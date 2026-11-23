@@ -615,6 +615,14 @@ impl ModelPack {
     /// sequence would change the vector with the batch it happened to land in.
     /// The result is L2-normalised so cosine similarity is a plain dot product.
     pub fn sentence_vector(&self, text: &str) -> Result<Vec<f32>, String> {
+        // A tagging pack still returns hidden states, so pooling them yields a
+        // unit vector that looks like an embedding but means nothing.
+        if self.task != "sentence" {
+            return Err(format!(
+                "pack is {}, not a sentence encoder; it cannot produce vectors",
+                self.task
+            ));
+        }
         let cls = self
             .special_id("[CLS]", "<s>")
             .ok_or_else(|| "tokenizer has no [CLS] or <s> token".to_string())?;
@@ -675,6 +683,14 @@ impl ModelPack {
             *value /= norm;
         }
         Ok(pooled)
+    }
+
+    /// Sentence vectors for many texts, in input order.
+    pub fn sentence_vectors(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, String> {
+        texts
+            .par_iter()
+            .map(|text| self.sentence_vector(text))
+            .collect()
     }
 
     /// Score how well `passage` answers `query`, for a cross-encoder reranker.
@@ -754,6 +770,14 @@ impl ModelPack {
             return Err(format!("model returned a non-finite score: {score}"));
         }
         Ok(score)
+    }
+
+    /// Score many `(query, passage)` pairs, in input order.
+    pub fn score_pairs_batch(&self, pairs: &[(String, String)]) -> Result<Vec<f32>, String> {
+        pairs
+            .par_iter()
+            .map(|(query, passage)| self.score_pairs(query, passage))
+            .collect()
     }
 
     /// Word-level single call: tag pre-tokenized words, returning `(word, tag)`.
@@ -1616,6 +1640,31 @@ mod tests {
     }
 
     #[test]
+    fn sentence_vectors_keeps_one_vector_per_text_in_order() {
+        let (pack, dir) = tiny_vector_pack("batchorder");
+        let texts = vec!["a b".to_string(), "a".to_string()];
+        let vectors = pack.sentence_vectors(&texts).expect("sentence vectors");
+        assert_eq!(vectors.len(), texts.len());
+        assert_eq!(vectors[0], pack.sentence_vector("a b").unwrap());
+        assert_eq!(vectors[1], pack.sentence_vector("a").unwrap());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn sentence_vector_refuses_a_pack_that_is_not_an_encoder() {
+        // A POS pack returns hidden states too, so pooling them produced a
+        // unit-length vector that looked like an embedding and meant nothing.
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/tiny-pack");
+        let pack = ModelPack::load(&path).expect("load tiny pack");
+        let error = match pack.sentence_vector("good bad") {
+            Ok(vector) => panic!("a pos pack should not embed, got {vector:?}"),
+            Err(error) => error,
+        };
+        assert!(error.contains("not a sentence encoder"), "got: {error}");
+    }
+
+    #[test]
     fn a_two_input_pack_never_gets_a_third_tensor() {
         // The taggers feed two tensors. Adding a segment input to a 2-input
         // model would break every existing pack, so the flag is what keeps them
@@ -1645,6 +1694,22 @@ mod tests {
             Err(error) => error,
         };
         assert!(error.contains("not a reranker"), "got: {error}");
+    }
+
+    #[test]
+    fn score_pairs_batch_keeps_one_score_per_pair_in_order() {
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/tiny-pack");
+        let pack = ModelPack::load(&path).expect("load tiny pack");
+        // A tagger cannot score, so the batch form must fail rather than skip the
+        // bad pair and return a shorter list.
+        let pairs = vec![
+            ("good".to_string(), "bad".to_string()),
+            ("bad".to_string(), "good".to_string()),
+        ];
+        assert!(pack.score_pairs_batch(&pairs).is_err());
+        // An empty batch is empty, not an error.
+        assert_eq!(pack.score_pairs_batch(&[]).unwrap(), Vec::<f32>::new());
     }
 
     #[test]

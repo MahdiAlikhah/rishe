@@ -39,6 +39,7 @@ from .compat import (
     WordTokenizer,
 )
 from .corpora import ConlluReader, PeymaReader, PlainTextReader, Sentence, Token
+from .sentence import SentenceEmbedder
 
 __all__ = [
     "__version__",
@@ -48,6 +49,7 @@ __all__ = [
     "parse_date",
     "Embeddings",
     "ModelPack",
+    "SentenceEmbedder",
     "TaggedToken",
     "Entity",
     "Dependency",

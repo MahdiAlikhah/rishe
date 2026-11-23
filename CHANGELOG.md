@@ -9,6 +9,37 @@ in the pack manifest and on the model repository.
 
 ## [Unreleased]
 
+## [1.0.9] - 2026-11-23
+
+### Added
+
+- `SentenceEmbedder`, a Python wrapper over a sentence-encoder pack with
+  `embed`, `embed_batch`, `similarity` and `rank`. It refuses a pack whose task
+  is not `sentence`, so a tagger cannot be pooled into a vector that looks like
+  an embedding but means nothing.
+- `ModelPack::sentence_vectors` and `ModelPack::score_pairs_batch` (Rust and
+  Python) score or embed many inputs at once and keep input order. Both run over
+  the existing single-item call, so they cannot drift from it.
+- `rishe score <query> <passage> --pack <dir>`, in both the Rust binary and the
+  Python CLI, with `--json` emitting `{"score": ...}`. A wrong argument count is
+  a usage error (exit 2) on every build, including one compiled without `models`.
+  Fuzzed as a new harness class before shipping: 1,800 cases over four seeds, no
+  panic or hang.
+
+### Fixed
+
+- `ModelPack::sentence_vector` now rejects a pack that is not a sentence encoder
+  instead of pooling its hidden states. A POS pack returns hidden states too, so
+  the old code produced a unit-length vector that was indistinguishable from a
+  real embedding and meant nothing.
+
+### Docs
+
+- `docs/STABILITY.md` now separates additive names that nobody must adopt (a
+  patch) from Cargo features and aliases that land in the resolved build (a
+  minor). The table previously put every addition under minor, which the `1.0.7`
+  and `1.0.8` releases had not followed.
+
 ## [1.0.8] - 2026-11-22
 
 ### Added

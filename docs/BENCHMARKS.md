@@ -149,7 +149,9 @@ the gap to DecompAtt without a single new parameter. A wider offline feature swe
 reached 0.6074 and the Rust method alone as a single extra feature gave 0.5908, so
 treat ~0.60 as the plateau for this approach, not a step on the way to 0.71: the
 remaining gap is word order, and static vectors cannot represent it. Beating
-0.6662 still needs a contextual encoder (P1 in `training/ROADMAP.md`).
+0.6662 needs a contextual encoder; the shipped `rishe-vector-e5-small-fa` pack is
+one, and the paragraph below measures it. No encoder is trained here — the P1
+owned-backbone goal was closed as won't-do on the evidence below.
 
 Contextual encoders were measured on the same split and protocol: e5-base
 (multilingual, MIT) frozen at 0.6170 raw and **0.6419** with the documented
