@@ -9,6 +9,17 @@ in the pack manifest and on the model repository.
 
 ## [Unreleased]
 
+### Added
+
+- `scripts/benchmark_retrieval.py` measures the shipped packs on MIRACL fa dev,
+  the retrieval task the sentence-encoder pack exists for, so the documented
+  nDCG@10 and recall are reproducible instead of asserted. Passage encoding is
+  cached, because a 2.2M-passage corpus takes ~36 h single-threaded, and both
+  rows are filled in one corpus pass. It warns when judged documents are missing
+  from the cache, since that floors the score for a reason unrelated to the
+  model. `--selftest` checks the metrics against hand-computed values, and CI
+  runs it.
+
 ## [1.0.9] - 2026-11-23
 
 ### Added

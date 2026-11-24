@@ -175,6 +175,14 @@ cannot be a missing-corpus artefact. Both systems were measured through the
 **installed package** (`Embeddings(hub.path(...))` and
 `ModelPack(hub.path(...)).sentence_vector()`), not a reimplementation.
 
+Reproduce with `python scripts/benchmark_retrieval.py` (fetches the queries and
+qrels on first run, ~2 MiB). It needs a passage cache, because encoding 2.2M
+passages costs ~36 h single-threaded on CPU at 58 ms/passage: build one once
+with `--encode`, then every scoring run reads it back in seconds. Both rows are
+filled in a **single** corpus pass, and the script warns when the cache is
+missing judged documents, since that floors the score for a reason unrelated to
+the model. `--limit 5000` is a smoke run that fits on a laptop.
+
 | system | nDCG@10 | R@10 | R@100 | download |
 |---|---|---|---|---|
 | `rishe-embed-fa-300-v2` (static word vectors) | 0.0804 | 0.1227 | 0.3155 | 42 MB |

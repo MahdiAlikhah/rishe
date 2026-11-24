@@ -15,10 +15,10 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # The fuzz harness ships as a tool, so a change that silently makes it stop
-  # detecting defects must fail here rather than pass green while testing
-  # nothing. The selftest feeds known-bad inputs through the real detectors and
-  # needs no built binary, so it costs seconds.
+  # The fuzz harness and the retrieval metrics ship as tools, so a change that
+  # silently makes them stop detecting defects must fail here rather than pass
+  # green while testing nothing. Both selftests feed known-bad inputs through the
+  # real detectors and need no built binary or corpus, so they cost seconds.
   harness-selftest:
     name: fuzz harness selftest
     runs-on: ubuntu-24.04
@@ -28,6 +28,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: python scripts/fuzz_surfaces.py --selftest
+      - run: pip install numpy && python scripts/benchmark_retrieval.py --selftest
 
   rust:
     name: rust (${{ matrix.os }})
