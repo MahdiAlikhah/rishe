@@ -222,6 +222,9 @@ impl Pipeline {
 
     /// Load a pack for `task` (`pos`, `ner`, `ezafe`, `depparse`), erroring when its
     /// task does not match.
+    ///
+    /// The pack may be single-task or merged. A merged pack holds several heads in
+    /// one graph, and `task` picks which one to use.
     #[cfg(feature = "models")]
     pub fn load_pack(
         &mut self,
@@ -229,7 +232,7 @@ impl Pipeline {
         path: impl AsRef<std::path::Path>,
     ) -> Result<(), String> {
         let path = path.as_ref();
-        let pack = models::ModelPack::load(path)?;
+        let pack = models::ModelPack::load_task(path, Some(task))?;
         if pack.task() != task {
             return Err(format!(
                 "pack at {} is {}, expected {task}",
@@ -1331,8 +1334,12 @@ mod py_bindings {
     #[pymethods]
     impl models::ModelPack {
         /// Python constructor: loads a pack directory.
+        ///
+        /// `task` selects a head from a merged pack. It is optional so every
+        /// existing single-task pack keeps working with `ModelPack(path)`.
         #[new]
-        pub fn py_new(py: Python<'_>, path: PathBuf) -> PyResult<Self> {
+        #[pyo3(signature = (path, task=None))]
+        pub fn py_new(py: Python<'_>, path: PathBuf, task: Option<&str>) -> PyResult<Self> {
             // `docs/API_CONVENTIONS.md` promises FileNotFoundError for a missing
             // pack; a missing directory used to be a ValueError like any other
             // bad pack, so `except FileNotFoundError` never fired.
@@ -1342,7 +1349,7 @@ mod py_bindings {
                     path.display()
                 )));
             }
-            py.allow_threads(|| Self::load(path))
+            py.allow_threads(|| Self::load_task(path, task))
                 .map_err(pyo3::exceptions::PyValueError::new_err)
         }
 

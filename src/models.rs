@@ -293,6 +293,11 @@ fn flush_entity(current: &mut Option<(String, usize, usize, String)>, entities: 
 }
 
 /// A single task pack: tokenizer, labels and ONNX model.
+///
+/// A *merged* pack holds one shared backbone with several heads and one graph
+/// that returns several outputs. Such a pack is loaded per task: the requested
+/// head supplies the labels, the output index and `max_len`, so everything above
+/// this struct sees an ordinary single-task pack.
 #[cfg_attr(feature = "python", pyo3::pyclass(frozen))]
 pub struct ModelPack {
     task: String,
@@ -300,6 +305,12 @@ pub struct ModelPack {
     max_len: usize,
     tokenizer: ModelTokenizer,
     runnable: Runnable,
+    /// Which graph output holds this task's logits.
+    ///
+    /// Always 0 for a single-task pack, which is every pack published before
+    /// merged packs existed. A merged pack names one output per head, because
+    /// `outputs.first()` would otherwise tag every task with the POS head.
+    output: usize,
     /// Whether the model takes `token_type_ids` as a third input.
     ///
     /// Most packs here take `(input_ids, attention_mask)`. The Hugging Face
@@ -315,7 +326,19 @@ type EncodedWords = (Vec<i64>, Vec<usize>, Vec<String>, usize);
 impl ModelPack {
     /// Load a pack directory holding `model.onnx`, `tokenizer.json` and
     /// `labels.json`; errors on a missing or malformed file.
+    ///
+    /// This loads a single-task pack. A merged pack, which holds several heads in
+    /// one graph, is loaded with [`ModelPack::load_task`].
     pub fn load(path: impl AsRef<Path>) -> Result<Self, String> {
+        Self::load_task(path, None)
+    }
+
+    /// Load `task` from a pack, which may be a single-task pack or a merged one.
+    ///
+    /// `task` of `None` means "the pack's only task". For a merged pack it is
+    /// required, because one graph holds several heads and there is no sensible
+    /// default: picking one would silently tag every task with another's head.
+    pub fn load_task(path: impl AsRef<Path>, task: Option<&str>) -> Result<Self, String> {
         let path = path.as_ref();
         if !path.is_dir() {
             return Err(format!("model pack is not a directory: {}", path.display()));
@@ -339,8 +362,57 @@ impl ModelPack {
                 .map_err(|error| format!("cannot read {}: {error}", labels_path.display()))?,
         )
         .map_err(|error| format!("cannot parse {}: {error}", labels_path.display()))?;
+
+        // Two pack layouts share this file.
+        //
+        // Single-task, which every pack published before merged packs used:
+        //   { "task": "pos", "labels": [...], "max_len": 192 }
+        //
+        // Merged, one backbone with several heads in one graph:
+        //   { "pos":   { "labels": [...], "max_len": 192, "output": 0 },
+        //     "ner":   { "labels": [...], "max_len": 192, "output": 1 }, ... }
+        //
+        // The merged form names its `output` explicitly rather than relying on key
+        // order: the JSON object arrives with sorted keys, so position in the file
+        // says nothing about position in the graph, and guessing would tag every
+        // task with whichever head happened to sort first.
+        //
+        // A single-task pack always declares `task`, even the sentence pack, which
+        // has no labels. Requiring both keys to be absent keeps a malformed
+        // single-task pack reporting "has no labels array" instead of being
+        // mistaken for a merged one and listing its own keys as heads.
+        let merged = metadata.is_object()
+            && metadata.get("labels").is_none()
+            && metadata.get("task").is_none();
+        let selected = if merged {
+            let heads = metadata.as_object().expect("checked is_object above");
+            let wanted = match task {
+                Some(task) => task,
+                None => {
+                    let mut names: Vec<&str> = heads.keys().map(String::as_str).collect();
+                    names.sort_unstable();
+                    return Err(format!(
+                        "{} is a merged pack holding several heads ({}); pass the task to load",
+                        labels_path.display(),
+                        names.join(", ")
+                    ));
+                }
+            };
+            heads.get(wanted).cloned().ok_or_else(|| {
+                let mut names: Vec<&str> = heads.keys().map(String::as_str).collect();
+                names.sort_unstable();
+                format!(
+                    "{} has no {wanted} head; it holds {}",
+                    labels_path.display(),
+                    names.join(", ")
+                )
+            })?
+        } else {
+            metadata.clone()
+        };
+
         let mut non_string_label = None;
-        let labels: Vec<String> = metadata
+        let labels: Vec<String> = selected
             .get("labels")
             .and_then(|value| value.as_array())
             .ok_or_else(|| format!("{} has no labels array", labels_path.display()))?
@@ -365,7 +437,7 @@ impl ModelPack {
         if labels.is_empty() {
             // A sentence encoder produces a vector, not a class, so it has no
             // labels to name. Every tagging task still needs them.
-            let is_sentence = metadata
+            let is_sentence = selected
                 .get("task")
                 .and_then(|value| value.as_str())
                 .is_some_and(|task| task == "sentence");
@@ -373,14 +445,39 @@ impl ModelPack {
                 return Err(format!("{} has no labels", labels_path.display()));
             }
         }
-        let task = metadata
-            .get("task")
-            .and_then(|value| value.as_str())
-            .unwrap_or_default()
-            .to_owned();
+        let task = match selected.get("task").and_then(|value| value.as_str()) {
+            Some(task) => task.to_owned(),
+            // A merged pack's head entries need not repeat their own name; the key
+            // they are stored under is the name.
+            None if merged => task.unwrap_or_default().to_owned(),
+            None => String::new(),
+        };
+        // Which graph output holds this head's logits. Absent for every
+        // single-task pack, where 0 is also what `outputs.first()` returned. A
+        // merged pack must state it, because its graph returns several heads and
+        // there is no way to tell them apart by position alone.
+        let output = match selected.get("output") {
+            None if merged => {
+                return Err(format!(
+                    "{} has a {task} head but no output index; a merged pack must \
+                     name which graph output holds each head",
+                    labels_path.display()
+                ))
+            }
+            None => 0,
+            Some(value) => match value.as_u64() {
+                Some(value) => value as usize,
+                None => {
+                    return Err(format!(
+                        "invalid output {value} in {}; expected a non-negative integer",
+                        labels_path.display()
+                    ))
+                }
+            },
+        };
         // `as_u64` rejects `16.0`, `"16"`, `-5` and `null` by returning `None`,
         // which then silently became the 192 default and skipped the range check.
-        let max_len = match metadata.get("max_len") {
+        let max_len = match selected.get("max_len") {
             None => 192,
             Some(value) => match value.as_u64() {
                 Some(value) => value as usize,
@@ -430,6 +527,18 @@ impl ModelPack {
         let inputs = runnable
             .input_count()
             .map_err(|error| format!("cannot read input count: {error}"))?;
+        // Catch a pack whose `output` index points past the end of the graph here,
+        // where the pack path is still known, rather than at the first inference.
+        let outputs = runnable
+            .output_count()
+            .map_err(|error| format!("cannot read output count: {error}"))?;
+        if output >= outputs {
+            return Err(format!(
+                "{} asks for output {output} but {} has {outputs} output(s)",
+                labels_path.display(),
+                model_path.display()
+            ));
+        }
 
         Ok(Self {
             task,
@@ -437,6 +546,7 @@ impl ModelPack {
             max_len,
             tokenizer,
             runnable,
+            output,
             needs_token_type_ids: inputs == 3,
         })
     }
@@ -449,6 +559,14 @@ impl ModelPack {
     /// Label names in model output order.
     pub fn labels(&self) -> &[String] {
         &self.labels
+    }
+
+    /// Which output of the graph holds this pack's logits.
+    ///
+    /// `0` for every single-task pack. A merged pack names one output per head so
+    /// each task reads its own logits out of the shared graph.
+    pub fn output_index(&self) -> usize {
+        self.output
     }
 
     /// Maximum token count the pack accepts.
@@ -827,8 +945,8 @@ impl ModelPack {
             .run([input_ids, attention_mask])
             .map_err(|error| format!("inference failed: {error}"))?;
         let logits = outputs
-            .first()
-            .ok_or_else(|| "model returned no outputs".to_string())?
+            .get(self.output)
+            .ok_or_else(|| format!("model returned no output {}", self.output))?
             .ndarray::<f32>()
             .map_err(|error| format!("cannot read logits: {error}"))?;
 
@@ -996,6 +1114,9 @@ impl ModelPack {
                 head_indices,
             ])
             .map_err(|error| format!("inference failed: {error}"))?;
+        // Depparse graphs return arcs first and relation logits second, so this
+        // reads output 1 while `self.output` (used by the taggers) stays 0. The
+        // two are separate outputs of one graph, not a head selection.
         let relations = outputs
             .get(1)
             .ok_or_else(|| "model returned no relation logits".to_string())?
@@ -1500,6 +1621,8 @@ mod tests {
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/tiny-pack");
         let pack = ModelPack::load(&path).expect("load tiny pack");
         assert_eq!(pack.task(), "pos");
+        // A single-task pack has one output, so it reads output 0 as it always has.
+        assert_eq!(pack.output_index(), 0);
         assert_eq!(
             pack.tags("good bad")
                 .unwrap()
@@ -1511,6 +1634,141 @@ mod tests {
                 ("bad".to_string(), "B".to_string()),
             ]
         );
+    }
+
+    #[test]
+    fn a_merged_pack_loads_one_head_at_a_time() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/merged-pack");
+        let pos = ModelPack::load_task(&path, Some("pos")).expect("load merged pos head");
+        let ner = ModelPack::load_task(&path, Some("ner")).expect("load merged ner head");
+        assert_eq!(pos.task(), "pos");
+        assert_eq!(ner.task(), "ner");
+        // Each head reads its own graph output.
+        assert_eq!(pos.output_index(), 0);
+        assert_eq!(ner.output_index(), 1);
+        assert_eq!(pos.labels(), ["A", "B", "C"]);
+        assert_eq!(ner.labels(), ["X", "Y"]);
+        // Both tag the same words, so a head reading the wrong output shows up as
+        // a label outside its own list rather than as a subtle difference.
+        for token in pos.tags("good bad").expect("pos head tags") {
+            assert!(pos.labels().contains(&token.tag), "{}", token.tag);
+        }
+        for token in ner.tags("good bad").expect("ner head tags") {
+            assert!(ner.labels().contains(&token.tag), "{}", token.tag);
+        }
+    }
+
+    #[test]
+    fn a_single_task_pack_missing_labels_is_not_mistaken_for_a_merged_one() {
+        // A merged pack has no top-level `task` or `labels`; a broken single-task
+        // pack has a `task` but no `labels`. Without that distinction the second
+        // was reported as "a merged pack holding several heads (task)", which
+        // sends the reader looking for a heads map that was never there.
+        let source =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/tiny-pack");
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("rishe-no-labels-key-pack");
+        std::fs::create_dir_all(&dir).unwrap();
+        for name in ["model.onnx", "tokenizer.json"] {
+            std::fs::copy(source.join(name), dir.join(name)).unwrap();
+        }
+        std::fs::write(dir.join("labels.json"), r#"{"task":"pos","max_len":16}"#).unwrap();
+
+        let error = match ModelPack::load(&dir) {
+            Ok(_) => panic!("a pos pack with no labels array must be refused"),
+            Err(error) => error,
+        };
+        assert!(error.contains("has no labels array"), "got: {error}");
+        assert!(!error.contains("merged pack"), "got: {error}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_merged_pack_needs_a_task() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/merged-pack");
+        let error = match ModelPack::load(&path) {
+            Ok(pack) => panic!(
+                "a merged pack must not load without a task, got {}",
+                pack.task()
+            ),
+            Err(error) => error,
+        };
+        // The message names the heads so the caller knows what to ask for.
+        assert!(error.contains("merged pack"), "{error}");
+        assert!(error.contains("ner") && error.contains("pos"), "{error}");
+    }
+
+    #[test]
+    fn a_merged_pack_rejects_an_unknown_task() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/merged-pack");
+        let error = match ModelPack::load_task(&path, Some("ezafe")) {
+            Ok(_) => panic!("a pack with no ezafe head must not load one"),
+            Err(error) => error,
+        };
+        assert!(error.contains("no ezafe head"), "{error}");
+        assert!(error.contains("ner") && error.contains("pos"), "{error}");
+    }
+
+    #[test]
+    fn a_merged_pack_requires_an_output_index() {
+        // Without `output` a merged head cannot be told from any other, so the
+        // pack is refused rather than silently reading the first output.
+        let source =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/merged-pack");
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("rishe-merged-no-output");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::copy(source.join("model.onnx"), dir.join("model.onnx")).unwrap();
+        std::fs::copy(source.join("tokenizer.json"), dir.join("tokenizer.json")).unwrap();
+        std::fs::write(
+            dir.join("labels.json"),
+            r#"{"pos":{"labels":["A","B","C"],"max_len":16}}"#,
+        )
+        .unwrap();
+
+        let error = match ModelPack::load_task(&dir, Some("pos")) {
+            Ok(_) => panic!("a merged head with no output index must not load"),
+            Err(error) => error,
+        };
+        assert!(error.contains("no output index"), "{error}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_merged_pack_rejects_an_output_past_the_graph() {
+        let source =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/merged-pack");
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("rishe-merged-bad-output");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::copy(source.join("model.onnx"), dir.join("model.onnx")).unwrap();
+        std::fs::copy(source.join("tokenizer.json"), dir.join("tokenizer.json")).unwrap();
+        std::fs::write(
+            dir.join("labels.json"),
+            r#"{"pos":{"labels":["A","B","C"],"max_len":16,"output":7}}"#,
+        )
+        .unwrap();
+
+        let error = match ModelPack::load_task(&dir, Some("pos")) {
+            Ok(_) => panic!("an output index past the graph must not load"),
+            Err(error) => error,
+        };
+        assert!(error.contains("asks for output 7"), "{error}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_single_task_pack_ignores_the_task_argument() {
+        // `Pipeline::load_pack` passes the task on every load. The published
+        // single-task packs have no heads map, so the argument must not make them
+        // fail: the pack's own `task` field is the authority.
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/tiny-pack");
+        let pack = ModelPack::load_task(&path, Some("pos")).expect("load tiny pack by task");
+        assert_eq!(pack.task(), "pos");
+        assert_eq!(pack.output_index(), 0);
     }
 
     #[test]

@@ -9,8 +9,34 @@ in the pack manifest and on the model repository.
 
 ## [Unreleased]
 
+## [1.0.10] - 2026-11-25
+
 ### Added
 
+- Merged model packs: one ALBERT backbone with POS, NER and ezafe heads in a
+  single graph, served from one directory instead of three. `labels.json` gains
+  a per-head layout — `{"pos": {"labels": [...], "max_len": 192, "output": 0},
+  "ner": {...}, "ezafe": {...}}` — and each head names which graph output holds
+  its logits. The merged pack is 45.07 MiB against 135.06 MiB for the three
+  separate packs (66.6% smaller), and every task stays within 0.02 F1 of its
+  published number: NER and PerDT actually improve (+0.0020 and +0.0016), while
+  Seraji is 0.0085 and ezafe 0.0152 lower. The separate per-task packs are
+  unchanged and still downloadable for maximum per-task accuracy.
+- `ModelPack::load_task` and `ModelPack::output_index` (Rust), and an optional
+  `task` argument to the Python constructor. A merged pack refuses to load
+  without a task, because one graph holds several heads and guessing would tag
+  every task with whichever head happened to come first. A merged head with no
+  `output` index, or one pointing past the end of the graph, is refused with the
+  pack path rather than failing at the first inference.
+- `merged-compact`, the merged pack itself, published to the model repository as
+  `merged/merged-compact/` and registered for `rishe hub pull merged-compact`.
+  It is registered as a standalone pack pinned to its own manifest digest, so the
+  shared registry manifest and its compiled-in digest are untouched and existing
+  installs keep pulling the four single-task packs as before. It is one registry
+  name, not one per head: the cache stores each pack name in its own directory, so
+  three names would have downloaded the 45 MiB backbone three times, which is
+  exactly what merging it avoids. `hub pull` was run against the published bytes
+  and every file matched its manifest digest.
 - `scripts/benchmark_retrieval.py` measures the shipped packs on MIRACL fa dev,
   the retrieval task the sentence-encoder pack exists for, so the documented
   nDCG@10 and recall are reproducible instead of asserted. Passage encoding is
@@ -19,6 +45,13 @@ in the pack manifest and on the model repository.
   from the cache, since that floors the score for a reason unrelated to the
   model. `--selftest` checks the metrics against hand-computed values, and CI
   runs it.
+
+### Changed
+
+- Loading a pack now selects the task's head from the graph instead of always
+  reading the first output. Single-task packs, which are every pack published
+  before merged packs, still load exactly as before: they read output 0 and need
+  no new field.
 
 ## [1.0.9] - 2026-11-23
 

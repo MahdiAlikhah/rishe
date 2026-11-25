@@ -54,6 +54,17 @@ const STANDALONE_PACKS: &[(&str, &str, &str, &str)] = &[
         "https://huggingface.co/MahdiAlikhah/rishe-models/resolve/main/rerank/mmarco-minilmv2",
         "0997d3f3e97c25de266ee4eaf48189aa3ac1a6be4a728e3095b71810552ccb23",
     ),
+    // One pack, three heads (POS, NER, ezafe) over a shared backbone. The task is
+    // `merged`, a pack identity rather than a single head: the caller picks the
+    // head when loading. It must stay one name, because the cache stores each pack
+    // name in its own directory, so a name per head would download the 45 MiB
+    // backbone three times and defeat the point of merging them.
+    (
+        "merged-compact",
+        "merged",
+        "https://huggingface.co/MahdiAlikhah/rishe-models/resolve/main/merged/merged-compact",
+        "820a5d37fda540eeea672cf7f484b809a4fc696b2440ee0fdf83fc6d98ce60b3",
+    ),
 ];
 const PACK_BASE: &str = "https://huggingface.co/MahdiAlikhah/rishe-models/resolve/main";
 const PACK_MANIFEST_SHA256: &str =

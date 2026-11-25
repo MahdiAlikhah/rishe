@@ -1,0 +1,19 @@
+{
+  "pos": {
+    "labels": [
+      "A",
+      "B",
+      "C"
+    ],
+    "max_len": 16,
+    "output": 0
+  },
+  "ner": {
+    "labels": [
+      "X",
+      "Y"
+    ],
+    "max_len": 16,
+    "output": 1
+  }
+}
