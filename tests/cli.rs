@@ -1,5 +1,6 @@
 #![cfg(feature = "hub")]
 
+use std::path::Path;
 use std::process::Command;
 
 fn rishe() -> Command {
@@ -438,9 +439,18 @@ fn convert_refuses_to_overwrite_its_own_input() {
         "the input file was modified"
     );
 
-    // The same file spelled differently is still the same file.
-    let dotted = format!("{model}/../model.vec");
+    // The same file spelled differently is still the same file. A `.` segment is
+    // portable; a `file/../file` spelling is not, because Linux refuses to
+    // canonicalise through a regular file while Windows normalises it lexically.
+    let dotted = format!(
+        "./{}",
+        Path::new(&model)
+            .file_name()
+            .expect("file name")
+            .to_string_lossy()
+    );
     let output = rishe()
+        .current_dir(Path::new(&model).parent().expect("parent"))
         .args(["convert", &model, &dotted])
         .output()
         .expect("run rishe");
