@@ -30,6 +30,29 @@ type CharMap = HashMap<char, &'static str, BuildHasherDefault<CharHasher>>;
 
 const ZWNJ: char = '\u{200C}';
 
+/// Words that cannot take a suffix of their own: prepositions, postpositions,
+/// conjunctions and the copula.
+///
+/// A closed list, not `stopwords::is_stopword`, because that list is frequency
+/// based and also holds `بزرگ`, which does take `تر`. Joined particles are not
+/// words: `از ها` -> `ازها` and `در تر` -> `درتر` changed what the sentence said.
+/// `این`/`آن` are absent on purpose: `این‌ها`/`آن‌ها` are the standard spellings.
+const PARTICLES: &[&str] = &["از", "را", "در", "با", "به", "بر", "تا", "و", "که", "برای"];
+
+fn is_particle(word: &str) -> bool {
+    PARTICLES.contains(&word)
+}
+
+/// Whether the word at the end of `text` is a particle, so it cannot take a suffix.
+pub(crate) fn ends_with_particle(text: &str) -> bool {
+    let start = text
+        .char_indices()
+        .rev()
+        .find(|(_, ch)| !ch.is_alphabetic())
+        .map_or(0, |(index, ch)| index + ch.len_utf8());
+    is_particle(&text[start..])
+}
+
 pub(crate) const PERSIAN_LETTERS: &str = "آابپتثجچحخدذرزژسشصضطظعغفقکگلمنوهیءؤۀأئ";
 pub(crate) const NON_LEFT_JOINERS: &str = "دۀذاأآورژز";
 const SINGLE_PUNCT: &str = "…،:.؟!؛";
@@ -900,6 +923,12 @@ fn try_join_words(prev: &str, next: &str, morph: &MorphologyEngine) -> Option<St
         }
     }
 
+    // A particle bases no suffix. The noun lexicon lists `از`, `را` and `با`
+    // (upstream tags them as nouns too), so `is_known_noun` passed and the join
+    // made a word out of a preposition and the next particle: `از ها` -> `ازها`.
+    if is_particle(prev) {
+        return None;
+    }
     let candidate = join_parts(prev, next_core);
     if next_core == "تر" {
         return (morph.is_adjective(prev) && Inflector::comparative(prev) == candidate)
@@ -1569,6 +1598,28 @@ mod tests {
         // A lone `\n` is untouched, and CRLF drops the CR instead of adding a break.
         assert_eq!(orthographic_spacing("a\nb"), "a\nb");
         assert_eq!(orthographic_spacing("a\r\n\r\nb"), "a\n\nb");
+    }
+
+    #[test]
+    fn a_particle_does_not_base_a_suffix() {
+        let morph = MorphologyEngine::new();
+        // A preposition plus the particle after it is two words, not one.
+        for text in [
+            "از ها",
+            "را ها",
+            "در تر",
+            "با ها",
+            "به ها",
+            "بر ها",
+            "تا ها",
+        ] {
+            assert_eq!(word_spacing(text, &morph), text, "{text:?}");
+        }
+        // Content words still take their suffix, so the guard is not "no joins".
+        assert_eq!(word_spacing("کتاب ها", &morph), "کتاب\u{200c}ها");
+        assert_eq!(word_spacing("بزرگ تر", &morph), "بزرگ\u{200c}تر");
+        // `این‌ها`/`آن‌ها` are the standard spellings, so those still join.
+        assert_eq!(word_spacing("این ها", &morph), "این\u{200c}ها");
     }
 
     #[test]

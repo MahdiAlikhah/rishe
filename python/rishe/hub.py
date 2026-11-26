@@ -352,6 +352,11 @@ def pull(
 # A lock older than this was left by a process that died mid-download.
 _STALE_LOCK_SECONDS = 3600
 
+# A lock quiet for this long belongs to a dead process; mirrored by `LIVE_LOCK` in
+# src/hub.rs. A live download refreshes its lock on every chunk, so this only has
+# to exceed the 60 s read timeout, not the takeover window.
+_LIVE_LOCK_SECONDS = 120
+
 # Windows device names; mirrored by `infer_filename` in src/hub.rs.
 _WINDOWS_DEVICE_NAMES = frozenset(
     ["CON", "PRN", "AUX", "NUL"]
@@ -399,7 +404,9 @@ def unlock(name: str) -> bool:
     The lock is only taken over automatically after an hour, so an interrupted
     pull had no way to retry: ``force`` re-downloads but keeps the lock, and
     ``remove`` also drops the cached payload. A pack's lock belongs to the shared
-    manifest, which blocks every pack.
+    manifest, which blocks every pack. A lock that is still being refreshed
+    belongs to a running download and is refused: deleting it let a second
+    process append to the same ``.part`` file. Mirrors ``unlock`` in src/hub.rs.
     """
     if not is_pack(name) and name not in MODELS:
         raise ValueError(_unknown(name))
@@ -410,9 +417,18 @@ def unlock(name: str) -> bool:
         manifest = cache_dir() / "rishe-models-manifest.json"
         candidates = [cache_dir() / (name + ".lock"), Path(str(manifest) + ".lock")]
     for lock in candidates:
-        if lock.is_file():
-            lock.unlink()
-            cleared = True
+        if not lock.is_file():
+            continue
+        # `_LIVE_LOCK_SECONDS`, not `_STALE_LOCK_SECONDS`: a live download
+        # refreshes its lock every chunk, so the shorter window is enough to tell
+        # "running" from "killed", and a user waiting two minutes beats an hour.
+        if time.time() - lock.stat().st_mtime < _LIVE_LOCK_SECONDS:
+            raise RuntimeError(
+                f"a download of {name} is running; retry, or wait "
+                f"{_LIVE_LOCK_SECONDS // 60} minutes for it to count as dead"
+            )
+        lock.unlink()
+        cleared = True
     return cleared
 
 
@@ -436,6 +452,7 @@ def _download(url: str, target: Path, sha256: str, *, force: bool = False) -> Pa
 def _download_locked(url: str, target: Path, sha256: str, *, force: bool = False) -> Path:
     """The download itself; the caller holds the target's lock."""
     part = target.with_name(target.name + ".part")
+    lock = target.with_name(target.name + ".lock")
     last_error: Optional[Exception] = None
 
     for _ in range(3):
@@ -480,6 +497,17 @@ def _download_locked(url: str, target: Path, sha256: str, *, force: bool = False
                     for chunk in iter(lambda: response.read(1 << 20), b""):
                         output.write(chunk)
                         done += len(chunk)
+                        # Refresh the lock so a download longer than
+                        # `_STALE_LOCK_SECONDS` still looks alive: without this a
+                        # slow transfer lost its lock, and the next process took
+                        # it over and appended to the same `.part`. Costs one
+                        # `utime` per megabyte; failures are ignored because a
+                        # read-only filesystem only costs the takeover protection,
+                        # not the download.
+                        try:
+                            os.utime(lock, None)
+                        except OSError:
+                            pass
                         if total and sys.stderr.isatty() and done >= next_report:
                             print(
                                 f"\r  {done / 1e6:.0f}/{total / 1e6:.0f} MB "

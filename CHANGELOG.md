@@ -9,6 +9,51 @@ in the pack manifest and on the model repository.
 
 ## [Unreleased]
 
+## [1.0.11] - 2026-11-26
+
+### Fixed
+
+- `mask --maskers ""` and `--maskers ,` split to an empty list, which the engine
+  reads as "apply nothing": the document came back with every link and e-mail in
+  the clear and the command still exited 0. An empty selection is now a usage
+  error (exit 2), in both `mask` and `serve`.
+- `convert in.vec in.vec` truncated the output before reading it, destroying the
+  only copy of the input, and still printed `wrote`. Two paths that resolve to the
+  same file are now refused before anything is written.
+- Masking could invent a `<URL>`/`<EMAIL>` the input never had. The stand-ins
+  swapped in between maskers were runs of ZWNJ, a character real text contains, so
+  `non_persian` deleting the letters between two runs glued them into a third run
+  that matched a stand-in: `mask("a\u{200c}xx\u{200c}b", ["non_persian"])`
+  returned `<URL>`. The stand-in is now a Persian letter absent from both the text
+  and the caller's token, so no deletion can build one and nothing can contain
+  one.
+- A whitespace mask token ate the rest of the line: shielding the token rewrote
+  every space in the text to ZWNJ, which is not a space, so the whole-word rules
+  ran to the end of the line and `mask("x https://a.com y", ["url"], " ")`
+  returned `"x "`. A whitespace token is no longer shielded.
+- `serve --maskers url --maskers email` kept only the last name and left links
+  unmasked, while `mask` accumulated them. Both now replace the defaults once and
+  append on each repeat.
+- A capitalised link bypassed the `url` masker: `HTTPS://a.com`, `WWW.A.COM` and
+  `FTP://` were never recognised, so a privacy tool silently kept what it was
+  asked to remove. Prefix matching is now case-insensitive, and the scan runs
+  without lowercasing a copy of the document.
+- `normalize` glued a particle to the word after it, turning two words into one
+  that does not exist: `از ها` became `ازها`, `را ها` became `راها`, `در تر`
+  became `درتر`. A particle no longer bases a suffix, in both the affix rule table
+  and the morphology path. `کتاب‌ها`, `بزرگ‌تر`, `این‌ها` and `آن‌ها` still join.
+- `keywords(..., method="textrank")` dropped a content word that stood alone in
+  its sentence: `"کتاب خوب است"` returned `[]` while `rake` returned `کتاب`. A
+  word only entered the graph by pairing with a neighbour, so it is now added as a
+  node before the pair loop.
+- The Python downloader never refreshed its lock, so a transfer longer than the
+  one-hour stale window lost it and the next process took it over and appended to
+  the same `.part`. The lock is now touched on every chunk, matching the Rust
+  downloader.
+- `hub unlock` deleted whatever lock it found, including one a live download still
+  owned, which let a second process write to the same `.part`. It now refuses a
+  lock that is still being refreshed and clears only a quiet one.
+
 ## [1.0.10] - 2026-11-25
 
 ### Added

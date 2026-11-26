@@ -108,9 +108,16 @@ const URL_TRAILING: [char; 8] = [')', '،', '.', '»', ',', ';', '!', '?'];
 /// and so both agree that `(https://a.com)` is a URL followed by `)`.
 pub(crate) fn url_end(text: &str, start: usize) -> Option<usize> {
     let rest = &text[start..];
+    // Case-insensitively: `HTTPS://a.com` and `WWW.A.COM` are links a user wrote,
+    // and the masker is a privacy tool, so leaving a capitalised one in the text
+    // was a leak rather than a style choice. `get` also refuses a window that is
+    // not a char boundary, so the slice cannot panic mid-character.
     let prefix_len = URL_PREFIXES
         .iter()
-        .find(|prefix| rest.starts_with(**prefix))
+        .find(|prefix| {
+            rest.get(..prefix.len())
+                .is_some_and(|head| head.eq_ignore_ascii_case(prefix))
+        })
         .map(|prefix| prefix.len())?;
     // A URL does not start inside a word.
     if start > 0

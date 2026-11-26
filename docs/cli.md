@@ -170,7 +170,10 @@ and `hub info` report it as `partial` with the bytes already on disk, and
 `hub remove` deletes it, including a `rishe-models-manifest.json.part` left by an
 interrupted manifest download. A killed pull also leaves a `.lock` that refuses a
 retry for an hour; `hub unlock <name>` clears it without deleting the cached
-files (`--force` re-downloads but does not bypass the lock).
+files (`--force` re-downloads but does not bypass the lock). A lock that a
+running download is still refreshing is refused: deleting it would let a second
+process append to the same `.part`. A download refreshes its lock on every chunk,
+so a lock quiet for two minutes is the one `unlock` will clear.
 
 `hub pull <url>` needs a URL that ends in a plain file name, and the file lands in
 the cache directory. A URL whose last segment is empty, `.`/`..`, or that contains

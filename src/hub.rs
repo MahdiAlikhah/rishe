@@ -505,6 +505,19 @@ fn remove(name: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// A lock quiet for this long belongs to a dead process.
+///
+/// A live download refreshes its lock on every chunk and the HTTP read timeout is
+/// 60 s, so a running transfer cannot stay quiet this long: it either writes a
+/// chunk or fails and drops the lock. `unlock` used to delete whatever lock it
+/// found, so clearing one during a live pull let a second process append to the
+/// same `.part` and both then failed the checksum.
+///
+/// `unlock` has no `--force`: the wait is two minutes, not the hour the automatic
+/// takeover makes a user wait, so the escape hatch is not worth its flags.
+/// shortcut: a pull stalled in a single 1 MiB read for over 120 s can be cut off; the 60 s timeout ends it first.
+const LIVE_LOCK: Duration = Duration::from_secs(120);
+
 /// Clear a download lock left behind by a killed process.
 ///
 /// The lock is only taken over automatically after an hour, so a user whose pull
@@ -530,10 +543,21 @@ fn unlock(name: &str) -> Result<(), String> {
         targets.push(lock_path(&manifest));
     }
     for lock in targets {
-        if lock.is_file() {
-            fs::remove_file(&lock).map_err(|error| error.to_string())?;
-            cleared = true;
+        if !lock.is_file() {
+            continue;
         }
+        let age = fs::metadata(&lock)
+            .and_then(|meta| meta.modified())
+            .ok()
+            .and_then(|modified| SystemTime::now().duration_since(modified).ok());
+        if age.is_some_and(|age| age < LIVE_LOCK) {
+            return Err(format!(
+                "a download of {name} is running; retry, or wait {} minutes for it to count as dead",
+                LIVE_LOCK.as_secs() / 60
+            ));
+        }
+        fs::remove_file(&lock).map_err(|error| error.to_string())?;
+        cleared = true;
     }
     println!("{}", if cleared { "unlocked" } else { "no lock" });
     Ok(())

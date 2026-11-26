@@ -261,7 +261,12 @@ impl Normalizer {
                 .chars()
                 .next()
                 .is_none_or(|c| !c.is_alphabetic());
-            valid_before && valid_after
+            // A particle bases no suffix. The rule table is a plain pattern list,
+            // so `" ها"` matched after any word ending in a letter: `از ها` became
+            // `ازها` and `در تر` became `درتر`, gluing a preposition to the word
+            // after it and changing what the sentence says.
+            let bases_a_suffix = !crate::normalize_ops::ends_with_particle(&text[..start]);
+            valid_before && valid_after && bases_a_suffix
         }
     }
 
@@ -363,6 +368,20 @@ pub(crate) fn compose_decomposed(input: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_particle_does_not_base_an_affix() {
+        let n = Normalizer::new(NormalizerConfig::default());
+        // The rule table matched `" ها"` after any word ending in a letter, so a
+        // preposition took the particle: `از ها` -> `ازها`, which is not a word.
+        for text in ["از ها", "را ها", "با ها", "به ها", "بر ها", "تا ها"] {
+            assert_eq!(n.normalize(text), text, "{text:?}");
+        }
+        // Content words keep the suffix, and `این‌ها` is the standard spelling.
+        assert_eq!(n.normalize("کتاب ها"), "کتاب\u{200c}ها");
+        assert_eq!(n.normalize("بزرگ ها"), "بزرگ\u{200c}ها");
+        assert_eq!(n.normalize("این ها"), "این\u{200c}ها");
+    }
 
     #[test]
     fn every_ezafe_spelling_flattens_to_plain_heh() {

@@ -411,7 +411,7 @@ def _hub(args) -> int:
     elif args.hub_command == "unlock":
         try:
             cleared = hub.unlock(args.name)
-        except (OSError, ValueError) as error:
+        except (OSError, ValueError, RuntimeError) as error:
             print(error, file=sys.stderr)
             return 1
         print("unlocked" if cleared else "no lock")

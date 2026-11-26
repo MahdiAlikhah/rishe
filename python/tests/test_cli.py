@@ -4,6 +4,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -407,10 +408,26 @@ class ExitCodeContractTest(unittest.TestCase):
             lock = Path(root) / "models" / "pos-compact.lock"
             lock.parent.mkdir(parents=True, exist_ok=True)
             lock.write_bytes(b"1234 0")
+            # Old: a killed process stopped refreshing it. A fresh lock means the
+            # download is still running, and `unlock` refuses that one.
+            old = time.time() - 3600
+            os.utime(lock, (old, old))
             result = self.run_cli("hub", "unlock", "pos-compact", env=env)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(result.stdout.strip(), b"unlocked")
             self.assertFalse(lock.exists())
+
+    def test_hub_unlock_refuses_a_live_lock(self):
+        """Deleting a live lock let a second process append to the same `.part`."""
+        with tempfile.TemporaryDirectory() as root:
+            env = {"RISHE_HOME": root}
+            lock = Path(root) / "models" / "pos-compact.lock"
+            lock.parent.mkdir(parents=True, exist_ok=True)
+            lock.write_bytes(f"1234 {time.time_ns()}".encode())
+            result = self.run_cli("hub", "unlock", "pos-compact", env=env)
+            self.assert_exit(1, "hub", "unlock", "pos-compact", env=env)
+            self.assertIn(b"is running", result.stderr)
+            self.assertTrue(lock.is_file(), "the live lock was deleted")
 
     def test_hub_list_rejects_an_extra_word_like_the_rust_binary(self):
         """`hub list extra` used to be accepted here and rejected there."""

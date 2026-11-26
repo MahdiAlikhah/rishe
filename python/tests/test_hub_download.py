@@ -230,12 +230,30 @@ class DownloadTest(unittest.TestCase):
             payload.write_bytes(b"payload")
             lock = models / "rishe-embed-fa-300.vec.lock"
             lock.write_bytes(b"1234 0")
+            # A leaked lock is old: the owner died and stopped refreshing it. A
+            # fresh one belongs to a running download, which `unlock` refuses.
+            os.utime(lock, (time.time() - 3600, time.time() - 3600))
             self.assertTrue(hub.unlock("rishe-embed-fa-300"))
             self.assertFalse(lock.exists())
             self.assertTrue(payload.is_file(), "unlocking must keep the payload")
             self.assertFalse(hub.unlock("rishe-embed-fa-300"), "no lock to clear")
             with self.assertRaises(ValueError):
                 hub.unlock("not-a-model")
+
+    def test_unlock_refuses_a_lock_a_live_download_still_owns(self):
+        """Deleting a live lock let a second process append to the same `.part`."""
+        with tempfile.TemporaryDirectory() as root, mock.patch.dict(
+            os.environ, {"RISHE_HOME": root}, clear=False
+        ):
+            models = Path(root) / "models"
+            models.mkdir(parents=True)
+            (models / "rishe-embed-fa-300.vec").write_bytes(b"payload")
+            lock = models / "rishe-embed-fa-300.vec.lock"
+            lock.write_bytes(f"{os.getpid()} {time.time_ns()}".encode())
+            with self.assertRaises(RuntimeError) as raised:
+                hub.unlock("rishe-embed-fa-300")
+            self.assertIn("is running", str(raised.exception))
+            self.assertTrue(lock.is_file(), "the live lock was deleted")
 
     def test_a_foreign_lock_is_not_deleted_by_its_previous_owner(self):
         """The old download deleted whatever lock was there, including a new one."""

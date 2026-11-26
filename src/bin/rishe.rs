@@ -249,6 +249,14 @@ fn run() -> Result<(), CliError> {
         }
     }
 
+    // `--maskers ""` and `--maskers ,` used to split to an empty list, which the
+    // engine reads as "apply nothing": the document came back unmasked and the
+    // command still exited 0. An empty selection is a bad command line, not a
+    // request to mask nothing.
+    if maskers_given && options.maskers.is_empty() {
+        return Err(CliError::Usage("--maskers needs a value".to_string()));
+    }
+
     if matches!(command.as_str(), "embed" | "similar" | "similarity") {
         return embedding_command(&command, &options);
     }
@@ -416,6 +424,14 @@ fn convert(args: &[String]) -> Result<(), CliError> {
             "convert takes exactly one input and one output path".to_string(),
         ));
     }
+    // `save` truncates the output, so converting a file onto itself destroyed the
+    // only copy of the plain-text model and still printed "wrote". Compare the
+    // resolved paths, not the typed ones: `a.vec` and `./a.vec` are one file.
+    if same_file(input, output) {
+        return Err(CliError::Usage(
+            "convert cannot write over its own input; pick another output path".to_string(),
+        ));
+    }
 
     let embeddings = Embeddings::load(input)?;
     embeddings.save(output, dtype)?;
@@ -430,6 +446,18 @@ fn convert(args: &[String]) -> Result<(), CliError> {
         bytes
     );
     Ok(())
+}
+
+/// Whether two paths name the same file on disk.
+///
+/// `canonicalize` needs the file to exist. When the output does not exist yet it
+/// cannot be the input, which `load` already proved is a readable file, so
+/// "both resolve and are equal" is the whole test.
+fn same_file(input: &str, output: &str) -> bool {
+    match (std::fs::canonicalize(input), std::fs::canonicalize(output)) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
+    }
 }
 
 fn load_embeddings(model: Option<&str>) -> Result<Embeddings, String> {
@@ -486,18 +514,29 @@ fn serve(args: &[String]) -> Result<(), CliError> {
     let mut ezafe_pack = None;
     let mut depparse_pack = None;
     let mut model = None;
+    let mut maskers_given = false;
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
             "--maskers" => {
                 index += 1;
-                maskers = args
+                let value = args
                     .get(index)
-                    .ok_or_else(|| CliError::Usage("--maskers needs a value".to_string()))?
-                    .split(',')
-                    .filter(|stage| !stage.is_empty())
-                    .map(str::to_owned)
-                    .collect();
+                    .ok_or_else(|| CliError::Usage("--maskers needs a value".to_string()))?;
+                // Same rule as `run`: the first flag replaces the defaults,
+                // repeats append. Assigning per flag kept only the last name, so
+                // `--maskers url --maskers email` left links unmasked in a
+                // server, which is the one place the leak matters.
+                if !maskers_given {
+                    maskers.clear();
+                    maskers_given = true;
+                }
+                maskers.extend(
+                    value
+                        .split(',')
+                        .filter(|stage| !stage.is_empty())
+                        .map(str::to_owned),
+                );
             }
             "--mask-token" => {
                 index += 1;
@@ -558,6 +597,12 @@ fn serve(args: &[String]) -> Result<(), CliError> {
             }
         }
         index += 1;
+    }
+
+    // Same rule as `run`: an empty selection is a bad command line, not a
+    // request to serve with masking switched off.
+    if maskers_given && maskers.is_empty() {
+        return Err(CliError::Usage("--maskers needs a value".to_string()));
     }
 
     // Mutable only where the packs loop can load into it, so both feature sets

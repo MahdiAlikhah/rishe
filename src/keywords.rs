@@ -178,8 +178,14 @@ fn build_graph<'a>(
     let mut graph: BTreeMap<&'a str, BTreeMap<&'a str, f64>> = BTreeMap::new();
     for words in sentences {
         for i in 0..words.len() {
+            // Every word is a node, even with no neighbour in the window: a word
+            // only entered the graph by pairing, so a content word alone in its
+            // sentence was never a node, and the candidate loop then rejected it
+            // as unknown. `textrank("کتاب خوب است")` returned nothing while
+            // `rake` on the same text returned `کتاب`.
+            graph.entry(words[i].as_str()).or_default();
             let start = i.saturating_sub(window);
-            let end = (i + window + 1).min(words.len());
+            let end = i.saturating_add(window).saturating_add(1).min(words.len());
             for j in start..end {
                 if i == j {
                     continue;

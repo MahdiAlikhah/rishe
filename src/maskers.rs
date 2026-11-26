@@ -114,16 +114,43 @@ impl MaskOp {
     }
 }
 
-/// Stand-ins absent from `text`, one per protected string, increasing in length.
+/// Stand-ins absent from `text` and from the caller's `mask`, one per protected
+/// string.
 ///
 /// A masker only sees a string, so `html` read `<URL>` as a tag and deleted it,
 /// and `non_persian`/`punctuation` ate its letters: the placeholders have to be
-/// swapped out between stages. The stand-in must be a run of ZWNJ, because
-/// `non_persian` deletes every other non-Persian character. It must also be
-/// absent from the text: a fixed pair (this used `ژژ`/`چچ`) corrupted real words,
-/// since `چچ` is a Persian word and doubled `ژ` occurs too. Increasing length
-/// makes no run a substring of another.
-fn build_shields(text: &str, count: usize) -> Vec<String> {
+/// swapped out between stages.
+///
+/// The stand-in has to survive every masker, and no masker may be able to create
+/// one. A Persian letter that appears in neither the text nor the mask does both:
+/// `non_persian` keeps Persian letters, so it survives, and since the character is
+/// in no input, no deletion can join two of them and no inserted mask can contain
+/// one. This used a run of ZWNJ instead. ZWNJ also survives, but it was already
+/// in the text, so `non_persian` deleting the characters between two ZWNJ runs
+/// glued them into a third run that matched a stand-in, and the swap-back turned
+/// real text into a `<URL>` the input never had.
+///
+/// Each stand-in is a different character, so none is a substring of another.
+fn build_shields(text: &str, mask: &str, count: usize) -> Vec<String> {
+    // Persian letters, most to least common in running text.
+    const CANDIDATES: &[char] = &[
+        'ا', 'ر', 'ن', 'د', 'ی', 'ه', 'م', 'ت', 'ب', 'س', 'و', 'ک', 'ش', 'ز', 'ف', 'گ', 'ل', 'ع',
+        'ق', 'خ', 'ج', 'پ', 'چ', 'ح', 'ط', 'ص', 'ض', 'غ', 'ظ', 'ذ', 'ث', 'ژ',
+    ];
+    let free: Vec<char> = CANDIDATES
+        .iter()
+        .copied()
+        .filter(|ch| !text.contains(*ch) && !mask.contains(*ch))
+        .take(count)
+        .collect();
+    if free.len() == count {
+        return free.iter().map(|ch| ch.to_string().repeat(2)).collect();
+    }
+
+    // Every candidate is in the text or the mask. Fall back to the old ZWNJ runs,
+    // started above the longest run already present: placeholders still round-trip,
+    // but a masker that deletes the characters between two runs can fabricate one.
+    // shortcut: a masker can fabricate a shield only when no Persian letter is free, upgrade if a caller reports it.
     let mut shields = Vec::with_capacity(count);
     let mut width = 2;
     while shields.len() < count {
@@ -140,14 +167,17 @@ fn build_shields(text: &str, count: usize) -> Vec<String> {
 ///
 /// The caller's `mask` is protected too: without that, stage one wrote `[MASK]`
 /// and stage two masked its letters, so `[MASK]` came back as `[MASK]MASK[MASK]`.
+/// Whitespace is not protected: swapping every space in the text for a stand-in
+/// made the text one long word, so the whole-word rules ran to the end of the line
+/// and `mask("x https://a.com y", ["url"], " ")` returned `"x "`.
 pub(crate) fn apply_chain(text: &str, ops: &[MaskOp], mask: Option<&str>) -> String {
     let mut protected = vec!["<URL>", "<EMAIL>"];
     if let Some(token) = mask {
-        if !token.is_empty() && !protected.contains(&token) {
+        if !token.trim().is_empty() && !protected.contains(&token) {
             protected.push(token);
         }
     }
-    let shields = build_shields(text, protected.len());
+    let shields = build_shields(text, mask.unwrap_or(""), protected.len());
 
     let mut current = text.to_string();
     for op in ops {
@@ -177,7 +207,15 @@ fn finish(text: &str, out: String) -> String {
 
 /// Replace links up to the next whitespace with `mask`.
 pub fn mask_urls(text: &str, mask: &str) -> String {
-    if !text.contains("http") && !text.contains("www.") && !text.contains("ftp") {
+    // Case-insensitive so a capitalised link still takes the scan: this check used
+    // to skip `HTTPS://`/`WWW.` outright, so the masker never saw them. No
+    // lowercased copy of the whole document: `url_end` already compares
+    // case-insensitively, and a long text should not be copied to answer a
+    // yes/no question. Every prefix starts with one of these letters.
+    let has_link_start = text
+        .bytes()
+        .any(|byte| matches!(byte, b'h' | b'H' | b'w' | b'W' | b'f' | b'F'));
+    if !has_link_start {
         return text.to_string();
     }
 

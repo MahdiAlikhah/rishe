@@ -328,6 +328,130 @@ fn masking_never_corrupts_text_that_shares_a_shield() {
 }
 
 #[test]
+fn a_masker_deleting_characters_cannot_fabricate_a_placeholder() {
+    // The stand-ins were runs of ZWNJ. `non_persian` keeps ZWNJ but deletes what
+    // sits between two runs, so it joined them into a third run that matched a
+    // stand-in, and the swap-back turned real text into a placeholder the input
+    // never had. The stand-in is now a letter absent from the text, so no
+    // deletion can build one.
+    let zwnj = "\u{200c}";
+    for (text, args) in [
+        (format!("خانه{zwnj}https://a.com"), vec!["mask"]),
+        (format!("می{zwnj}۱۲۳{zwnj}ساله"), vec!["mask"]),
+    ] {
+        let out = stdout(rishe().args(&args).arg(&text));
+        assert!(!out.contains("<EMAIL>"), "{text:?} produced {out:?}");
+    }
+
+    // The narrow case: deleting the letters between ZWNJ runs.
+    let text = format!("a{zwnj}xx{zwnj}b");
+    let out = stdout(rishe().args(["mask", &text, "--maskers", "non_persian"]));
+    assert!(
+        !out.contains("<URL>") && !out.contains("<EMAIL>"),
+        "{out:?}"
+    );
+}
+
+#[test]
+fn a_capitalised_link_is_still_a_link() {
+    // The prefix table was compared case-sensitively, so `HTTPS://` and `WWW.`
+    // were never recognised and the masker left them in the clear: a privacy
+    // tool that silently keeps the thing it was asked to remove.
+    for link in [
+        "HTTPS://a.com",
+        "HTTP://a.com",
+        "FTP://a.com/x",
+        "WWW.A.COM",
+    ] {
+        assert_eq!(
+            stdout(rishe().args(["mask", link, "--maskers", "url"])),
+            "<URL>",
+            "{link}"
+        );
+    }
+    // Inside a sentence, and without eating the words around it.
+    assert_eq!(
+        stdout(rishe().args(["mask", "به WWW.A.COM برو", "--maskers", "url"])),
+        "به <URL> برو"
+    );
+    // A word that merely contains the letters is not a link.
+    assert_eq!(
+        stdout(rishe().args(["mask", "myhttps://a.com", "--maskers", "url"])),
+        "myhttps://a.com"
+    );
+}
+
+#[test]
+fn a_whitespace_mask_token_does_not_eat_the_rest_of_the_line() {
+    // Shielding the caller's token rewrote every space to ZWNJ, which is not
+    // whitespace, so the whole-word rules ran to the end of the line.
+    assert_eq!(
+        stdout(rishe().args([
+            "mask",
+            "x https://a.com y",
+            "--maskers",
+            "url",
+            "--mask-token",
+            " "
+        ])),
+        "x   y"
+    );
+    assert_eq!(
+        stdout(rishe().args([
+            "mask",
+            "a @user y",
+            "--maskers",
+            "mention",
+            "--mask-token",
+            " "
+        ])),
+        "a   y"
+    );
+}
+
+#[test]
+fn convert_refuses_to_overwrite_its_own_input() {
+    // `save` truncates the output, so `convert a.vec a.vec` destroyed the only
+    // copy of the plain-text model and still printed "wrote".
+    let scratch = ScratchDir::new("cli-convert-inplace");
+    let model = scratch.path().join("model.vec");
+    std::fs::copy(
+        concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/mini-embed.vec"),
+        &model,
+    )
+    .expect("copy fixture");
+    let model = model.to_str().expect("utf-8 path").to_owned();
+    let before = std::fs::read(&model).expect("read model");
+
+    let output = rishe()
+        .args(["convert", &model, &model])
+        .output()
+        .expect("run rishe");
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "in-place convert must be a usage error"
+    );
+    assert_eq!(
+        std::fs::read(&model).expect("read model"),
+        before,
+        "the input file was modified"
+    );
+
+    // The same file spelled differently is still the same file.
+    let dotted = format!("{model}/../model.vec");
+    let output = rishe()
+        .args(["convert", &model, &dotted])
+        .output()
+        .expect("run rishe");
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "a relative spelling must be refused"
+    );
+}
+
+#[test]
 fn lists_hub_packs() {
     let output = stdout(rishe().args(["hub", "list"]));
     assert!(output.contains("depparse-compact\t"));
@@ -634,6 +758,11 @@ fn usage_errors_exit_two() {
             "missing-model.vec",
         ],
         vec!["serve", "--frobnicate"],
+        // `--maskers ""` split to an empty list, which the engine reads as "apply
+        // nothing": the text came back unmasked and the command exited 0.
+        vec!["mask", "https://a.b", "--maskers", ""],
+        vec!["mask", "https://a.b", "--maskers", ","],
+        vec!["serve", "--maskers", ""],
         vec!["hub"],
         vec!["hub", "path"],
         vec!["hub", "frobnicate"],
