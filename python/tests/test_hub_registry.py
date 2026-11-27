@@ -30,6 +30,16 @@ class RegistryParityTest(unittest.TestCase):
         values = _strings(_block("PACKS"))
         self.assertEqual(dict(zip(values[::2], values[1::2])), hub.PACKS)
 
+    def test_standalone_packs_match_the_rust_table(self):
+        """The third table was never checked, so a pack added to one side only
+        stayed green: the two binaries listed different registries."""
+        values = _strings(_block("STANDALONE_PACKS"))
+        parsed = {
+            values[i]: tuple(values[i + 1:i + 4])
+            for i in range(0, len(values), 4)
+        }
+        self.assertEqual(parsed, hub.STANDALONE_PACKS)
+
     def test_shared_constants_match_the_rust_table(self):
         base = re.search(r'const PACK_BASE: &str = "([^"]*)"', RUST).group(1)
         manifest = re.search(r'const PACK_MANIFEST_SHA256: &str =\s*"([^"]*)"', RUST)

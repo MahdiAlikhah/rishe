@@ -21,6 +21,12 @@ SNAPSHOT = ROOT / "docs" / "api-surface.txt"
 PY_PACKAGE = ROOT / "python" / "rishe" / "__init__.py"
 
 DECL = re.compile(r"pub (fn|struct|enum|trait|type|const|static|union|mod) (\w+)")
+# Public fields and enum variants are API too: an external `match` arm breaks when
+# a variant goes, and a struct literal breaks when a field goes. Both used to be
+# invisible here, so deleting `MaskOp::Url` or a `pub` field left the snapshot
+# byte-identical and `--check` passed.
+FIELD = re.compile(r"^pub (\w+):")
+VARIANT = re.compile(r"^([A-Z]\w*)\s*[,({]")
 # `pub use a::B;` and `pub use a::{B, C as D};` are public API too: `JalaliDate`
 # is only reachable through one, so the snapshot used to miss it entirely.
 REEXPORT = re.compile(r"^pub use\s+(?:\w+::)+(?:\{([^}]*)\}|(\w+)(?:\s+as\s+(\w+))?)\s*;")
@@ -58,6 +64,9 @@ def rust_items():
         elif path.stem != "mod":
             module = "::".join([*parts, path.stem]) if parts else path.stem
         stack = []  # (indent, path, hidden): impl and mod scopes still open
+        # The kind of the scope each stack entry opened, so a field or variant is
+        # only recorded inside the struct or enum that declares it.
+        kinds = []
         # `utf-8-sig`: a file saved by a Windows editor can carry a BOM, and the
         # first `pub` line then read as `\ufeffpub`, silently dropping one item.
         for line in path.read_text(encoding="utf-8-sig").splitlines():
@@ -67,7 +76,9 @@ def rust_items():
             indent = len(line) - len(line.lstrip())
             while stack and indent <= stack[-1][0]:
                 stack.pop()
+                kinds.pop()
             scope, hidden = (stack[-1][1] + "::", stack[-1][2]) if stack else (module + "::", False)
+            outer = kinds[-1] if kinds else None
             if text.startswith("pub use ") and not hidden:
                 match = REEXPORT.match(text)
                 if match:
@@ -84,12 +95,21 @@ def rust_items():
                 kind, name = DECL.match(text).groups()
                 if not hidden:
                     items.append(f"{kind} {scope}{name}")
-                if kind == "mod":
+                # Push a scope for the containers whose body is public API too, so
+                # their fields and variants are attributed to them.
+                if kind in ("mod", "struct", "enum") and text.rstrip().endswith("{"):
                     stack.append((indent, scope + name, hidden))
+                    kinds.append(kind)
+            elif outer == "struct" and not hidden and FIELD.match(text):
+                items.append(f"field {scope}{FIELD.match(text).group(1)}")
+            elif outer == "enum" and not hidden and VARIANT.match(text):
+                items.append(f"variant {scope}{VARIANT.match(text).group(1)}")
             elif IMPL.match(text):
                 stack.append((indent, scope + impl_type(text), hidden))
+                kinds.append("impl")
             elif text.startswith("mod "):
                 stack.append((indent, scope + text[4:].split("{")[0].strip(" ;{"), True))
+                kinds.append("mod")
     return items
 
 

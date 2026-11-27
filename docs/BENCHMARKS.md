@@ -81,13 +81,12 @@ Median of 5 runs each. Reproduce with
 output). Scaling is near-linear to 4 threads (~91% efficiency) and reaches
 6.5× on 12.
 
-## Rust engine (criterion)
+## Rust engine
 
 The rows above compare Rishe with Hazm and Shekar through Python. This is the
 engine alone: Windows 11, release profile, single thread, rishe 0.11.4,
-2026-11-11, reproduce with `cargo bench --bench tier1_bench`. Re-measured on
-rishe 1.0.5 (2026-11-19): `end_to_end_process` 9.7 – 10.1 µs, so the range
-below still holds.
+2026-11-11. Re-measured on rishe 1.0.5 (2026-11-19): `end_to_end_process`
+9.7 – 10.1 µs, so the range below still holds.
 
 | benchmark | median per call |
 |---|---|
@@ -95,6 +94,13 @@ below still holds.
 
 Two runs on this host spread about ±15%, so compare the range, not a single
 digit, when checking a later change. This is the reference for `1.0.0` onward.
+
+These numbers were originally taken with a criterion harness
+(`benches/tier1_bench.rs`). It was deleted because it was the only thing pulling
+`criterion` and its 26 transitive crates into the build for every CI job, and no
+workflow ever ran `cargo bench`. To re-measure, time `Pipeline::process` on a
+sentence in a release build with `std::time::Instant`; the harness added no
+warm-up or statistics this table depends on.
 
 ## Sentence vectors: FarsTail NLI
 

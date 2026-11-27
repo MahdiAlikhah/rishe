@@ -245,7 +245,6 @@ jobs:
           path: dist
       - run: python -m pip install --no-deps dist/*.whl
       - run: python -m unittest discover -s python/tests -v
-      - run: python scripts/benchmark_golden.py
 
   # The matrix above runs on Linux only, so a Windows-only break (paths, line
   # endings, `os.replace` on a locked file) shipped green. This builds the
@@ -265,7 +264,6 @@ jobs:
       - run: maturin build --release --locked --out dist
       - run: python -m pip install --no-deps (Get-ChildItem dist/*.whl)
       - run: python -m unittest discover -s python/tests -v
-      - run: python scripts/benchmark_golden.py
 
   # Examples that need neither a model pack nor the network. The list is
   # explicit on purpose: examples/embeddings.py loads rishe-embed-fa-300-v2 from
@@ -478,7 +476,7 @@ jobs:
     # `gpu-features` is deliberately absent: cuda and metal are not in the
     # published wheel, so a GPU break must not block a release — it still fails
     # the run loudly.
-    needs: [rust, rust-models, msrv, msrv-models, features, python-tests, python-tests-windows, examples, wheels, wheel-smoke, sdist, docs, pack-tests]
+    needs: [rust, rust-models, msrv, msrv-models, features, python-tests, python-tests-windows, examples, wheels, wheel-smoke, sdist, docs, pack-tests, harness-selftest]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
     permissions:
@@ -501,7 +499,7 @@ jobs:
           skip-existing: true
 
   publish-crate:
-    needs: [rust, rust-models, msrv, msrv-models, features, python-tests, python-tests-windows, examples, wheels, wheel-smoke, sdist, docs, pack-tests]
+    needs: [rust, rust-models, msrv, msrv-models, features, python-tests, python-tests-windows, examples, wheels, wheel-smoke, sdist, docs, pack-tests, harness-selftest]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
     steps:

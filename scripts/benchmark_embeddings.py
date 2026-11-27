@@ -15,7 +15,7 @@ import time
 
 import numpy as np
 
-from benchmark import load_ud, timeit
+from benchmark import cosine, load_ud, timeit
 from rishe import Embeddings, hub
 
 WORDS = [
@@ -40,15 +40,6 @@ WORDS = [
     "زیبا",
     "سریع",
 ]
-
-
-def cosine(first, second):
-    first = np.asarray(first, dtype=np.float32)
-    second = np.asarray(second, dtype=np.float32)
-    denominator = float(np.linalg.norm(first) * np.linalg.norm(second))
-    if denominator == 0.0:
-        return 0.0
-    return float(np.dot(first, second)) / denominator
 
 
 def main():

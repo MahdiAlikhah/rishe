@@ -32,6 +32,8 @@ from pathlib import Path
 
 import numpy as np
 
+from benchmark import cosine
+
 sys.stdout.reconfigure(encoding="utf-8")
 ROOT = Path(__file__).resolve().parents[1]
 DATA = ROOT / "data" / "corpora" / "farstail"
@@ -60,11 +62,6 @@ def load(split):
 
 def vector(model, text):
     return np.asarray(model.sentence_vector(text), dtype=np.float32)
-
-
-def cosine(first, second):
-    denominator = float(np.linalg.norm(first) * np.linalg.norm(second))
-    return 0.0 if denominator == 0.0 else float(np.dot(first, second)) / denominator
 
 
 def pair_features(model, premise, hypothesis):

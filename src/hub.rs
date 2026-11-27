@@ -857,7 +857,7 @@ fn files_match(target: &Path, files: &serde_json::Map<String, Value>) -> Result<
             .and_then(|value| value.to_str())
             .unwrap_or(filename);
         let path = target.join(local_name);
-        if !path.is_file() || sha256_file(&path)? != sha {
+        if !path.is_file() || sha256_file(&path)? != sha.to_ascii_lowercase() {
             return Ok(false);
         }
     }
@@ -1349,7 +1349,15 @@ mod tests {
     }
 
     fn scratch(name: &str) -> std::path::PathBuf {
-        let root = std::env::temp_dir().join(format!("rishe-{name}-{}", std::process::id()));
+        // Under `target/`, not `temp_dir()`: on Windows the temp directory's ACL
+        // refuses `create_dir_all` from this process, which failed twelve of the
+        // tests below with "scratch dir: PermissionDenied" and left the whole hub
+        // module unverified there. `tests/cli.rs` already bases its scratch dirs
+        // here for the same reason, and `target/` is gitignored.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("hub-scratch")
+            .join(format!("{name}-{}", std::process::id()));
         std::fs::create_dir_all(&root).expect("scratch dir");
         root
     }
@@ -1398,6 +1406,33 @@ mod tests {
     /// `manifest_matches` with an explicit digest, so the test needs no network.
     fn manifest_matches_with(path: &Path, digest: &str) -> Result<bool, String> {
         Ok(path.is_file() && sha256_file(path)? == digest)
+    }
+
+    #[test]
+    fn an_uppercase_manifest_digest_still_verifies() {
+        // `download` lowercases the digest in all three of its comparisons, but
+        // `files_match` compared verbatim, so a manifest written with uppercase
+        // hex (what Windows Get-FileHash prints) made `hub verify` call a
+        // byte-correct cache invalid forever while `pull` and `list` said it was
+        // fine. This does not need the temp-dir ACL the other hub tests trip on.
+        use sha2::Digest;
+        let root = scratch("verify-uppercase-digest");
+        let pack = root.join("pos-compact");
+        std::fs::create_dir_all(&pack).expect("pack dir");
+        let mut files = serde_json::Map::new();
+        for name in PACK_REQUIRED {
+            let body = b"rishe";
+            std::fs::write(pack.join(name), body).expect("required file");
+            let mut hasher = Sha256::new();
+            hasher.update(body);
+            files.insert(
+                name.to_string(),
+                serde_json::json!({"sha256": format!("{:X}", hasher.finalize())}),
+            );
+        }
+        let valid = files_match(&pack, &files).expect("compare");
+        std::fs::remove_dir_all(&root).ok();
+        assert!(valid, "an uppercase digest names the same bytes");
     }
 
     #[test]

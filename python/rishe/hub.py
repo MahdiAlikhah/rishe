@@ -414,7 +414,10 @@ def unlock(name: str) -> bool:
     if name in MODELS:
         candidates = [cache_dir() / (Path(MODELS[name].filename).name + ".lock")]
     else:
-        manifest = cache_dir() / "rishe-models-manifest.json"
+        # `_pack_manifest_name`, not the shared manifest: a standalone pack's lock
+        # is `<name>-manifest.json.lock`, which is the one a killed pull of it
+        # leaves behind, so the hardcoded name made `unlock` a no-op for it.
+        manifest = cache_dir() / _pack_manifest_name(name)
         candidates = [cache_dir() / (name + ".lock"), Path(str(manifest) + ".lock")]
     for lock in candidates:
         if not lock.is_file():
@@ -653,13 +656,14 @@ def remove(name: str) -> bool:
             lock.unlink()
             removed = True
     if is_pack(name):
-        # A killed pack pull also leaves the shared manifest's part and lock in
-        # the cache root; `remove` is the only command that can clear them.
+        # A killed pack pull also leaves the manifest's part and lock in the cache
+        # root; `remove` is the only command that can clear them. Per-pack name:
+        # a standalone pack has its own manifest file.
         pack_lock = cache_dir() / (name + ".lock")
         if pack_lock.is_file():
             pack_lock.unlink()
             removed = True
-        manifest = cache_dir() / "rishe-models-manifest.json"
+        manifest = cache_dir() / _pack_manifest_name(name)
         for stale in (
             Path(str(manifest) + ".part"),
             Path(str(manifest) + ".lock"),

@@ -9,6 +9,54 @@ in the pack manifest and on the model repository.
 
 ## [Unreleased]
 
+## [1.0.12] - 2026-11-27
+
+### Fixed
+
+- `tag_once` called the ONNX graph with two tensors directly while
+  `sentence_vector` already went through `run_with_segments`, so a pack exported
+  with `token_type_ids` embedded fine and then failed to tag with
+  "expected 3 got 2". Tagging now takes the same path.
+- `hub verify` compared the manifest digest verbatim while `pull` and `list`
+  lowercased it, so a manifest written with uppercase hex (what Windows
+  `Get-FileHash` prints) made `verify` call a byte-correct cache invalid forever.
+- A pack written with uppercase digests now verifies; `hub list` had a `corrupt`
+  state that no code could reach and reported packs it could not verify.
+- The Python CLI accepted `--pack`, `--maskers`, `--mask-token`, `--model` and
+  `--top` only after the subcommand, so the same command line exited 0 through
+  the Rust binary and 2 through the Python one. Both now accept them in either
+  position.
+- `build_shields` rebuilt its ZWNJ fallback with a fresh `text.contains` scan per
+  width, which is quadratic: 16 000 ZWNJ took 954 ms and each doubling of the
+  input doubled the time. It measures the longest existing run once instead.
+- `rake` passed `max_length` straight to the n-gram builder, which enumerates
+  every distinct n-gram up to that length: 200 words at `max_length = 200` took
+  58 ms. It is now capped at `MAX_NGRAM`, the ceiling `ngrams` already enforces.
+- `to_tajik`, `to_persian`, `persianize`, `persianize_suggest`,
+  `keyboard_noise`, `ocr_noise` and `whitespace_noise` held the GIL for the whole
+  call, so a server using one of them blocked every other request in the
+  process. All seven release it now.
+
+### Changed
+
+- `docs/api-surface.txt` records public struct fields and enum variants, which it
+  had never covered: deleting `MaskOp::Url` or a `pub` field left the snapshot
+  byte-identical, so `--check` stayed green.
+- The Python hub-registry parity test covers `STANDALONE_PACKS`, the third table
+  it never compared, so a pack added to one language only stayed undetected.
+- `publish-pypi` and `publish-crate` wait for `harness-selftest`; they could
+  publish an artifact that job would have rejected.
+
+### Removed
+
+- `benches/tier1_bench.rs` and the `criterion` dev-dependency: no workflow ran
+  `cargo bench`, and it pulled 26 crates into every CI job. The measured figures
+  in `docs/BENCHMARKS.md` are kept, with how to reproduce them.
+- `scripts/benchmark_golden.py` and its golden file: 5.0 s latency ceilings for
+  work that takes 3 ms (1667x headroom, so it could never fire), and all four
+  expected outputs were already asserted in `python/tests/test_api.py` in the
+  same CI job.
+
 ## [1.0.11] - 2026-11-26
 
 ### Fixed

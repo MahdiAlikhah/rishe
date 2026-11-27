@@ -934,16 +934,11 @@ impl ModelPack {
     ) -> Result<Vec<(String, String)>, String> {
         let shape = (1, ids.len());
         let input_ids = Array2::from_shape_vec(shape, ids)
-            .map_err(|error| format!("invalid input shape: {error}"))?
-            .tract()
-            .map_err(|error| format!("cannot build input tensor: {error}"))?;
-        let attention_mask = Array2::<i64>::ones(shape)
-            .tract()
-            .map_err(|error| format!("cannot build attention mask: {error}"))?;
-        let outputs = self
-            .runnable
-            .run([input_ids, attention_mask])
-            .map_err(|error| format!("inference failed: {error}"))?;
+            .map_err(|error| format!("invalid input shape: {error}"))?;
+        let attention_mask = Array2::<i64>::ones(shape);
+        // Through `run_with_segments`, not `runnable.run` directly: a pack exported
+        // with a third input would otherwise fail here with "expected 3 got 2".
+        let outputs = self.run_with_segments(input_ids, attention_mask)?;
         let logits = outputs
             .get(self.output)
             .ok_or_else(|| format!("model returned no output {}", self.output))?
@@ -1995,5 +1990,22 @@ mod tests {
         let pack = ModelPack::load(&path).expect("a five-input pack must load");
         // Five inputs are not the e5 case, so no segment ids are synthesized.
         assert!(!pack.needs_token_type_ids);
+    }
+
+    #[test]
+    fn a_three_input_tagging_pack_tags_through_tag_once() {
+        // `tag_once` called `runnable.run([input_ids, attention_mask])` directly
+        // while `sentence_vector` already went through `run_with_segments`, so a
+        // pack exported with `token_type_ids` embedded fine and failed to tag
+        // with "expected 3 got 2". The only 3-input fixture was a sentence pack,
+        // which never reaches `tag_once`, so nothing caught it.
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/tiny-three-input-pack");
+        let pack = ModelPack::load(&path).expect("load three-input pack");
+        assert!(pack.needs_token_type_ids, "the fixture has three inputs");
+        let tags = pack
+            .tags("good bad")
+            .expect("a three-input pack must tag through tag_once");
+        assert_eq!(tags.len(), 2, "got {tags:?}");
     }
 }

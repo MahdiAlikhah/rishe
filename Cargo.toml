@@ -1,6 +1,6 @@
 [package]
 name = "rishe"
-version = "1.0.11"
+version = "1.0.12"
 edition = "2021"
 rust-version = "1.88"
 description = "Rishe (ریشه): High-performance Persian NLP engine in Rust — tokenization, SBD, lemmatization, ezafe detection, informal→formal normalization, stemming, spell checking, Jalali date parsing, embeddings"
@@ -63,10 +63,3 @@ ndarray = { version = "0.16", optional = true }
 
 [build-dependencies]
 fst = "0.4"
-
-[dev-dependencies]
-criterion = "0.5"
-
-[[bench]]
-name = "tier1_bench"
-harness = false

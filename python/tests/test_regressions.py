@@ -249,6 +249,85 @@ class CoreRegressionTest(unittest.TestCase):
                     f"{name} blocked other threads for {stall[0] * 1000:.0f}ms",
                 )
 
+    def test_the_transliteration_and_noise_calls_release_the_gil(self):
+        """The seven methods above the fold kept holding the GIL.
+
+        `test_long_calls_release_the_gil` only covers the eight text methods that
+        already took `py: Python<'_>`. These seven did not, so a server calling
+        `to_tajik` blocked every other request — but each call is only a few
+        milliseconds on the input that test uses, well under its 25 ms stall
+        threshold, so simply adding them there would assert nothing.
+
+        This counts how many times a spinner thread ticks *during one call* and
+        compares that to the rate the same spinner reaches while the main thread
+        sleeps (the GIL is free then). A call that never releases the GIL blocks
+        the spinner for its whole duration and scores near 0%; a released one
+        scores tens of percent. Measured on this change: 0% held, 62% released.
+
+        Two earlier designs of this test were wrong, both worth recording. Growing
+        the input until one call was long made it flaky: at tens of megabytes the
+        "stall" is dominated by pyo3 converting the Python `str` into a Rust `str`
+        before `allow_threads` is entered, plus GC pauses over a huge heap, which
+        made `persianize_suggest` look like it blocked for 169 ms of a 305 ms call
+        and failed CI on all five Python versions. Repeating a small call and
+        watching the longest gap was worse: a held GIL only stalls the spinner for
+        one call, then the loop boundary frees it again, so that version passed
+        even with the fix reverted. Ticks over one call have neither hole.
+        """
+        text = "سلام دنیا این یک متن آزمایشی است " * 25600  # ~1.7 MB
+        calls = {
+            "keyboard_noise": self.pipe.keyboard_noise,
+            "ocr_noise": self.pipe.ocr_noise,
+            "whitespace_noise": self.pipe.whitespace_noise,
+            "to_tajik": self.pipe.to_tajik,
+            "to_persian": self.pipe.to_persian,
+            "persianize": self.pipe.persianize,
+            "persianize_suggest": self.pipe.persianize_suggest,
+        }
+        for name, call in calls.items():
+            with self.subTest(method=name):
+                share = self._tick_share(lambda: call(text))
+                # 0% when held, 40-70% when released. 5% is far from both.
+                self.assertGreater(
+                    share,
+                    0.05,
+                    f"{name} let another thread run for only {share:.1%} of the "
+                    "call, so it holds the GIL",
+                )
+
+    @staticmethod
+    def _tick_share(call):
+        """Fraction of the ticks a free-running thread gets during `call`.
+
+        1.0 means the GIL was released for the whole call; 0.0 means it was never
+        released. The denominator is measured with the main thread asleep, which
+        by definition leaves the GIL free.
+        """
+        counter = [0]
+        stop = threading.Event()
+
+        def spin():
+            while not stop.is_set():
+                counter[0] += 1
+
+        worker = threading.Thread(target=spin, daemon=True)
+        worker.start()
+        time.sleep(0.02)  # let the spinner reach its full rate
+
+        before = counter[0]
+        time.sleep(0.05)
+        idle_rate = (counter[0] - before) / 0.05
+
+        before = counter[0]
+        started = time.perf_counter()
+        call()
+        duration = time.perf_counter() - started
+        ticks = counter[0] - before
+
+        stop.set()
+        worker.join(timeout=1.0)
+        return ticks / max(idle_rate * duration, 1.0)
+
 
 if __name__ == "__main__":
     unittest.main()

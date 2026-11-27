@@ -177,7 +177,32 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     hub_unlock.add_argument("name")
 
+    # The Rust binary parses every flag in one loop, so `normalize "…" --pack x`
+    # exits 0 there and exited 2 here with "unrecognized arguments". docs/errors.md
+    # promises both binaries return the same statuses. Give each subcommand the
+    # flags it does not declare, so flag placement never changes the exit code.
+    # SUPPRESS keeps them out of `--help`, where they would advertise an option
+    # with no effect. `hub` is skipped: the Rust binary dispatches it before its
+    # option loop, so rust rejects these flags there too.
+    for name, subparser in subparsers.choices.items():
+        if name == "hub":
+            continue
+        declared = {
+            option for action in subparser._actions for option in action.option_strings
+        }
+        for flag, kwargs in (
+            ("--pack", {}),
+            ("--mask-token", {}),
+            ("--model", {}),
+            ("--top", {"type": int}),
+            ("--maskers", {"action": "append"}),
+        ):
+            if flag not in declared:
+                subparser.add_argument(
+                    flag, default=argparse.SUPPRESS, help=argparse.SUPPRESS, **kwargs
+                )
     args = parser.parse_args(argv)
+
     if args.command is None:
         parser.print_help()
         return 0
@@ -438,16 +463,20 @@ def _hub(args) -> int:
                 # `cached` here for a corrupt file made the two disagree.
                 status = "corrupt"
             print(f"{name}\t{status}\t{model.filename}")
-        for name in hub.PACKS:
+        # Both pack tables, and `cached` rather than `verify`: the Rust binary lists
+        # a pack whose three required files exist as `cached` and only calls a
+        # half-filled directory `partial`. Walking `PACKS` alone hid the standalone
+        # packs, and re-hashing against a manifest reported a usable pack as corrupt.
+        for name in list(hub.PACKS) + list(hub.STANDALONE_PACKS):
             entry = hub.info(name)
             if entry is None:
                 status = "missing"
             elif entry.get("partial"):
                 status = "partial"
-            elif hub.verify(name):
+            elif hub.cached(name) is not None:
                 status = "cached"
             else:
-                status = "corrupt"
+                status = "partial"
             print(f"{name}\t{status}\tpack")
     return 0
 

@@ -1062,68 +1062,65 @@ mod py_bindings {
 
         /// Python `keyboard_noise`: default options with the optional `seed`.
         #[pyo3(name = "keyboard_noise", signature = (text, seed=None))]
-        pub fn py_keyboard_noise(&self, text: &str, seed: Option<u64>) -> String {
-            augment::keyboard_noise(
-                text,
-                augment::KeyboardNoiseOptions {
-                    seed,
-                    ..Default::default()
-                },
-            )
+        pub fn py_keyboard_noise(&self, py: Python<'_>, text: &str, seed: Option<u64>) -> String {
+            let options = augment::KeyboardNoiseOptions {
+                seed,
+                ..Default::default()
+            };
+            py.allow_threads(|| augment::keyboard_noise(text, options))
         }
 
         /// Python `ocr_noise`: default options with the optional `seed`.
         #[pyo3(name = "ocr_noise", signature = (text, seed=None))]
-        pub fn py_ocr_noise(&self, text: &str, seed: Option<u64>) -> String {
-            augment::ocr_noise(
-                text,
-                augment::OcrNoiseOptions {
-                    seed,
-                    ..Default::default()
-                },
-            )
+        pub fn py_ocr_noise(&self, py: Python<'_>, text: &str, seed: Option<u64>) -> String {
+            let options = augment::OcrNoiseOptions {
+                seed,
+                ..Default::default()
+            };
+            py.allow_threads(|| augment::ocr_noise(text, options))
         }
 
         /// Python `whitespace_noise`: default options with the optional `seed`.
         #[pyo3(name = "whitespace_noise", signature = (text, seed=None))]
-        pub fn py_whitespace_noise(&self, text: &str, seed: Option<u64>) -> String {
-            augment::whitespace_noise(
-                text,
-                augment::WhitespaceNoiseOptions {
-                    seed,
-                    ..Default::default()
-                },
-            )
+        pub fn py_whitespace_noise(&self, py: Python<'_>, text: &str, seed: Option<u64>) -> String {
+            let options = augment::WhitespaceNoiseOptions {
+                seed,
+                ..Default::default()
+            };
+            py.allow_threads(|| augment::whitespace_noise(text, options))
         }
 
         /// Python `to_tajik`: Persian letters to Tajik Cyrillic.
         #[pyo3(name = "to_tajik")]
-        pub fn py_to_tajik(&self, text: &str) -> String {
-            transliterate::to_tajik(text)
+        pub fn py_to_tajik(&self, py: Python<'_>, text: &str) -> String {
+            py.allow_threads(|| transliterate::to_tajik(text))
         }
 
         /// Python `to_persian`: Tajik Cyrillic to Persian letters.
         #[pyo3(name = "to_persian")]
-        pub fn py_to_persian(&self, text: &str) -> String {
-            transliterate::to_persian(text)
+        pub fn py_to_persian(&self, py: Python<'_>, text: &str) -> String {
+            py.allow_threads(|| transliterate::to_persian(text))
         }
 
         /// Python `persianize`: replaces known loanwords with Persian equivalents.
         #[pyo3(name = "persianize")]
-        pub fn py_persianize(&self, text: &str) -> String {
-            utilities::persianize(text)
+        pub fn py_persianize(&self, py: Python<'_>, text: &str) -> String {
+            py.allow_threads(|| utilities::persianize(text))
         }
 
         /// Python `persianize_suggest`: loanword matches as `(word, alternatives, start, end)`.
         #[pyo3(name = "persianize_suggest")]
         pub fn py_persianize_suggest(
             &self,
+            py: Python<'_>,
             text: &str,
         ) -> Vec<(String, Vec<String>, usize, usize)> {
-            utilities::persianize_suggest(text)
-                .into_iter()
-                .map(|item| (item.word, item.alternatives, item.start, item.end))
-                .collect()
+            py.allow_threads(|| {
+                utilities::persianize_suggest(text)
+                    .into_iter()
+                    .map(|item| (item.word, item.alternatives, item.start, item.end))
+                    .collect()
+            })
         }
 
         /// Python `lemmatize`: lemma of one word.

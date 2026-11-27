@@ -17,10 +17,15 @@ fn is_keyword_word(word: &str) -> bool {
 /// A `top_n` of 0 asks for no phrases and a `max_length` of 0 allows no words, so
 /// both return nothing. `max_length` used to be clamped to 1, which answered a
 /// request for "at most 0 words" with one-word phrases.
+///
+/// `max_length` is capped at the crate's `MAX_NGRAM` (10), the same ceiling
+/// `ngrams` enforces: enumerating every window up to a document-sized length is
+/// cubic, and 200 words at `max_length = 200` measured 58 ms against 1.6 ms at 3.
 pub fn rake(text: &str, top_n: usize, max_length: usize) -> Vec<String> {
     if top_n == 0 || max_length == 0 {
         return Vec::new();
     }
+    let max_length = max_length.min(crate::MAX_NGRAM);
     let phrases = rake_phrases(text);
 
     let mut frequency: HashMap<&str, usize> = HashMap::new();
@@ -300,5 +305,24 @@ mod tests {
         // one-word phrases — a wrong answer rather than none.
         assert!(rake(TEXT, 5, 0).is_empty());
         assert!(textrank(TEXT, 5, 0, 2).is_empty());
+    }
+
+    #[test]
+    fn an_unclamped_max_length_stays_linear() {
+        // `max_length` was passed straight to the n-gram builder, which enumerates
+        // every distinct n-gram up to that length: 200 words at `max_length = 200`
+        // took 58 ms against 1.6 ms at 3, and doubling the cap quadrupled the work.
+        // The ceiling is `MAX_NGRAM`, the same one `ngrams` already enforces, so
+        // asking for more words than that returns the same phrases as asking for
+        // exactly `MAX_NGRAM`.
+        let text = (0..200)
+            .map(|index| format!("واژه{index}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert_eq!(
+            rake(&text, 5, 200),
+            rake(&text, 5, crate::MAX_NGRAM),
+            "the cap must clamp to MAX_NGRAM, not run to 200"
+        );
     }
 }

@@ -90,6 +90,22 @@ def pct(hit, total):
     return 100.0 * hit / total if total else 0.0
 
 
+def cosine(first, second):
+    """Cosine similarity, coercing both to f32 first.
+
+    Defined once: the two copies this replaces disagreed about the coercion, so
+    the embeddings and NLI pages quoted numbers that did not share a definition.
+    """
+    import numpy as np
+
+    first = np.asarray(first, dtype=np.float32)
+    second = np.asarray(second, dtype=np.float32)
+    denominator = float(np.linalg.norm(first) * np.linalg.norm(second))
+    if denominator == 0.0:
+        return 0.0
+    return float(np.dot(first, second)) / denominator
+
+
 def canon_lemma(s):
     s = s.replace("‌", "").split("#")[0]  # UD/Hazm "past#present"
     return s.split("/")[0]  # Shekar "past/present"

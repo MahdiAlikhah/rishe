@@ -70,7 +70,6 @@ python scripts/api_surface.py
 python scripts/api_surface.py --check
 
 python -m unittest discover -s python/tests -p "test_*.py" -v
-python scripts/benchmark_golden.py
 
 # The examples CI runs are the ones that need no model pack and no network.
 PYTHONIOENCODING=utf-8 python examples/basic.py

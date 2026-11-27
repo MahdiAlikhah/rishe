@@ -150,17 +150,23 @@ fn build_shields(text: &str, mask: &str, count: usize) -> Vec<String> {
     // Every candidate is in the text or the mask. Fall back to the old ZWNJ runs,
     // started above the longest run already present: placeholders still round-trip,
     // but a masker that deletes the characters between two runs can fabricate one.
+    // The widths start above every run in the text, so none of them can already be
+    // a substring and no per-width scan is needed; restarting `text.contains` from
+    // width 2 each time was quadratic — 954 ms for 16 000 ZWNJ.
     // shortcut: a masker can fabricate a shield only when no Persian letter is free, upgrade if a caller reports it.
-    let mut shields = Vec::with_capacity(count);
-    let mut width = 2;
-    while shields.len() < count {
-        let candidate = "\u{200C}".repeat(width);
-        width += 1;
-        if !text.contains(&candidate) {
-            shields.push(candidate);
+    let mut longest = 0;
+    let mut run = 0;
+    for ch in text.chars() {
+        if ch == '\u{200C}' {
+            run += 1;
+            longest = longest.max(run);
+        } else {
+            run = 0;
         }
     }
-    shields
+    (1..=count)
+        .map(|index| "\u{200C}".repeat(longest + index))
+        .collect()
 }
 
 /// Run `ops` in order, keeping each stage's output out of the next stage.
@@ -171,6 +177,9 @@ fn build_shields(text: &str, mask: &str, count: usize) -> Vec<String> {
 /// made the text one long word, so the whole-word rules ran to the end of the line
 /// and `mask("x https://a.com y", ["url"], " ")` returned `"x "`.
 pub(crate) fn apply_chain(text: &str, ops: &[MaskOp], mask: Option<&str>) -> String {
+    if ops.is_empty() {
+        return text.to_string();
+    }
     let mut protected = vec!["<URL>", "<EMAIL>"];
     if let Some(token) = mask {
         if !token.trim().is_empty() && !protected.contains(&token) {
@@ -1131,5 +1140,35 @@ mod tests {
             );
             assert_eq!(out, token, "token {token:?} was re-masked");
         }
+    }
+
+    #[test]
+    fn the_zwnj_fallback_starts_above_the_longest_run() {
+        // The fallback used to rebuild the candidate list with a fresh
+        // `text.contains` scan per width, which is quadratic: 1000 ZWNJ doubled the
+        // time, and 16 000 took 954 ms. It now measures the longest existing run
+        // once and starts above it, so the cost is linear.
+        use std::time::Instant;
+
+        let ops = [MaskOp::Url, MaskOp::Email];
+        let time = |n: usize| {
+            // Every candidate letter is present, so the ZWNJ fallback is forced.
+            let mut text = String::from("ابپتثجچحخدذرزژسشصضطظعغفقکگلمنوهی");
+            text.push_str(&"\u{200C}".repeat(n));
+            text.push_str(" https://a.example");
+            let start = Instant::now();
+            let out = apply_chain(&text, &ops, None);
+            // The placeholder must still round-trip through the fallback.
+            assert!(out.contains("<URL>"), "no placeholder survived: {out:?}");
+            start.elapsed().as_nanos().max(1)
+        };
+
+        let small = time(1_000);
+        let large = time(8_000);
+        assert!(
+            large < small * 32,
+            "8x the ZWNJ runs took {}x the time, so the scan is not linear",
+            large / small
+        );
     }
 }
