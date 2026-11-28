@@ -323,6 +323,30 @@ pub struct ModelPack {
 /// were consumed (which can exceed `kept.len()` when a word has no pieces).
 type EncodedWords = (Vec<i64>, Vec<usize>, Vec<String>, usize);
 
+/// Length in bytes of a prefix of `text` no longer than `budget`, cut at a
+/// whitespace boundary so the tokenizer sees the same word boundaries.
+///
+/// Cutting mid-word would change the tokens around the cut: a BPE merge that
+/// spans the boundary disappears, so the ids before the cut are no longer the
+/// ones the full text produces. Cutting at whitespace cannot do that.
+fn prefix_end(text: &str, budget: usize) -> usize {
+    if text.len() <= budget {
+        return text.len();
+    }
+    // `budget` is a byte count that may land inside a character, so walk back to
+    // the nearest boundary first.
+    let mut cut = budget;
+    while cut > 0 && !text.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    match text[..cut].rfind(char::is_whitespace) {
+        Some(at) => at,
+        // One enormous word: there is no boundary to use. Take the whole budget
+        // and let the caller's growth loop keep going.
+        None => cut,
+    }
+}
+
 impl ModelPack {
     /// Load a pack directory holding `model.onnx`, `tokenizer.json` and
     /// `labels.json`; errors on a missing or malformed file.
@@ -751,10 +775,29 @@ impl ModelPack {
         // Encode the whole text as pieces, not per word: a sentence vector has no
         // word offsets to preserve, and the model's own template wants one
         // sequence.
-        let encoding = self
-            .tokenizer
-            .encode(text, false)
-            .map_err(|error| format!("cannot tokenize {text:?}: {error}"))?;
+        //
+        // But only the first `max_len` ids are ever read, and the tokenizer used to
+        // run over the whole input first: an 8 MB text cost 2.3 s and threw almost
+        // all of it away. Enable-at-load truncation does not help, because
+        // `post_process` truncates *after* `encode_single_sequence` has tokenized
+        // everything. Encoding a whitespace-aligned prefix does: a cut at a word
+        // boundary cannot change the tokens before it, so the ids are exactly the
+        // ones the full encode would produce.
+        let needed = self.max_len.saturating_sub(2);
+        let mut budget = 8 * 1024;
+        let encoding = loop {
+            let cut = prefix_end(text, budget);
+            let encoded = self
+                .tokenizer
+                .encode(&text[..cut], false)
+                .map_err(|error| format!("cannot tokenize {text:?}: {error}"))?;
+            // The whole text fits, or the prefix already holds every id the model
+            // can see, so there is nothing left to gain by growing it.
+            if cut == text.len() || encoded.get_ids().len() >= needed {
+                break encoded;
+            }
+            budget = budget.saturating_mul(2);
+        };
         let mut ids = vec![cls];
         ids.extend(encoding.get_ids().iter().map(|&id| i64::from(id)));
         // Leave room for the separator so the sequence never exceeds `max_len`.
@@ -1798,6 +1841,34 @@ mod tests {
         assert_eq!(kept, vec!["a".to_string()]);
         assert_eq!(ids.first(), Some(&2));
         assert_eq!(ids.last(), Some(&3));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_prefix_cut_lands_on_a_word_boundary() {
+        // A cut at whitespace cannot change the tokens before it, so the prefix
+        // encodes to the same ids the full text would produce.
+        assert_eq!(prefix_end("hello world", 100), 11);
+        assert_eq!(prefix_end("hello world", 7), 5);
+        assert_eq!(prefix_end("hello world", 6), 5);
+        // Never inside a character: `سلام` is 8 bytes, so a budget of 3 lands in
+        // the middle of a character.
+        let persian = "سلام دنیا";
+        let cut = prefix_end(persian, 3);
+        assert!(persian.is_char_boundary(cut));
+        // One word with no boundary at all still returns a usable prefix.
+        assert_eq!(prefix_end("abcdefgh", 4), 4);
+    }
+
+    #[test]
+    fn a_long_text_still_embeds() {
+        // The prefix loop must still succeed on a text far past `max_len`; the tiny
+        // pack sets `max_len: 16`, so this is cut to a small prefix and must still
+        // produce the same vector as an equivalent short text.
+        let (pack, dir) = tiny_vector_pack("prefixsame");
+        let long = "a b ".repeat(400);
+        let expected = pack.sentence_vector("a b").unwrap();
+        assert_eq!(pack.sentence_vector(&long).unwrap(), expected);
         std::fs::remove_dir_all(&dir).ok();
     }
 

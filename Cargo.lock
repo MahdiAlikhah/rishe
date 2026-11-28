@@ -1859,7 +1859,7 @@ dependencies = [
 
 [[package]]
 name = "rishe"
-version = "1.0.12"
+version = "1.0.13"
 dependencies = [
  "aho-corasick",
  "fst",

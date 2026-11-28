@@ -9,6 +9,86 @@ in the pack manifest and on the model repository.
 
 ## [Unreleased]
 
+## [1.0.13] - 2026-11-28
+
+### Fixed
+
+- A masker could still invent a `<URL>` or `<EMAIL>` the text never had. The
+  stand-in characters were runs of ZWNJ, chosen above the longest run already
+  present, but a masker deletes characters: deleting what sat between two runs
+  glued them into a third that matched a stand-in, and the swap-back turned real
+  text into a placeholder. Any text holding all 32 candidate letters could reach
+  it, e.g. `می‌۱‌کنم`. A stand-in is now a single character, and when
+  every Persian letter is already present the chain masks the segments between
+  placeholders instead of substituting, so no masker can see across one.
+- `mention` and `hashtag` masking ate the punctuation that ended the token:
+  `mask("@user!", ["mention"])` returned `""` and `"سلام @user! خوبی؟"` lost its
+  `!`, while the `url` masker kept it. A sigil token now stops before a trailing
+  `)`, `،`, `.`, `«`, `,`, `;`, `!` or `?`, the same set `url` already used.
+- A stopword followed by an Arabic-coded Persian letter was masked and left its
+  tail behind: `mask("آنهاي", ["stopwords"])` returned `"ي"`. The word-boundary
+  check now treats the four letters `normalize` maps — `ي`, `ك`, `ى`, `ة` — as
+  letters, the same set `non_persian` keeps, so a stopword is matched only as a
+  whole word.
+- An emoji keycap was never recognised: `mask("1️⃣", ["emoji"])` leaked
+  it and the tokenizer split it into three tokens, because the base is an ASCII
+  digit and the marks follow it. The cluster walk now reads a keycap's width from
+  its marks, so `1️⃣`, `#️⃣` and `*⃣` are one emoji.
+- The Python CLI never gained the empty-`--maskers` check the Rust binary has, so
+  `python -m rishe mask "..." --maskers ""` printed the document with every link
+  and e-mail in the clear and exited 0 (Rust exits 2). The same held for `serve`,
+  which then served unmasked requests. Both now refuse an empty selection.
+- The Python `serve` kept only the last `--maskers`, so
+  `serve --maskers url --maskers email` left URLs in the clear while the comma
+  form masked both; it now accumulates repeated flags like `mask` does.
+- `normalize` deleted a real ی and glued two words together: `خانه ی2` came
+  back as `خانه۲`. The ezafe guard only looked for a Persian letter ahead, so a
+  digit or Latin letter counted as a word boundary and the space was consumed
+  with it. Any alphabetic character now keeps the space.
+- Ordinary words were rewritten as a preposition plus a pronoun: `بهت` (shock,
+  frequency 1,020,114) became `به` + `تو` and `ازمون` (exam) became `از` + `من`,
+  so "I was stunned" read as "to you hit I became". The three lookalikes are
+  listed in `CLITIC_LOOKALIKES` and keep their word reading.
+- `split_token` cut real verbs, plurals and superlatives: the preverb reading ran
+  before the verb guard and took the whole token, so 445 of the 7,208 shipped
+  verb forms split (`بردم`, `بازگشتم`, `فروختم`), `درخواست‌ها` lost its `ها`, and
+  `ترین` was missing from the suffix table so `بزرگترین` split as `بزرگتر` + `ین`.
+- `formal_text` re-split every URL, e-mail, time and code span by rebuilding the
+  text from the token list, which puts a space after each `:`, `/`, `-` and `@`:
+  `https://rishe.ir/a-b` came back as `https: / / rishe. ir / a - b`. Only the
+  words whose formal spelling actually differs are replaced now, so the rest of
+  the text stays as `normalized_text` has it.
+- A combining mark became its own token: `cafe\u{0301}` tokenized as `cafe` plus a
+  punctuation token, which split every word in decomposed text (from a PDF or
+  macOS) in two and changed the token count, the lemmas and the detokenized text.
+  A mark now stays inside the word or number it belongs to.
+- The sentence splitter only knew `\n`, so `\r`, `\r\n` and the Unicode
+  separators `U+000B`, `U+000C`, `U+0085`, `U+2028` and `U+2029` came back as one
+  sentence while `normalize` handled the same text correctly.
+- The Python CLI accepted flags the Rust binary rejects: `argparse` matched
+  prefixes (`--jso`, `--vers`) because `allow_abbrev` does not reach subparsers,
+  and the flag-injection loop skipped only `hub`, so `serve --pack x` and
+  `serve --top 3` exited 0 here and 2 in Rust. Both now match.
+- The Python CLI exited 120, outside the documented 0/1/2 contract, when a reader
+  closed stdout early (`| head`): the flush at interpreter shutdown failed on the
+  dead pipe. It flushes inside a guard now and exits 0, as Rust does.
+
+### Performance
+
+- `textrank` clamped neither of its two levers, and both are quadratic: 800 words
+  at `window = 800` took 663 ms against 5 ms at 2, and 200 words at
+  `max_length = 200` took 58 ms against 1.6 ms at 3. Both now pass through
+  `MAX_NGRAM`, the ceiling `ngrams` already enforced, so asking for more cannot
+  cost more.
+- `sentence_vector` tokenized the whole input before truncating the ids to
+  `max_len`, so the work was done and thrown away: an 8 MB text took 2.3 s for
+  output identical to the first 2 KB. Enabling truncation at load does not help,
+  because `post_process` truncates after everything is tokenized; encoding a
+  whitespace-aligned prefix does. The same 8 MB text now takes 1.9 ms and the ids
+  are byte-for-byte what the full encode produced.
+- The Python `rank()` embedded candidates one at a time in a loop; it now sends
+  them as one batch.
+
 ## [1.0.12] - 2026-11-27
 
 ### Fixed
@@ -1438,7 +1518,12 @@ Removed in `1.0.0`; each emits `DeprecationWarning` today.
 - Python bindings (abi3) and a Rust core.
 - Benchmark suite and dual MIT/Apache-2.0 licensing.
 
-[Unreleased]: https://github.com/MahdiAlikhah/rishe/compare/v1.0.7...HEAD
+[Unreleased]: https://github.com/MahdiAlikhah/rishe/compare/v1.0.13...HEAD
+[1.0.13]: https://github.com/MahdiAlikhah/rishe/compare/v1.0.12...v1.0.13
+[1.0.12]: https://github.com/MahdiAlikhah/rishe/compare/v1.0.11...v1.0.12
+[1.0.11]: https://github.com/MahdiAlikhah/rishe/compare/v1.0.10...v1.0.11
+[1.0.10]: https://github.com/MahdiAlikhah/rishe/compare/v1.0.9...v1.0.10
+[1.0.9]: https://github.com/MahdiAlikhah/rishe/compare/v1.0.8...v1.0.9
 [1.0.8]: https://github.com/MahdiAlikhah/rishe/compare/v1.0.7...v1.0.8
 [1.0.7]: https://github.com/MahdiAlikhah/rishe/compare/v1.0.6...v1.0.7
 [1.0.6]: https://github.com/MahdiAlikhah/rishe/compare/v1.0.5...v1.0.6

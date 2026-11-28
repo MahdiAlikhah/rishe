@@ -99,7 +99,7 @@ fn replace_emails(text: &str) -> String {
 const URL_PREFIXES: [&str; 4] = ["https://", "http://", "ftp://", "www."];
 
 /// Punctuation that ends the sentence rather than the URL.
-const URL_TRAILING: [char; 8] = [')', '،', '.', '»', ',', ';', '!', '?'];
+pub(crate) const URL_TRAILING: [char; 8] = [')', '،', '.', '»', ',', ';', '!', '?'];
 
 /// The end byte index of the URL starting at `start`, or `None` when no URL
 /// starts there.

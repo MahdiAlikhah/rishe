@@ -103,6 +103,11 @@ pub fn textrank(text: &str, top_n: usize, max_length: usize, window: usize) -> V
     if top_n == 0 || max_length == 0 {
         return Vec::new();
     }
+    // Same ceiling `rake` enforces. Both levers are quadratic in a caller-supplied
+    // value: 200 words at `max_length = 200` was 58 ms against 1.6 ms at 3, and
+    // 800 words at `window = 800` was 663 ms against 5 ms at 2.
+    let max_length = max_length.min(crate::MAX_NGRAM);
+    let window = window.min(crate::MAX_NGRAM);
     let sentences = textrank_sentences(text);
     let graph = build_graph(&sentences, window);
     let scores = pagerank(&graph);
@@ -323,6 +328,28 @@ mod tests {
             rake(&text, 5, 200),
             rake(&text, 5, crate::MAX_NGRAM),
             "the cap must clamp to MAX_NGRAM, not run to 200"
+        );
+    }
+
+    #[test]
+    fn textrank_clamps_both_levers() {
+        // `rake` clamped `max_length` but `textrank` clamped neither lever, and
+        // `window` is quadratic too: 800 words took 663 ms at `window = 800`
+        // against 5 ms at 2. Both now pass through the same ceiling, so asking for
+        // more cannot cost more.
+        let text = (0..200)
+            .map(|index| format!("واژه{index} کلمه{index}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert_eq!(
+            textrank(&text, 5, 200, 2),
+            textrank(&text, 5, crate::MAX_NGRAM, 2),
+            "max_length must clamp to MAX_NGRAM"
+        );
+        assert_eq!(
+            textrank(&text, 5, 3, 800),
+            textrank(&text, 5, 3, crate::MAX_NGRAM),
+            "window must clamp to MAX_NGRAM"
         );
     }
 }

@@ -76,7 +76,7 @@ Request:
 Response:
 
 ```json
-{"ok":true,"result":{"name":"rishe","protocol":1,"version":"1.0.0"}}
+{"ok":true,"result":{"name":"rishe","protocol":1,"version":"x.y.z"}}
 ```
 
 | field | type | meaning |
@@ -91,7 +91,7 @@ binary reports its Cargo package version and the console script reports the
 installed `rishe` package version, the same number for a matching release. The
 handshake ignores every other request field. This is the bare version string;
 `rishe --version` on either CLI prints the same version with the program name
-(`rishe 1.0.0`).
+(`rishe x.y.z`).
 
 ## Requests
 

@@ -319,6 +319,9 @@ jobs:
           # cache the Rust side would now reject.
           key: rishe-packs-${{ hashFiles('python/rishe/hub.py', 'src/hub.rs') }}
       - run: python -m pip install --no-deps dist/*.whl
+      # The link primitive has a `--selftest` no job ran; check it before the
+      # ~225 MB pull below can hide a broken junction or symlink.
+      - run: python scripts/pull_test_packs.py --selftest
       - uses: dtolnay/rust-toolchain@stable
       # Exports the variables the skipped tests look for, for both suites. They
       # are then checked: a failed pull would leave them empty, the tests would

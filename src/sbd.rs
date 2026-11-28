@@ -14,12 +14,26 @@ impl SentenceSplitter {
         let mut chars = text.char_indices().peekable();
 
         while let Some((idx, ch)) = chars.next() {
-            if ch == '\n' {
+            // `\r\n` is one break, and the other characters `str::lines` and the
+            // detokenizer already treat as lines. Only `\n` used to count, so
+            // `sent_tokenize("خط اول\rخط دوم")` returned one sentence while
+            // `normalize` handled the same text differently.
+            if matches!(
+                ch,
+                '\n' | '\r' | '\u{000B}' | '\u{000C}' | '\u{0085}' | '\u{2028}' | '\u{2029}'
+            ) {
+                let mut end = idx + ch.len_utf8();
+                if ch == '\r' {
+                    if let Some(&(next_idx, '\n')) = chars.peek() {
+                        end = next_idx + 1;
+                        chars.next();
+                    }
+                }
                 let slice = text[sent_start..idx].trim();
                 if !slice.is_empty() {
                     sentences.push(slice);
                 }
-                sent_start = idx + ch.len_utf8();
+                sent_start = end;
                 continue;
             }
 
@@ -133,6 +147,20 @@ mod tests {
     fn newlines_always_split() {
         assert_eq!(SentenceSplitter::split("یک\nدو"), ["یک", "دو"]);
         assert_eq!(SentenceSplitter::split("یک\n\nدو"), ["یک", "دو"]);
+    }
+
+    #[test]
+    fn every_line_break_splits() {
+        // Only `\n` used to count, so `\r` and the Unicode separators came back as
+        // one sentence while `normalize` handled the same text differently.
+        assert_eq!(SentenceSplitter::split("یک\rدو"), ["یک", "دو"]);
+        // `\r\n` is one break, not an empty sentence between the two halves.
+        assert_eq!(SentenceSplitter::split("یک\r\nدو"), ["یک", "دو"]);
+        assert_eq!(SentenceSplitter::split("یک\u{2028}دو"), ["یک", "دو"]);
+        assert_eq!(SentenceSplitter::split("یک\u{2029}دو"), ["یک", "دو"]);
+        assert_eq!(SentenceSplitter::split("یک\u{0085}دو"), ["یک", "دو"]);
+        assert_eq!(SentenceSplitter::split("یک\u{000B}دو"), ["یک", "دو"]);
+        assert_eq!(SentenceSplitter::split("یک\u{000C}دو"), ["یک", "دو"]);
     }
 
     #[test]

@@ -117,10 +117,11 @@ someone who pulls all three. This matches the Hub design: `pos-compact`,
 `ner-compact` and `ezafe-compact` are separate registry entries with their own
 manifests and checksums.
 
-A shared-backbone pack would save ~90 MB for the all-three user, but it needs
-another training run and risks the measured per-task accuracy. The per-task
-44.8 MB is the number to compare with Shekar's ~11 MB int8 models; the trade is
-precision (fp32) and accuracy, not install size.
+`merged-compact` shipped in 1.0.10: one shared ALBERT backbone with POS, NER and
+ezafe heads in a single graph, 45.07 MiB against 135.06 MiB for the three
+separate packs, with every task within 0.02 F1 of its published number. The
+per-task 44.8 MB is the number to compare with Shekar's ~11 MB int8 models; the
+trade is precision (fp32) and accuracy, not install size.
 
 ## Dependency parsing (0.8.0)
 

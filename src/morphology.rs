@@ -71,6 +71,9 @@ pub(crate) const ATTACHED_NOUN_SUFFIXES: &[&str] = &[
     "یان",
     "ان",
     "ات",
+    // Before `ین`: with only `ین` in the table, `بزرگترین` split as
+    // `بزرگتر` + `ین` and kept a stem that is not a word.
+    "ترین",
     "ین",
     "ام",
     "اش",
@@ -509,6 +512,15 @@ impl MorphologyEngine {
     #[inline(always)]
     pub fn is_known_noun(&self, word: &str) -> bool {
         self.noun_lexicon.contains_key(word)
+    }
+
+    /// Whether the whole token is a verb form rather than a noun plus a clitic.
+    ///
+    /// The splitter needs this before it reads a preverb or a suffix: `دریافتم` is
+    /// `دریافت` 1sg, not `دریافت` + `م`, and `بردم` is `بردن` 1sg, not `بر` + `دم`.
+    #[inline]
+    pub fn is_verb_form(&self, token: &str) -> bool {
+        self.verb_roots(token).is_some() || self.match_verb_lemma(token).is_some()
     }
 
     /// Whether the string is a known verb stem.

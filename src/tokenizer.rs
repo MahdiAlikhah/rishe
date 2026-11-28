@@ -22,6 +22,32 @@ pub struct Token<'a> {
     pub kind: TokenKind,
 }
 
+/// Unicode combining marks, which belong to the word before them.
+///
+/// `std` exposes no general-category access, so this lists the blocks that can
+/// follow a Persian or Latin letter in real text. Without it a mark ended the
+/// word: `tokenize("cafe\u{0301}")` gave `["cafe", "\u{0301}"]`, and decomposed
+/// text from PDFs and macOS hits this constantly.
+fn is_combining_mark(ch: char) -> bool {
+    matches!(
+        ch as u32,
+        0x0300..=0x036F   // Combining Diacritical Marks
+            | 0x0483..=0x0489
+            | 0x0591..=0x05C7 // Hebrew niqqud
+            | 0x0610..=0x061A
+            | 0x064B..=0x065F // Arabic harakat
+            | 0x0670
+            | 0x06D6..=0x06DC
+            | 0x06DF..=0x06E4
+            | 0x06E7..=0x06E8
+            | 0x06EA..=0x06ED
+            | 0x1AB0..=0x1AFF
+            | 0x1DC0..=0x1DFF
+            | 0x20D0..=0x20FF
+            | 0xFE20..=0xFE2F
+    )
+}
+
 /// Byte-offset tokenizer.
 pub struct Tokenizer;
 
@@ -43,7 +69,8 @@ impl Tokenizer {
                 chars.next();
 
                 while let Some(&(next_idx, next_ch)) = chars.peek() {
-                    if next_ch.is_alphanumeric() {
+                    // A mark continues the word rather than ending it.
+                    if next_ch.is_alphanumeric() || is_combining_mark(next_ch) {
                         end_idx = next_idx + next_ch.len_utf8();
                         chars.next();
                     } else if next_ch == '\u{200C}' {
@@ -79,7 +106,7 @@ impl Tokenizer {
                 chars.next();
 
                 while let Some(&(next_idx, next_ch)) = chars.peek() {
-                    if next_ch.is_numeric() {
+                    if next_ch.is_numeric() || is_combining_mark(next_ch) {
                         end_idx = next_idx + next_ch.len_utf8();
                         chars.next();
                     } else if matches!(next_ch, '.' | ',' | '\u{066B}' | '\u{066C}') {
@@ -156,5 +183,23 @@ mod tests {
         for token in Tokenizer::tokenize(input) {
             assert_eq!(&input[token.start..token.end], token.text);
         }
+    }
+
+    #[test]
+    fn a_combining_mark_stays_in_its_word() {
+        // A mark is neither alphabetic nor numeric, so it ended the word and came
+        // out as `Punctuation`: decomposed text from a PDF or macOS split every
+        // such word in two, and the token count, lemmas and detokenized text all
+        // went wrong with it.
+        assert_eq!(texts("cafe\u{0301}"), ["cafe\u{0301}"]);
+        assert_eq!(texts("a\u{0301}b"), ["a\u{0301}b"]);
+        assert_eq!(texts("ک\u{0323}تاب"), ["ک\u{0323}تاب"]);
+        assert_eq!(texts("مُحَمَّد"), ["مُحَمَّد"]);
+        // A number keeps its marks too.
+        assert_eq!(texts("1\u{0301}"), ["1\u{0301}"]);
+        // The span still covers the bytes.
+        let input = "a\u{0301}b";
+        let token = Tokenizer::tokenize(input)[0];
+        assert_eq!(&input[token.start..token.end], input);
     }
 }

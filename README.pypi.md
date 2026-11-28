@@ -276,7 +276,8 @@ accepts either file. The 0.9.x 30,000-article pack remains available as
 `rishe-embed-fa-300`, and
 [`hazm-fasttext-300`](https://huggingface.co/roshan-research/hazm-word-embedding)
 is still downloadable as a larger external comparison model. The vectors are
-CC BY-SA 4.0; see [NOTICE.md](NOTICE.md).
+CC BY-SA 4.0; see
+[NOTICE.md](https://github.com/MahdiAlikhah/rishe/blob/main/NOTICE.md).
 
 ## CLI
 

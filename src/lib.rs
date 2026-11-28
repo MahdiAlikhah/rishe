@@ -337,15 +337,22 @@ impl Pipeline {
 
         let mut tokens = Vec::with_capacity(raw_tokens.len() + 4);
         let mut lemmas = Vec::with_capacity(raw_tokens.len() + 4);
+        // Byte spans of the words whose formal spelling differs, so `formal_text`
+        // can be built by replacing only those. Rebuilding it by re-spacing every
+        // token put a space after each `:`, `/`, `-` and `@`, so a URL or a time
+        // came back shredded even though `normalized_text` had it right.
+        let mut replacements: Vec<(usize, usize, String)> = Vec::new();
 
         for tok in raw_tokens {
             if tok.kind == TokenKind::Word && opts.formalize {
+                let mut produced: Vec<String> = Vec::with_capacity(2);
                 let mut push_token = |token: Cow<'_, str>| {
                     let lemma = if opts.lemmatize {
                         self.morphology.lemmatize(&token).into_owned()
                     } else {
                         token.to_string()
                     };
+                    produced.push(token.to_string());
                     tokens.push(token.into_owned());
                     lemmas.push(lemma);
                 };
@@ -362,6 +369,13 @@ impl Pipeline {
                         push_token(second);
                     }
                 }
+                // Record the respelling only when the text actually changed: a
+                // token that came back identical needs no replacement, and keeping
+                // the list short keeps the rebuild cheap.
+                let respelled = produced.join(" ");
+                if respelled != tok.text {
+                    replacements.push((tok.start, tok.end, respelled));
+                }
             } else if tok.kind == TokenKind::Word && opts.lemmatize {
                 lemmas.push(self.morphology.lemmatize(tok.text).into_owned());
                 tokens.push(tok.text.to_string());
@@ -371,7 +385,24 @@ impl Pipeline {
             }
         }
 
-        let formal_text = Detokenizer::detokenize(&tokens);
+        // Rebuild from the normalized text, replacing only the words that were
+        // respelled. That keeps every URL, e-mail, time and code span intact,
+        // which re-spacing all the tokens could not.
+        let formal_text = if opts.formalize && !replacements.is_empty() {
+            let mut out = String::with_capacity(norm_cow.len() + 16);
+            let mut at = 0usize;
+            for (start, end, replacement) in &replacements {
+                out.push_str(&norm_cow[at..*start]);
+                out.push_str(replacement);
+                at = *end;
+            }
+            out.push_str(&norm_cow[at..]);
+            out
+        } else if opts.formalize {
+            norm_cow.to_string()
+        } else {
+            Detokenizer::detokenize(&tokens)
+        };
         let sentences = if opts.sentences {
             // Split the normalized text, not `formal_text`: the detokenizer
             // joins tokens with spaces, so newlines are gone by then and
@@ -1554,6 +1585,38 @@ mod tests {
     }
 
     #[test]
+    fn a_preverb_does_not_cut_a_verb_a_suffix_or_a_superlative() {
+        // The preverb reading ran before the verb guard, so it took the whole
+        // token: 445 of the 7,208 shipped verb forms were cut. A known noun plus a
+        // plural suffix has a real morpheme boundary and must beat the preverb
+        // guess too, and `ترین` was missing from the suffix table so `بزرگترین`
+        // split as `بزرگتر` + `ین`.
+        let nlp = Pipeline::create(true, true, true);
+        for word in ["بردم", "بازگشتم", "فروختم"] {
+            assert_eq!(nlp.split_token(word), [word], "{word:?} must stay whole");
+        }
+        assert_eq!(nlp.split_token("درخواست‌ها"), ["درخواست", "ها"]);
+        assert_eq!(nlp.split_token("درصدها"), ["درصد", "ها"]);
+        assert_eq!(nlp.split_token("بزرگترین"), ["بزرگ", "ترین"]);
+        assert_eq!(nlp.split_token("نزدیکترین"), ["نزدیک", "ترین"]);
+        // The `می`/`نمی` reading is exempt from the guard: it binds a verb root.
+        assert_eq!(nlp.split_token("نمی‌روم"), ["نمی", "روم"]);
+    }
+
+    #[test]
+    fn a_word_that_is_also_a_clitic_form_keeps_its_word_reading() {
+        // `بهت` is "shock" and `ازمون` is "exam", both in the shipped lexicons, but
+        // the clitic table rewrote them: "I was stunned" became "to you hit I
+        // became" and "I have a math exam" became "from us math I have".
+        let nlp = Pipeline::create(true, true, true);
+        assert_eq!(nlp.process("بهت زده شدم").tokens, ["بهت", "زده", "شدم"]);
+        assert_eq!(nlp.process("ازمون ریاضی دارم").tokens[0], "آزمون");
+        // The genuine clitics still expand.
+        assert_eq!(nlp.process("ازت ممنونم").tokens, ["از", "تو", "ممنونم"]);
+        assert_eq!(nlp.process("بهش گفتم").tokens, ["به", "او", "گفتم"]);
+    }
+
+    #[test]
     fn the_copula_lemmatizes_like_its_other_persons() {
         // `است`/`نیست` were identity rows in the noun lexicon that shadowed the
         // verb table, so only the persons spelled without them reduced to `بود`.
@@ -1833,6 +1896,34 @@ mod tests {
         // `توت` is mulberry, not `در` + `تو`.
         assert_eq!(nlp.process("توت را خوردم").tokens, ["توت", "را", "خوردم"]);
         assert_eq!(nlp.process("بهم گفت").formal_text, "به من گفت");
+    }
+
+    #[test]
+    fn formal_text_keeps_the_spans_normalize_preserved() {
+        // `formal_text` was detached from every token by the detokenizer, which put
+        // a space after each `:`, `/`, `-` and `@`: a URL came back as
+        // `https: / / a. b`, an e-mail as `info @ a. com`, a time as `۱۲: ۳۰`.
+        // Only the words that are actually respelled are replaced now, so the rest
+        // of the text stays as `normalized_text` has it.
+        let nlp = Pipeline::create(true, true, true);
+        let formal = |text: &str| nlp.process(text).formal_text;
+        for text in [
+            "https://rishe.ir/a-b_c?q=1",
+            "info@example.com",
+            "v1.0.4",
+            "C++",
+        ] {
+            let doc = nlp.process(text);
+            assert_eq!(doc.formal_text, doc.normalized_text, "{text:?}");
+        }
+        assert_eq!(formal("12:30"), "۱۲:۳۰");
+        // The respelling still runs, including next to a span it must not touch.
+        assert_eq!(formal("بالاست"), "بالا است");
+        assert_eq!(formal("کتابست"), "کتاب است");
+        assert_eq!(
+            formal("بهم گفت https://a.b/x-y بالاست"),
+            "به من گفت https://a.b/x-y بالا است"
+        );
     }
 
     #[test]

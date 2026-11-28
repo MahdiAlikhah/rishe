@@ -27,7 +27,7 @@ before loading anything and exit `2`, so the status never depends on the cache.
 rishe normalize "مي كنم"          # stdout: می‌کنم
 rishe --help                      # stdout: usage
 rishe                             # stdout: usage
-rishe -V                          # stdout: rishe 1.0.0
+rishe -V                          # stdout: rishe x.y.z
 rishe hub info rishe-embed-fa-300 # stdout: rishe-embed-fa-300<TAB>missing
 ```
 
@@ -61,6 +61,9 @@ rishe hub
 
 rishe hub path
 # stderr: hub path needs a name
+
+rishe similar کتاب --top 0 --model model.vec
+# stderr: --top must be a positive integer
 ```
 
 ### Status 1
@@ -74,9 +77,6 @@ rishe similar کتاب --model missing.vec
 
 rishe similar ناموجود --model model.vec
 # stderr: "ناموجود" is not in the vocabulary
-
-rishe similar کتاب --top 0 --model model.vec
-# stderr: --top must be at least 1
 
 rishe mask text --maskers bogus
 # stderr: unknown masker: bogus
@@ -129,7 +129,7 @@ still report on stderr.
   described above.
 - `-h`/`--help`, `-V`/`--version` and the no-command usage print write to stdout
   and exit 0. `--version` prints `rishe` and the version, for example
-  `rishe 1.0.0`.
+  `rishe x.y.z`.
 - `serve` writes response envelopes to stdout and startup diagnostics to stderr.
   Requests that fail do not change the process exit status.
 
@@ -157,7 +157,7 @@ CPython 3.13.15, Windows x86_64:
 |---|---|---|
 | wrong argument type | `TypeError` | `rishe.normalize(123)` → `argument 'text': 'int' object cannot be converted to 'PyString'` |
 | invalid value | `ValueError` | `rishe.mask("x", ["bogus"])` → `unknown masker: bogus` |
-| missing embedding file | `OSError` | `rishe.Embeddings("missing.vec")` → `cannot open ...: The system cannot find the file specified. (os error 2)` |
+| missing embedding file | `FileNotFoundError` | `rishe.Embeddings("missing.vec")` → `no such embedding file: missing.vec` |
 | corrupt embedding file | `OSError` | `rishe.Embeddings(bad)` → `expected a '<vocab> <dim>' header on the first line of the .vec file` |
 | empty or malformed embedding | `OSError` | `empty embedding file`, `embedding dimension must be positive` |
 | non-finite embedding value | `OSError` | `rishe.Embeddings(bad)` → `line 2: non-finite value "nan"` |

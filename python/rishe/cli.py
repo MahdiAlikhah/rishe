@@ -54,6 +54,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         prog="rishe",
         description="Fast Persian NLP and morphology.",
         epilog="What the version number means: https://github.com/MahdiAlikhah/rishe/blob/main/docs/STABILITY.md",
+        # Rust's parser matches option names exactly, so `--jso` and `--vers`
+        # exited 2 there and 0 here. `--flag=value` stays, which Rust also takes.
+        allow_abbrev=False,
     )
     parser.add_argument(
         "-V",
@@ -128,8 +131,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     serve.add_argument(
         "--maskers",
         dest="maskers",
-        nargs="+",
-        default=list(DEFAULT_MASKERS),
+        # Same shape as `mask`: one value per flag, `None` meaning "the defaults".
+        # `nargs="+"` with `default=list(DEFAULT_MASKERS)` meant a repeat overwrote
+        # the earlier flag, so `--maskers url --maskers email` left URLs unmasked.
+        action="append",
+        default=None,
     )
     serve.add_argument("--mask-token", default=None)
     serve.add_argument("--pos-pack", default=None)
@@ -185,7 +191,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     # with no effect. `hub` is skipped: the Rust binary dispatches it before its
     # option loop, so rust rejects these flags there too.
     for name, subparser in subparsers.choices.items():
-        if name == "hub":
+        # `allow_abbrev` is not inherited by subparsers, so `normalize --jso`
+        # still matched `--json` and exited 0 where Rust exits 2.
+        subparser.allow_abbrev = False
+        # `hub` dispatches before its option loop in Rust, and `serve` rejects
+        # every one of these flags there too, so injecting them made
+        # `serve --pack x` exit 0 here and 2 in Rust.
+        if name in ("hub", "serve"):
             continue
         declared = {
             option for action in subparser._actions for option in action.option_strings
@@ -232,11 +244,19 @@ def main(argv: Optional[List[str]] = None) -> int:
         except (OSError, ValueError, RuntimeError) as error:
             print(error, file=sys.stderr)
             return 1
-        # Serve accepts both `--maskers url,email` (the Rust binary's form, and
-        # the one documented in docs/serve-schema.md) and `--maskers url email`.
-        maskers = [
-            masker for value in args.maskers for masker in value.split(",") if masker
-        ]
+        # `--maskers` chooses the chain, so it replaces the defaults. An empty
+        # value (`--maskers ""` or `","`) flattened to `[]`, which the engine reads
+        # as "mask nothing": the text came back with every link and e-mail in the
+        # clear and the command still exited 0. The Rust binary already refuses it.
+        if args.maskers is None:
+            maskers = list(DEFAULT_MASKERS)
+        else:
+            maskers = [
+                masker for value in args.maskers for masker in value.split(",") if masker
+            ]
+            if not maskers:
+                print("--maskers needs a value", file=sys.stderr)
+                return 2
         return _serve(pipe, maskers, args.mask_token, embeddings)
 
     pipe = Pipeline()
@@ -256,6 +276,9 @@ def main(argv: Optional[List[str]] = None) -> int:
                 maskers = [
                     masker for value in args.maskers for masker in value.split(",") if masker
                 ]
+                if not maskers:
+                    print("--maskers needs a value", file=sys.stderr)
+                    return 2
             result = pipe.mask(text, maskers, args.mask_token)
         else:
             # Unreachable: the required subparser rejects unknown commands with
@@ -503,12 +526,12 @@ def _load_embeddings(name: Optional[str]) -> Embeddings:
 
 def _embedding(args) -> int:
     if args.command == "similar":
-        # Rust parses `--top` as a machine `usize`, so a value past that is the
-        # same usage error there; here the int is unbounded, and handing it to
+        # Rust parses `--top` as a machine `usize`, so a value past `u64::MAX` is
+        # the same usage error there; here the int is unbounded, and handing it to
         # Rust raised OverflowError with a traceback instead of exit 2.
         # Checked before the model load: a bad option is a usage error whether or
         # not the model happens to be cached.
-        if args.top < 1 or args.top > sys.maxsize:
+        if args.top < 1 or args.top > 2**64 - 1:
             print("--top must be a positive integer", file=sys.stderr)
             return 2
 
@@ -713,11 +736,16 @@ def _end_serve() -> int:
     The output pipe is gone, so dropping the buffered writer would raise on
     interpreter shutdown; hand it to /dev/null first.
     """
+    _discard_stdout()
+    return 0
+
+
+def _discard_stdout() -> None:
+    """Point stdout at /dev/null so interpreter shutdown cannot fail on a dead pipe."""
     try:
         os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
     except (OSError, ValueError):
         pass
-    return 0
 
 
 def _read_text(source: Optional[Union[str, List[str]]]) -> str:
@@ -740,4 +768,13 @@ def _read_text(source: Optional[Union[str, List[str]]]) -> str:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        _code = main()
+        # Flush here, inside the guard: the flush at interpreter shutdown is what
+        # exits 120 when the reader closed the pipe early (`| head`). Windows
+        # reports a dead pipe as OSError(22), not BrokenPipeError.
+        sys.stdout.flush()
+    except (BrokenPipeError, OSError):
+        _discard_stdout()
+        _code = 0
+    raise SystemExit(_code)

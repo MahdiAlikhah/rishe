@@ -318,7 +318,10 @@ pub(crate) fn word_boundary(text: &str, start: usize, end: usize) -> bool {
 }
 
 fn is_word_char(ch: char) -> bool {
-    is_persian_letter(ch) || ch.is_ascii_alphanumeric()
+    // The four Arabic-coded letters `mask_non_persian` keeps, because `normalize`
+    // maps them to Persian: without them a stopword's tail was left dangling and
+    // `mask("آنهاي")` returned `"ي"`.
+    is_persian_letter(ch) || matches!(ch, 'ي' | 'ك' | 'ى' | 'ة') || ch.is_ascii_alphanumeric()
 }
 
 #[cfg(test)]
@@ -380,5 +383,33 @@ mod tests {
         let spans: Vec<(usize, usize)> = spaced.iter().map(|m| (m.start, m.end)).collect();
         assert_eq!(spans, [(1, 5), (9, 17)]);
         assert_eq!(spaced[1].word, "کامپیوتر");
+    }
+    #[test]
+    fn a_word_ends_at_an_arabic_coded_persian_letter() {
+        // `is_word_char` used only `PERSIAN_LETTERS`, which has no `\u{064A}`
+        // (`\u{064A}` is written here the way the crate spells it) and friends,
+        // though `mask_non_persian` keeps exactly those because `normalize` maps
+        // them. So a stopword followed by one was masked and left its tail behind.
+        for (text, tail) in [
+            ("\u{0622}\u{0646}\u{0647}\u{0627}\u{064A}", "\u{064A}"),
+            ("\u{0627}\u{0633}\u{062A}\u{064A}", "\u{064A}"),
+            (
+                "\u{0645}\u{0646} \u{0627}\u{0632}\u{064A} \u{06AF}\u{0641}\u{062A}\u{0645}",
+                "\u{064A}",
+            ),
+        ] {
+            assert!(
+                !word_boundary(text, 0, text.len() - tail.len()),
+                "{text:?}: the trailing letter must count as part of the word"
+            );
+        }
+        // The same letters in a normal word are not a boundary either.
+        assert!(!word_boundary(
+            "\u{0643}\u{062A}\u{0627}\u{0628}\u{064A}",
+            0,
+            8
+        ));
+        // An ASCII letter still ends a word.
+        assert!(word_boundary("\u{0633}\u{0644}\u{0627}\u{0645} x", 0, 8));
     }
 }

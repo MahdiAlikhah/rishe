@@ -15,6 +15,7 @@ const ARABIC_DIGITS: &str = "٠١٢٣٤٥٦٧٨٩";
 const DIACRITICS: &str = "\u{064B}\u{064C}\u{064D}\u{064E}\u{064F}\u{0650}\u{0651}\u{0652}\u{0653}\u{0654}\u{0655}\u{0656}\u{0670}";
 const VS16: char = '\u{FE0F}';
 const ZWJ: char = '\u{200D}';
+const KEYCAP: char = '\u{20E3}';
 const OFFENSIVE_WORDS: &str = include_str!("../data/offensive_words.txt");
 
 /// Masker names used, in this order, when a caller gives none.
@@ -125,48 +126,75 @@ impl MaskOp {
 /// one. A Persian letter that appears in neither the text nor the mask does both:
 /// `non_persian` keeps Persian letters, so it survives, and since the character is
 /// in no input, no deletion can join two of them and no inserted mask can contain
-/// one. This used a run of ZWNJ instead. ZWNJ also survives, but it was already
-/// in the text, so `non_persian` deleting the characters between two ZWNJ runs
-/// glued them into a third run that matched a stand-in, and the swap-back turned
-/// real text into a `<URL>` the input never had.
+/// one.
 ///
-/// Each stand-in is a different character, so none is a substring of another.
+/// Each stand-in is **one** character, never a run. A run is not safe even when
+/// its character is absent: a masker deletes characters, and deleting what sits
+/// between two runs glues them into a wider run. That is how a ZWNJ fallback kept
+/// turning real text into a `<URL>` the input never had, across two separate
+/// release fixes. A single character cannot be built by deletion, so the class of
+/// bug is gone rather than patched again.
+///
+/// Fewer than `count` free characters means the text holds every Persian letter;
+/// `apply_chain` then masks the segments between placeholders instead of shielding.
 fn build_shields(text: &str, mask: &str, count: usize) -> Vec<String> {
-    // Persian letters, most to least common in running text.
+    // Persian letters, most to least common in running text. All of
+    // `PERSIAN_LETTERS` plus the four Arabic-coded letters `non_persian` keeps.
     const CANDIDATES: &[char] = &[
         'ا', 'ر', 'ن', 'د', 'ی', 'ه', 'م', 'ت', 'ب', 'س', 'و', 'ک', 'ش', 'ز', 'ف', 'گ', 'ل', 'ع',
-        'ق', 'خ', 'ج', 'پ', 'چ', 'ح', 'ط', 'ص', 'ض', 'غ', 'ظ', 'ذ', 'ث', 'ژ',
+        'ق', 'خ', 'ج', 'پ', 'چ', 'ح', 'ط', 'ص', 'ض', 'غ', 'ظ', 'ذ', 'ث', 'ژ', 'آ', 'ء', 'ؤ', 'أ',
+        'ئ', 'ۀ', 'ي', 'ك', 'ى', 'ة',
     ];
-    let free: Vec<char> = CANDIDATES
+    CANDIDATES
         .iter()
         .copied()
         .filter(|ch| !text.contains(*ch) && !mask.contains(*ch))
         .take(count)
-        .collect();
-    if free.len() == count {
-        return free.iter().map(|ch| ch.to_string().repeat(2)).collect();
+        .map(|ch| ch.to_string())
+        .collect()
+}
+
+/// Mask `text` when no shield character is free: split at the placeholders so no
+/// masker can see across one, then mask each piece on its own. Nothing is
+/// substituted, so nothing can be fabricated.
+fn apply_chain_in_segments(
+    text: &str,
+    ops: &[MaskOp],
+    mask: Option<&str>,
+    protected: &[&str],
+) -> String {
+    let mut pieces = vec![text.to_string()];
+    let mut separators = Vec::new();
+    for placeholder in protected {
+        let mut next = Vec::new();
+        for piece in std::mem::take(&mut pieces) {
+            let mut rest = piece.as_str();
+            while let Some(index) = rest.find(placeholder) {
+                next.push(rest[..index].to_string());
+                separators.push(*placeholder);
+                rest = &rest[index + placeholder.len()..];
+            }
+            next.push(rest.to_string());
+        }
+        pieces = next;
     }
 
-    // Every candidate is in the text or the mask. Fall back to the old ZWNJ runs,
-    // started above the longest run already present: placeholders still round-trip,
-    // but a masker that deletes the characters between two runs can fabricate one.
-    // The widths start above every run in the text, so none of them can already be
-    // a substring and no per-width scan is needed; restarting `text.contains` from
-    // width 2 each time was quadratic — 954 ms for 16 000 ZWNJ.
-    // shortcut: a masker can fabricate a shield only when no Persian letter is free, upgrade if a caller reports it.
-    let mut longest = 0;
-    let mut run = 0;
-    for ch in text.chars() {
-        if ch == '\u{200C}' {
-            run += 1;
-            longest = longest.max(run);
-        } else {
-            run = 0;
+    for op in ops {
+        for piece in &mut pieces {
+            *piece = op.apply(piece, mask);
         }
     }
-    (1..=count)
-        .map(|index| "\u{200C}".repeat(longest + index))
-        .collect()
+
+    let mut remaining = pieces.into_iter();
+    let mut out = remaining.next().unwrap_or_default();
+    for (separator, piece) in separators.iter().zip(remaining.by_ref()) {
+        out.push_str(separator);
+        out.push_str(&piece);
+    }
+    for piece in remaining {
+        out.push_str(&piece);
+    }
+    out
 }
 
 /// Run `ops` in order, keeping each stage's output out of the next stage.
@@ -180,13 +208,25 @@ pub(crate) fn apply_chain(text: &str, ops: &[MaskOp], mask: Option<&str>) -> Str
     if ops.is_empty() {
         return text.to_string();
     }
-    let mut protected = vec!["<URL>", "<EMAIL>"];
+    let mut owned = vec!["<URL>", "<EMAIL>"];
     if let Some(token) = mask {
-        if !token.trim().is_empty() && !protected.contains(&token) {
-            protected.push(token);
+        if !token.trim().is_empty() {
+            owned.push(token);
         }
     }
+    // The caller's mask can be its own placeholder only if it equals a protected
+    // one, which the shield path already treats as a single entry.
+    let mut protected: Vec<&str> = Vec::new();
+    for candidate in owned {
+        if !protected.contains(&candidate) {
+            protected.push(candidate);
+        }
+    }
+
     let shields = build_shields(text, mask.unwrap_or(""), protected.len());
+    if shields.len() < protected.len() {
+        return apply_chain_in_segments(text, ops, mask, &protected);
+    }
 
     let mut current = text.to_string();
     for op in ops {
@@ -196,7 +236,6 @@ pub(crate) fn apply_chain(text: &str, ops: &[MaskOp], mask: Option<&str>) -> Str
             }
         }
         current = op.apply(&current, mask);
-        // Longest first, so a shorter shield never splits a longer one.
         for (placeholder, shield) in protected.iter().zip(&shields).rev() {
             if current.contains(shield.as_str()) {
                 current = current.replace(shield.as_str(), placeholder);
@@ -346,6 +385,13 @@ pub fn mask_sigil(text: &str, sigil: char, mask: &str) -> String {
             |prev| !prev.is_alphanumeric(),
             |ch| !ch.is_whitespace(),
         ) {
+            // Stop before the punctuation that ended the sentence, the way the
+            // `url` masker already does: `@user!` used to come back as `""`, losing
+            // the `!`, while `https://a.b!` kept it.
+            let mut end = end;
+            while end > i + 1 && crate::word_tokenizer::URL_TRAILING.contains(&chars[end - 1]) {
+                end -= 1;
+            }
             out.push_str(mask);
             i = end;
             continue;
@@ -359,7 +405,9 @@ pub fn mask_sigil(text: &str, sigil: char, mask: &str) -> String {
 
 /// Replace emoji sequences with `mask`.
 pub fn mask_emojis(text: &str, mask: &str) -> String {
-    if !text.chars().any(is_emoji_base) {
+    // A keycap's base is an ASCII digit, so `is_emoji_base` alone would skip the
+    // whole text before `emoji_end` ever sees it. `U+20E3` only appears in one.
+    if !text.chars().any(is_emoji_base) && !text.contains(KEYCAP) {
         return text.to_string();
     }
 
@@ -387,6 +435,15 @@ pub(crate) fn emoji_end(chars: &[char], i: usize) -> Option<usize> {
     let ch = chars[i];
     if is_regional(ch) && i + 1 < chars.len() && is_regional(chars[i + 1]) {
         return Some(i + 2);
+    }
+    // A keycap is an ASCII base plus `U+FE0F U+20E3`, so the base looks like a
+    // letter and the marks were left behind: `1️⃣` survived the `emoji` masker and
+    // split into three tokens. The `U+FE0F` is optional in the wild, so the width
+    // is read from the marks rather than assumed to be three.
+    if matches!(ch, '0'..='9' | '#' | '*') {
+        if let Some(width) = keycap_width(chars, i + 1) {
+            return Some(i + 1 + width);
+        }
     }
     if !is_emoji_base(ch) {
         return None;
@@ -444,6 +501,16 @@ pub(crate) fn is_emoji_base(ch: char) -> bool {
 
 pub(crate) fn is_regional(ch: char) -> bool {
     matches!(ch as u32, 0x1F1E6..=0x1F1FF)
+}
+
+/// Width of the marks that make a keycap at `at`: `U+FE0F U+20E3` (2) or a bare
+/// `U+20E3` (1). `None` when the marks there are not a keycap.
+fn keycap_width(chars: &[char], at: usize) -> Option<usize> {
+    match chars.get(at) {
+        Some(&VS16) if chars.get(at + 1) == Some(&KEYCAP) => Some(2),
+        Some(&KEYCAP) => Some(1),
+        _ => None,
+    }
 }
 
 pub(crate) fn is_skin_tone(ch: char) -> bool {
@@ -810,9 +877,11 @@ mod tests {
 
     #[test]
     fn masks_social_tokens() {
+        // The `!` used to be masked with the handle, so the sentence lost its
+        // punctuation; the `url` masker always kept it.
         assert_eq!(
             MaskOp::Mention.apply("سلام @user! چطوری؟", None),
-            "سلام   چطوری؟"
+            "سلام  ! چطوری؟"
         );
         assert_eq!(MaskOp::Hashtag.apply("#سلام #خوش_آمدید", None), "");
         // A sigil with nothing after it is punctuation, not a mention or tag.
@@ -1143,22 +1212,42 @@ mod tests {
     }
 
     #[test]
-    fn the_zwnj_fallback_starts_above_the_longest_run() {
-        // The fallback used to rebuild the candidate list with a fresh
-        // `text.contains` scan per width, which is quadratic: 1000 ZWNJ doubled the
-        // time, and 16 000 took 954 ms. It now measures the longest existing run
-        // once and starts above it, so the cost is linear.
+    fn a_chain_never_fabricates_a_placeholder_when_every_letter_is_taken() {
+        // Three releases in a row a masker turned real text into a `<URL>` the
+        // input never had, because the stand-in was made of characters the text
+        // already contained and a masker could glue two of them into one.
+        // `build_shields` now returns only single characters and `apply_chain`
+        // falls back to masking each segment, so no masker ever sees across a
+        // placeholder.
+        let mut crowded = String::from(crate::normalize_ops::PERSIAN_LETTERS);
+        crowded.push_str("يكىة  ");
+        let ops = [MaskOp::Digits];
+        for suffix in ["می\u{200C}۱\u{200C}کنم", "می\u{200C}۱\u{200C}۲\u{200C}کنم"] {
+            let text = format!("{crowded}{suffix}");
+            let out = apply_chain(&text, &ops, None);
+            for placeholder in ["<URL>", "<EMAIL>"] {
+                assert!(
+                    !out.contains(placeholder),
+                    "{placeholder} was fabricated from {suffix:?}: {out:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_segment_fallback_stays_linear() {
+        // Every shield character is present, so the chain masks each segment
+        // instead. That path must not rescan the text per placeholder.
         use std::time::Instant;
 
         let ops = [MaskOp::Url, MaskOp::Email];
         let time = |n: usize| {
-            // Every candidate letter is present, so the ZWNJ fallback is forced.
-            let mut text = String::from("ابپتثجچحخدذرزژسشصضطظعغفقکگلمنوهی");
+            let mut text = String::from(crate::normalize_ops::PERSIAN_LETTERS);
+            text.push_str("يكىة");
             text.push_str(&"\u{200C}".repeat(n));
             text.push_str(" https://a.example");
             let start = Instant::now();
             let out = apply_chain(&text, &ops, None);
-            // The placeholder must still round-trip through the fallback.
             assert!(out.contains("<URL>"), "no placeholder survived: {out:?}");
             start.elapsed().as_nanos().max(1)
         };
@@ -1170,5 +1259,40 @@ mod tests {
             "8x the ZWNJ runs took {}x the time, so the scan is not linear",
             large / small
         );
+    }
+
+    #[test]
+    fn a_sigil_keeps_the_punctuation_that_ended_it() {
+        // `mask_sigil` ran to the next whitespace, so `@user!` masked the `!` as
+        // well. The `url` masker already trimmed it, so the two disagreed.
+        assert_eq!(MaskOp::Mention.apply("@user!", None), "!");
+        assert_eq!(MaskOp::Mention.apply("@user.", None), ".");
+        assert_eq!(MaskOp::Mention.apply("@user،", None), "،");
+        assert_eq!(MaskOp::Mention.apply("(@user)", None), "( )");
+        assert_eq!(MaskOp::Hashtag.apply("#خبر!", None), "!");
+        // The url masker's behaviour is the one both now follow.
+        assert_eq!(MaskOp::Url.apply("https://a.b!", None), "<URL>!");
+    }
+
+    #[test]
+    fn a_keycap_is_one_emoji() {
+        // `1️⃣` is an ASCII digit plus two marks, so the base was in no emoji
+        // range: the `emoji` masker leaked it and the tokenizer split it in three.
+        for keycap in ["1\u{FE0F}\u{20E3}", "#\u{FE0F}\u{20E3}", "*\u{20E3}"] {
+            let text = format!("a{keycap}b");
+            assert_eq!(
+                mask_emojis(&text, ""),
+                "ab",
+                "{keycap:?} was not masked as one cluster"
+            );
+            let chars: Vec<char> = text.chars().collect();
+            assert_eq!(
+                emoji_end(&chars, 1),
+                Some(1 + keycap.chars().count()),
+                "{keycap:?} cluster is the wrong width"
+            );
+        }
+        // A lone digit next to a mark that is not a keycap is not an emoji.
+        assert_eq!(emoji_end(&['1', '\u{FE0F}'], 0), None);
     }
 }

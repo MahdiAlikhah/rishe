@@ -105,8 +105,8 @@ source install of the Python package needs 1.91 even though the default crate
 does not. `Cargo.lock` is in lockfile format 4, which no cargo older than 1.78
 can even read, so a lower `--locked` gate cannot work without rewriting the
 lock. Raising a gate means bumping `Cargo.toml` `rust-version` together with
-`README.md`, `README.crates.md`, `README.pypi.md` and `docs/STABILITY.md` in the
-same commit. `examples/embeddings.py` loads the
+`README.md`, `README.crates.md`, `README.fa.md`, `README.pypi.md` and
+`docs/STABILITY.md` in the same commit. `examples/embeddings.py` loads the
 `rishe-embed-fa-300-v2` pack from the hub cache, so it is deliberately not part
 of the offline gate — run it by hand once the cache is populated.
 
@@ -275,7 +275,7 @@ Network tip: the system proxy may throttle uploads. Bypassing it for HF
 - [ ] version bumped in `Cargo.toml` and `Cargo.lock`
 - [ ] `CHANGELOG.md` entry added
 - [ ] fmt, clippy on default features *and* `--features python,models`, tests
-      (default + models), Python suite, golden benchmark green
+      (default + models), Python suite
 - [ ] MSRV gate green (`cargo +1.88.0 check --locked`, `--features python`)
 - [ ] `models` gate green (`cargo +1.91.0 check --locked --features python,models`)
 - [ ] feature matrix green (`--no-default-features`, `python`, `models`, `python,models`)

@@ -49,16 +49,14 @@ fn flatten_ezafe<'a>(input: &'a str) -> Cow<'a, str> {
         // The ezafe yā is word-final, so strip it only when a word boundary
         // follows. `خانه‌یی` keeps its `ی` (the yā is followed by another letter),
         // and so does `خانه یا`, where `یا` is a separate word.
+        // A digit or Latin letter counts as part of a word: `خانه ی2` used to lose
+        // both the `ی` and the space and come back as `خانه۲`, one token that is
+        // not a word.
         let candidate = after
             .strip_prefix("\u{200C}\u{6CC}")
             .or_else(|| after.strip_prefix(" \u{6CC}"));
         match candidate {
-            Some(tail)
-                if tail
-                    .chars()
-                    .next()
-                    .is_none_or(|ch| !crate::normalize_ops::is_persian_letter(ch)) =>
-            {
+            Some(tail) if tail.chars().next().is_none_or(|ch| !ch.is_alphanumeric()) => {
                 rest = tail;
             }
             _ => rest = after,
@@ -415,6 +413,22 @@ mod tests {
         );
         // A yā that only looks adjacent after a space stays a separate word.
         assert_eq!(n.normalize("خانه یا").into_owned(), "خانه یا".to_string());
+    }
+
+    #[test]
+    fn an_ezafe_before_a_digit_or_latin_letter_stays() {
+        let n = Normalizer::new(NormalizerConfig::default());
+        // The guard only looked for a Persian letter ahead, so a digit or Latin
+        // letter counted as a word boundary, and the space was consumed too:
+        // `خانه ی2` came back as `خانه۲`, one token that is not a word.
+        assert_eq!(n.normalize("خانه ی2").into_owned(), "خانه ی۲".to_string());
+        assert_eq!(
+            n.normalize("مدرسه یabc").into_owned(),
+            "مدرسه یabc".to_string()
+        );
+        // The real ezafe still flattens.
+        assert_eq!(n.normalize("خانه ی ما").into_owned(), "خانه ما".to_string());
+        assert_eq!(n.normalize("خانۀ").into_owned(), "خانه".to_string());
     }
 
     #[test]

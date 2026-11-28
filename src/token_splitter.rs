@@ -43,7 +43,55 @@ impl TokenSplitter {
             return vec![token.to_string()];
         }
 
+        // A whole token the verb table knows is a verb form, not a preverb plus a
+        // word: `بردم` is `بردن` 1sg, not `بر` + `دم`; `بازگشتم` is `بازگشتن`, not
+        // `باز` + `گشتم`; `دریافتم` is `دریافت`, not `در` + `یافتم`. The preverb
+        // reading used to win because it ran first, which cut 445 of the 7,208
+        // shipped verb forms.
+        //
+        // `is_verb_form` reads every form the verb table knows, including one it
+        // lists only by past stem plus a person ending (`دریافتم` -> `دریافت`).
+        // `می`/`نمی` are exempt: they bind a verb root by design, so `می‌روم` must
+        // still split.
+        let is_verb_form = morph.is_verb_form(token);
+
+        // A known noun plus a noun suffix is a real morpheme boundary, so it wins
+        // over a preverb guess: `درخواست‌ها` is `درخواست` + `ها`, not `در` +
+        // `خواست‌ها`, and `درصدها` is `درصد` + `ها`, not `در` + `صدها`. These two
+        // loops used to run after the prefix loop, which had already taken both.
+        for &suffix in ZWNJ_NOUN_SUFFIXES {
+            if let Some(stem) = token.strip_suffix(suffix) {
+                if !stem.is_empty() && morph.is_known_noun(stem) {
+                    return vec![
+                        stem.to_string(),
+                        suffix.trim_start_matches(ZWNJ).to_string(),
+                    ];
+                }
+            }
+        }
+        // The attached form is the same boundary, but only off a stem that is not
+        // itself a verb, and only when the whole token is not a verb form:
+        // `رفت` must stay `رفت`, and `دریافتم` is `دریافت` (1sg), not `دریافت` + `م`.
+        if !is_verb_form {
+            for &suffix in ATTACHED_NOUN_SUFFIXES {
+                if let Some(stem) = token.strip_suffix(suffix) {
+                    if stem.chars().count() >= 2
+                        && morph.is_known_noun(stem)
+                        // `بهمین` is `بهم` + `ین` only because `بهم` is a clitic key
+                        // that the lexicon happens to list; a clitic form is not a noun
+                        // stem, so stripping a suffix off one produces nonsense.
+                        && !is_clitic_key(stem)
+                    {
+                        return vec![stem.to_string(), suffix.to_string()];
+                    }
+                }
+            }
+        }
+
         for prefix in prefixes() {
+            if is_verb_form && !matches!(prefix, "می" | "نمی") {
+                continue;
+            }
             if let Some(rest) = token.strip_prefix(prefix) {
                 let rest = rest.strip_prefix(ZWNJ).unwrap_or(rest);
                 if rest.is_empty() {
@@ -69,41 +117,8 @@ impl TokenSplitter {
             }
         }
 
-        for &suffix in ZWNJ_NOUN_SUFFIXES {
-            if let Some(stem) = token.strip_suffix(suffix) {
-                if !stem.is_empty() && morph.is_known_noun(stem) {
-                    return vec![
-                        stem.to_string(),
-                        suffix.trim_start_matches(ZWNJ).to_string(),
-                    ];
-                }
-            }
-        }
-
         if morph.is_known_noun(token) {
             return vec![token.to_string()];
-        }
-
-        // A whole word that lemmatizes to a known verb is a verb form, not a noun
-        // plus a clitic: `رفت` is `رفتن` 3sg, not `رف` + `ت`, and `دارم` is
-        // `داشتن` 1sg. The prefix and ZWNJ splits above already ran, so the
-        // documented `می` + verb and `کتاب` + `ها` readings are unaffected.
-        if morph.present_stem(&morph.lemmatize(token)).is_some() {
-            return vec![token.to_string()];
-        }
-
-        for &suffix in ATTACHED_NOUN_SUFFIXES {
-            if let Some(stem) = token.strip_suffix(suffix) {
-                if stem.chars().count() >= 2
-                    && morph.is_known_noun(stem)
-                    // `بهمین` is `بهم` + `ین` only because `بهم` is a clitic key
-                    // that the lexicon happens to list; a clitic form is not a noun
-                    // stem, so stripping a suffix off one produces nonsense.
-                    && !is_clitic_key(stem)
-                {
-                    return vec![stem.to_string(), suffix.to_string()];
-                }
-            }
         }
 
         vec![token.to_string()]

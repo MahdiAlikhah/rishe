@@ -366,6 +366,42 @@ class ExitCodeContractTest(unittest.TestCase):
     def test_unparseable_date_exits_1(self):
         self.assert_exit(1, "date", "این یک تاریخ نیست")
 
+    def test_an_abbreviated_option_is_a_usage_error(self):
+        """argparse matched prefixes (`--jso`, `--vers`); Rust requires the full name.
+
+        `allow_abbrev` does not reach subparsers, so both the top parser and every
+        subparser have to turn it off.
+        """
+        self.assert_exit(2, "--jso")
+        self.assert_exit(2, "--vers")
+        self.assert_exit(2, "normalize", "--jso", "سلام")
+        self.assert_exit(2, "tokenize", "--jso", "سلام")
+
+    def test_serve_rejects_the_options_the_rust_binary_rejects(self):
+        """The injection loop skipped only `hub`, so serve accepted these and exited 0."""
+        for option in (("--pack", "x"), ("--top", "3")):
+            with self.subTest(option=option[0]):
+                result = self.assert_exit(2, "serve", *option)
+                self.assertEqual(result.stdout, b"")
+        # `--mask-token` is a real serve option in the Rust binary.
+        self.assert_exit(0, "serve", "--mask-token", "x")
+
+    def test_a_closed_stdout_still_exits_zero(self):
+        """A reader that closed the pipe made the shutdown flush exit 120.
+
+        `docs/errors.md` documents only 0, 1 and 2, and `_end_serve` already fixed
+        this for `serve`; the plain-text path kept the bad code.
+        """
+        for command in (["normalize", "سلام"], ["tokenize", "سلام"]):
+            with self.subTest(command=command[0]):
+                process = subprocess.Popen(
+                    [sys.executable, "-m", "rishe.cli", *command],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                )
+                process.stdout.close()
+                self.assertEqual(process.wait(), 0)
+
     def test_missing_pack_exits_1(self):
         with tempfile.TemporaryDirectory() as root:
             missing = Path(root) / "missing-pack"
@@ -582,13 +618,45 @@ class ServeProtocolTest(unittest.TestCase):
         response = self.serve_one('{"command":"tokenize","text":5}')
         self.assertEqual(response, {"ok": True, "result": []})
 
-    def test_serve_accepts_comma_separated_and_space_separated_maskers(self):
+    def test_serve_accepts_comma_separated_maskers(self):
         for value in ("url,email", "email"):
             with self.subTest(maskers=value):
                 response = self.serve_one(
                     '{"command":"mask","text":"info@a.co"}', "--maskers", value
                 )
                 self.assertEqual(response, {"ok": True, "result": "<EMAIL>"})
+
+    def test_serve_accumulates_repeated_maskers_flags(self):
+        # `nargs="+"` with `default=list(DEFAULT_MASKERS)` made a repeat overwrite
+        # the earlier flag, so `--maskers url --maskers email` left URLs in the
+        # clear while the comma form masked both.
+        response = self.serve_one(
+            '{"command":"mask","text":"x https://a.b y info@a.co z"}',
+            "--maskers", "url", "--maskers", "email",
+        )
+        self.assertEqual(response, {"ok": True, "result": "x <URL> y <EMAIL> z"})
+
+    def test_an_empty_maskers_list_is_a_usage_error(self):
+        # An empty chain reads as "mask nothing", so the text came back with every
+        # link and e-mail in the clear and the command still exited 0. The Rust
+        # binary already refused it.
+        def run(*argv):
+            return subprocess.run(
+                [sys.executable, "-m", "rishe.cli", *argv],
+                input=b"",
+                capture_output=True,
+                check=False,
+            )
+
+        for value in ("", ","):
+            with self.subTest(maskers=value):
+                masked = run("mask", "x https://a.b y", "--maskers", value)
+                self.assertEqual(masked.returncode, 2, masked.stdout)
+                self.assertEqual(masked.stdout, b"")
+                self.assertIn(b"--maskers needs a value", masked.stderr)
+                served = run("serve", "--maskers", value)
+                self.assertEqual(served.returncode, 2, served.stdout)
+                self.assertIn(b"--maskers needs a value", served.stderr)
 
     def test_rejects_an_oversized_line_and_keeps_serving(self):
         # An unbounded line read grows its buffer until it finds a newline, so a

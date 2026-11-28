@@ -54,12 +54,15 @@ pub(crate) const FUSED_PREP_CLITICS: &[(&str, (&str, &str))] = &[
 
 /// Fused forms that are also ordinary words, so the clitic reading is wrong.
 ///
-/// `توت` is mulberry; every other key in [`FUSED_PREP_CLITICS`] is a form that
-/// only exists as a clitic, so the table stays useful. Tested by frequency, not
-/// by lexicon membership: the twelve keys the lexicon does list all carry
-/// frequency 1, so a blanket "is a known noun" guard would switch those twelve
-/// off for nothing. The other sixteen are not in either lexicon at all.
-pub(crate) const CLITIC_LOOKALIKES: &[&str] = &["توت"];
+/// `توت` is mulberry. `بهت` is "shock" (`بهت زده` = stunned) and `ازمون` is the
+/// standard contraction of `آزمون` ("exam"); both are in `nouns.tsv` and
+/// `word_freq.tsv` (`بهت` 1,020,014). Expanding them turned "I was stunned" into
+/// "to you hit I became" and "I have a math exam" into "from us math I have".
+///
+/// `ازت` is not here even though it is in `nouns.tsv` with a high count: that
+/// count comes from the clitic itself ("ازت ممنونم" = "از تو ممنونم"), which is
+/// the reading that should win. The other keys are clitics only.
+pub(crate) const CLITIC_LOOKALIKES: &[&str] = &["توت", "بهت", "ازمون"];
 
 /// Copula lookalikes that the whole-word guard does not already cover.
 ///
